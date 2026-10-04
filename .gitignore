@@ -1,0 +1,6 @@
+.idea/
+.vscode/
+*.zip
+.DS_Store
+Thumbs.db
+.luacheckcache
