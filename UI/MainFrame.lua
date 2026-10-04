@@ -37,10 +37,10 @@ function GW.MainFrame:Initialize()
     frame:SetScript("OnDragStop", function(currentFrame)
         currentFrame:StopMovingOrSizing()
         local point, _, relativePoint, x, y = currentFrame:GetPoint(1)
-        GW.Store:SetMainFramePosition(point, relativePoint, x, y)
+        GW.Store.SetMainFramePosition(point, relativePoint, x, y)
     end)
 
-    local position = GW.Store:GetMainFramePosition()
+    local position = GW.Store.GetMainFramePosition()
     frame:ClearAllPoints()
     frame:SetPoint(position.point, UIParent, position.relativePoint, position.x, position.y)
     frame:Hide()
@@ -59,9 +59,9 @@ function GW.MainFrame:Toggle()
 end
 
 function GW.MainFrame:ResetPosition()
-    GW.Store:ResetMainFramePosition()
+    GW.Store.ResetMainFramePosition()
 
-    local position = GW.Store:GetMainFramePosition()
+    local position = GW.Store.GetMainFramePosition()
     self.frame:ClearAllPoints()
     self.frame:SetPoint(position.point, UIParent, position.relativePoint, position.x, position.y)
 end
