@@ -1,0 +1,11 @@
+## Interface: 16001
+## Title: Guildweaver
+## Notes: Guild tools for World of Warcraft: Forever.
+## Author: Indicaza
+## Version: 0.1.0-alpha.1
+## SavedVariables: GuildweaverDB
+
+Utils/Debug.lua
+Data/Store.lua
+UI/MainFrame.lua
+Core.lua
