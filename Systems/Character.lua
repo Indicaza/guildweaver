@@ -119,7 +119,7 @@ local function collectGuild()
     }
 end
 
-function GW.Character:Capture(reason)
+function GW.Character.Capture(reason)
     local name, realm = UnitFullName("player")
     name = name or UnitName("player")
     realm = realm or GetRealmName()
@@ -164,7 +164,7 @@ function GW.Character:Capture(reason)
     return snapshot
 end
 
-function GW.Character:GetCurrentSnapshot()
+function GW.Character.GetCurrentSnapshot()
     local name, realm = UnitFullName("player")
     name = name or UnitName("player")
     realm = realm or GetRealmName()
@@ -195,12 +195,12 @@ function GW.Character:Initialize()
             return
         end
 
-        self:Capture(event)
+        GW.Character.Capture(event)
     end)
 
     self.eventFrame = frame
 
     C_Timer.After(2, function()
-        self:Capture("INITIAL_DELAY")
+        GW.Character.Capture("INITIAL_DELAY")
     end)
 end
