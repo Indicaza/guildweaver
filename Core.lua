@@ -62,7 +62,7 @@ SlashCmdList.GUILDWEAVER = function(message)
     end
 
     if command == "snapshot" then
-        local snapshot = GW.Character:Capture("SLASH_COMMAND")
+        local snapshot = GW.Character.Capture("SLASH_COMMAND")
 
         if not snapshot then
             GW.Print("Character snapshot unavailable.")
