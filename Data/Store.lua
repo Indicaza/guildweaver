@@ -27,7 +27,7 @@ local function applyDefaults(source, target)
     end
 end
 
-function GW.Store:Initialize()
+function GW.Store.Initialize()
     if type(GuildweaverDB) ~= "table" then
         GuildweaverDB = {}
     end
@@ -38,15 +38,15 @@ function GW.Store:Initialize()
     GuildweaverDB.meta.addonVersion = GW.version
 end
 
-function GW.Store:GetDatabase()
+function GW.Store.GetDatabase()
     return GuildweaverDB
 end
 
-function GW.Store:GetMainFramePosition()
+function GW.Store.GetMainFramePosition()
     return GuildweaverDB.ui.mainFrame
 end
 
-function GW.Store:SetMainFramePosition(point, relativePoint, x, y)
+function GW.Store.SetMainFramePosition(point, relativePoint, x, y)
     local position = GuildweaverDB.ui.mainFrame
     position.point = point
     position.relativePoint = relativePoint
@@ -54,7 +54,7 @@ function GW.Store:SetMainFramePosition(point, relativePoint, x, y)
     position.y = y
 end
 
-function GW.Store:ResetMainFramePosition()
+function GW.Store.ResetMainFramePosition()
     local position = GuildweaverDB.ui.mainFrame
     position.point = defaults.ui.mainFrame.point
     position.relativePoint = defaults.ui.mainFrame.relativePoint
