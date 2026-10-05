@@ -2,10 +2,11 @@
 ## Title: Guildweaver
 ## Notes: Guild tools for World of Warcraft: Forever.
 ## Author: Indicaza
-## Version: 0.1.0-alpha.1
+## Version: 0.2.0-alpha.1
 ## SavedVariables: GuildweaverDB
 
 Utils/Debug.lua
 Data/Store.lua
 UI/MainFrame.lua
+Systems/Character.lua
 Core.lua

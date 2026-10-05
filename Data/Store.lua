@@ -3,7 +3,13 @@ local _, GW = ...
 GW.Store = GW.Store or {}
 
 local defaults = {
-    schemaVersion = 1,
+    schemaVersion = 2,
+    characters = {},
+    sync = {
+        outbound = {
+            characters = {},
+        },
+    },
     ui = {
         mainFrame = {
             point = "CENTER",
@@ -33,13 +39,30 @@ function GW.Store.Initialize()
     end
 
     applyDefaults(defaults, GuildweaverDB)
-
+    GuildweaverDB.schemaVersion = defaults.schemaVersion
     GuildweaverDB.meta = GuildweaverDB.meta or {}
     GuildweaverDB.meta.addonVersion = GW.version
 end
 
 function GW.Store.GetDatabase()
     return GuildweaverDB
+end
+
+function GW.Store.GetCharacterSnapshot(characterKey)
+    return GuildweaverDB.characters[characterKey]
+end
+
+function GW.Store.SetCharacterSnapshot(characterKey, snapshot)
+    GuildweaverDB.characters[characterKey] = snapshot
+
+    local existing = GuildweaverDB.sync.outbound.characters[characterKey]
+    local revision = existing and tonumber(existing.revision) or 0
+
+    GuildweaverDB.sync.outbound.characters[characterKey] = {
+        revision = revision + 1,
+        updatedAt = snapshot.capturedAt,
+        payload = snapshot,
+    }
 end
 
 function GW.Store.GetMainFramePosition()

@@ -8,6 +8,22 @@ local function normalizeCommand(message)
     return string.lower(trimmed)
 end
 
+local function professionSummary(snapshot)
+    local names = {}
+
+    for _, profession in ipairs(snapshot.professions or {}) do
+        if profession.kind == "primary" then
+            table.insert(names, profession.name .. " " .. tostring(profession.skillLevel))
+        end
+    end
+
+    if #names == 0 then
+        return "No primary professions"
+    end
+
+    return table.concat(names, ", ")
+end
+
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("PLAYER_LOGIN")
@@ -20,6 +36,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
 
         GW.Store.Initialize()
         GW.MainFrame:Initialize()
+        GW.Character:Initialize()
         return
     end
 
@@ -44,6 +61,26 @@ SlashCmdList.GUILDWEAVER = function(message)
         return
     end
 
+    if command == "snapshot" then
+        local snapshot = GW.Character.Capture("SLASH_COMMAND")
+
+        if not snapshot then
+            GW.Print("Character snapshot unavailable.")
+            return
+        end
+
+        GW.Print(
+            snapshot.name
+                .. " - Level "
+                .. tostring(snapshot.level)
+                .. " "
+                .. snapshot.class.name
+                .. " - "
+                .. professionSummary(snapshot)
+        )
+        return
+    end
+
     if command == "reset" then
         GW.MainFrame:ResetPosition()
         GW.Print("Window position reset.")
@@ -51,7 +88,7 @@ SlashCmdList.GUILDWEAVER = function(message)
     end
 
     if command == "help" then
-        GW.Print("/gw opens Guildweaver. /gw version shows the addon version. /gw reset resets the window position.")
+        GW.Print("/gw opens Guildweaver. /gw snapshot captures player data. /gw version shows the addon version. /gw reset resets the window position.")
         return
     end
 
