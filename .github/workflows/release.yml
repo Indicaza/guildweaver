@@ -66,6 +66,15 @@ jobs:
           cp Guildweaver.toc Core.lua dist/Guildweaver/
           cp -R Data Systems UI Utils dist/Guildweaver/
 
+          cat > dist/Guildweaver/Data/BridgeInbox.generated.lua <<'EOF'
+          local _, GW = ...
+
+          GW.BridgeInbox = {
+              schemaVersion = 1,
+              acknowledgedQuestActions = {},
+          }
+          EOF
+
           cat > dist/Guildweaver/release.json <<EOF
           {
             "schemaVersion": 1,
@@ -73,8 +82,8 @@ jobs:
             "releaseVersion": "${RELEASE_VERSION}",
             "channel": "${CHANNEL}",
             "commit": "${GITHUB_SHA}",
-            "savedVariablesSchema": 2,
-            "bridgeProtocol": 1
+            "savedVariablesSchema": 3,
+            "bridgeProtocol": 2
           }
           EOF
 
@@ -88,8 +97,8 @@ jobs:
             "releaseVersion": "${RELEASE_VERSION}",
             "channel": "${CHANNEL}",
             "commit": "${GITHUB_SHA}",
-            "savedVariablesSchema": 2,
-            "bridgeProtocol": 1,
+            "savedVariablesSchema": 3,
+            "bridgeProtocol": 2,
             "artifact": "Guildweaver.zip",
             "checksum": "Guildweaver.zip.sha256"
           }
@@ -98,6 +107,7 @@ jobs:
           test -s dist/Guildweaver.zip
           test -s dist/Guildweaver.zip.sha256
           test -s dist/release.json
+          test -s dist/Guildweaver/Data/BridgeInbox.generated.lua
 
       - name: Replace edge release
         if: github.event_name == 'push' && steps.meta.outputs.channel == 'edge'
