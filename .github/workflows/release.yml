@@ -1,0 +1,160 @@
+name: Release
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine release metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          addon_version="$(awk -F': ' '/^## Version:/ {print $2}' Guildweaver.toc | tr -d '\r')"
+          short_sha="${GITHUB_SHA::8}"
+
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            release_tag="${GITHUB_REF_NAME}"
+            release_version="${GITHUB_REF_NAME#v}"
+            title="Guildweaver ${release_version}"
+            if [[ "${release_version}" == *-alpha* || "${release_version}" == *-beta* || "${release_version}" == *-rc* ]]; then
+              channel="beta"
+              prerelease="true"
+            else
+              channel="stable"
+              prerelease="false"
+            fi
+          else
+            channel="edge"
+            release_tag="edge"
+            release_version="${addon_version}+edge.${short_sha}"
+            prerelease="true"
+            title="Guildweaver edge ${short_sha}"
+          fi
+
+          echo "addon_version=${addon_version}" >> "$GITHUB_OUTPUT"
+          echo "channel=${channel}" >> "$GITHUB_OUTPUT"
+          echo "release_tag=${release_tag}" >> "$GITHUB_OUTPUT"
+          echo "release_version=${release_version}" >> "$GITHUB_OUTPUT"
+          echo "prerelease=${prerelease}" >> "$GITHUB_OUTPUT"
+          echo "title=${title}" >> "$GITHUB_OUTPUT"
+
+      - name: Package addon
+        shell: bash
+        env:
+          ADDON_VERSION: ${{ steps.meta.outputs.addon_version }}
+          RELEASE_VERSION: ${{ steps.meta.outputs.release_version }}
+          CHANNEL: ${{ steps.meta.outputs.channel }}
+        run: |
+          set -euo pipefail
+          rm -rf dist
+          mkdir -p dist/Guildweaver
+          cp Guildweaver.toc Core.lua dist/Guildweaver/
+          cp -R Data Systems UI Utils dist/Guildweaver/
+
+          cat > dist/Guildweaver/release.json <<EOF
+          {
+            "schemaVersion": 1,
+            "addonVersion": "${ADDON_VERSION}",
+            "releaseVersion": "${RELEASE_VERSION}",
+            "channel": "${CHANNEL}",
+            "commit": "${GITHUB_SHA}",
+            "savedVariablesSchema": 2,
+            "bridgeProtocol": 1
+          }
+          EOF
+
+          (cd dist && zip -qr Guildweaver.zip Guildweaver)
+          sha256sum dist/Guildweaver.zip | awk '{print $1}' > dist/Guildweaver.zip.sha256
+
+          cat > dist/release.json <<EOF
+          {
+            "schemaVersion": 1,
+            "addonVersion": "${ADDON_VERSION}",
+            "releaseVersion": "${RELEASE_VERSION}",
+            "channel": "${CHANNEL}",
+            "commit": "${GITHUB_SHA}",
+            "savedVariablesSchema": 2,
+            "bridgeProtocol": 1,
+            "artifact": "Guildweaver.zip",
+            "checksum": "Guildweaver.zip.sha256"
+          }
+          EOF
+
+          test -s dist/Guildweaver.zip
+          test -s dist/Guildweaver.zip.sha256
+          test -s dist/release.json
+
+      - name: Replace edge release
+        if: github.event_name == 'push' && steps.meta.outputs.channel == 'edge'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release delete edge --cleanup-tag --yes >/dev/null 2>&1 || true
+          gh release create edge \
+            dist/Guildweaver.zip \
+            dist/Guildweaver.zip.sha256 \
+            dist/release.json \
+            --target "$GITHUB_SHA" \
+            --title "${{ steps.meta.outputs.title }}" \
+            --notes "Automated edge build from ${GITHUB_SHA}." \
+            --prerelease
+
+      - name: Publish tagged release
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(
+            "${{ steps.meta.outputs.release_tag }}"
+            dist/Guildweaver.zip
+            dist/Guildweaver.zip.sha256
+            dist/release.json
+            --title "${{ steps.meta.outputs.title }}"
+            --generate-notes
+          )
+          if [[ "${{ steps.meta.outputs.prerelease }}" == "true" ]]; then
+            args+=(--prerelease)
+          fi
+          gh release create "${args[@]}"
+
+      - name: Replace beta or stable channel release
+        if: github.event_name == 'push' && github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          channel="${{ steps.meta.outputs.channel }}"
+          gh release delete "$channel" --cleanup-tag --yes >/dev/null 2>&1 || true
+          args=(
+            "$channel"
+            dist/Guildweaver.zip
+            dist/Guildweaver.zip.sha256
+            dist/release.json
+            --target "$GITHUB_SHA"
+            --title "Guildweaver ${channel} — ${{ steps.meta.outputs.release_version }}"
+            --notes "Channel pointer for ${{ steps.meta.outputs.release_tag }}."
+          )
+          if [[ "${{ steps.meta.outputs.prerelease }}" == "true" ]]; then
+            args+=(--prerelease)
+          fi
+          gh release create "${args[@]}"
