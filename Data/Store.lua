@@ -3,11 +3,20 @@ local _, GW = ...
 GW.Store = GW.Store or {}
 
 local defaults = {
-    schemaVersion = 2,
+    schemaVersion = 3,
     characters = {},
     sync = {
+        inbound = {
+            quests = {
+                revision = 0,
+                updatedAt = nil,
+                items = {},
+            },
+        },
         outbound = {
             characters = {},
+            questActions = {},
+            nextQuestActionId = 0,
         },
     },
     ui = {
