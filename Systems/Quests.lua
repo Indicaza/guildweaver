@@ -3,9 +3,13 @@ local _, GW = ...
 GW.Quests = GW.Quests or {}
 
 local priorityOrder = {
+    Main = 1,
     Gold = 1,
+    High = 2,
     Red = 2,
+    Medium = 3,
     Blue = 3,
+    Low = 4,
     Green = 4,
 }
 
@@ -68,13 +72,13 @@ end
 
 function GW.Quests.HasLiveData()
     local snapshot = GW.Quests.GetSnapshot()
-    return snapshot and type(snapshot.items) == "table" and #snapshot.items > 0
+    return snapshot and snapshot.synced == true and type(snapshot.items) == "table"
 end
 
 function GW.Quests.GetSource()
     local snapshot = GW.Quests.GetSnapshot()
 
-    if snapshot and type(snapshot.items) == "table" and #snapshot.items > 0 then
+    if GW.Quests.HasLiveData() then
         return snapshot.items, "live"
     end
 
@@ -111,6 +115,10 @@ function GW.Quests.SetInboundSnapshot(snapshot)
         return false, "invalid_snapshot"
     end
 
+    if tonumber(snapshot.schemaVersion) ~= 1 then
+        return false, "unsupported_snapshot_schema"
+    end
+
     local database = GW.Store.GetDatabase()
     local current = database.sync.inbound.quests
     local nextRevision = tonumber(snapshot.revision) or 0
@@ -120,6 +128,7 @@ function GW.Quests.SetInboundSnapshot(snapshot)
         return false, "stale_revision"
     end
 
+    snapshot.synced = true
     database.sync.inbound.quests = snapshot
 
     if GW.QuestLog and GW.QuestLog.Refresh then
@@ -127,6 +136,25 @@ function GW.Quests.SetInboundSnapshot(snapshot)
     end
 
     return true
+end
+
+function GW.Quests.Initialize()
+    local inbox = GW.BridgeInbox
+    if type(inbox) ~= "table" or tonumber(inbox.schemaVersion) ~= 1 then
+        return
+    end
+
+    local database = GW.Store.GetDatabase()
+
+    if type(inbox.acknowledgedQuestActions) == "table" then
+        for _, actionId in ipairs(inbox.acknowledgedQuestActions) do
+            database.sync.outbound.questActions[tostring(actionId)] = nil
+        end
+    end
+
+    if type(inbox.quests) == "table" then
+        GW.Quests.SetInboundSnapshot(inbox.quests)
+    end
 end
 
 function GW.Quests.QueueAction(actionType, questId, objectiveId)

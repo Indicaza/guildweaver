@@ -35,6 +35,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         end
 
         GW.Store.Initialize()
+        GW.Quests.Initialize()
         GW.MainFrame:Initialize()
         GW.Character:Initialize()
         return
