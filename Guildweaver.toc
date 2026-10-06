@@ -15,6 +15,7 @@ Systems/TelemetryEvents.lua
 Systems/LootTelemetry.lua
 Systems/InventoryTelemetry.lua
 Systems/AuctionTelemetry.lua
+Systems/CollectorHealthTelemetry.lua
 Systems/Quests.lua
 UI/QuestLog.lua
 UI/MainFrame.lua
