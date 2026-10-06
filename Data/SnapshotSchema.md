@@ -69,6 +69,21 @@ The queue retains the newest 512 events. When offline long enough to exceed the 
 
 `GW.TelemetryEvents.Queue(eventType, payload)` is the collector-facing API. Domain collectors should enqueue observations through it rather than writing SavedVariables directly.
 
+## Loot observations
+
+`loot_observation` records the contents of an observed loot window rather than claiming every visible item was actually acquired. One observation contains:
+
+- capture reason/time
+- zone, subzone, map id and normalized map coordinates when exposed
+- instance context when exposed
+- current target GUID metadata when available
+- every visible loot slot with item id/link, icon, name, quantity, quality, currency id and quest flags
+- the source GUID/quantity pairs returned for each loot slot, including parsed GUID type and object id when the standard GUID shape exposes it
+
+`LOOT_READY` and `LOOT_OPENED` are both feature-detected. Equivalent windows observed within two seconds are deduplicated so clients that fire both events do not double-count the same drop table.
+
+This event is the foundation for rare-drop and gathering-yield analysis. Server-side analysis should treat it as an observation of a loot result, not proof that a player clicked every item.
+
 ## Character payload
 
 Character payload schema 2 includes:

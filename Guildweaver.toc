@@ -12,6 +12,7 @@ Data/MockData.lua
 Systems/Character.lua
 Systems/ProfessionTelemetry.lua
 Systems/TelemetryEvents.lua
+Systems/LootTelemetry.lua
 Systems/Quests.lua
 UI/QuestLog.lua
 UI/MainFrame.lua
