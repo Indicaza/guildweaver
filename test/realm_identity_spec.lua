@@ -4,7 +4,6 @@ local function assertEqual(actual, expected, label)
     end
 end
 
-GW = nil
 GuildweaverDB = nil
 GetServerTime = function() return 1791320496 end
 GetRealmName = function() return "Classic Beta PvE 2" end
