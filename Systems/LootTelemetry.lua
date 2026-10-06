@@ -207,12 +207,13 @@ function GW.LootTelemetry.Capture(reason)
     local capturedAt = GetServerTime()
     local fingerprint = observationFingerprint(items)
 
-    if self.lastFingerprint == fingerprint and capturedAt - (self.lastCapturedAt or 0) <= DEDUPE_WINDOW_SECONDS then
+    if GW.LootTelemetry.lastFingerprint == fingerprint
+        and capturedAt - (GW.LootTelemetry.lastCapturedAt or 0) <= DEDUPE_WINDOW_SECONDS then
         return nil, "duplicate_loot_window"
     end
 
-    self.lastFingerprint = fingerprint
-    self.lastCapturedAt = capturedAt
+    GW.LootTelemetry.lastFingerprint = fingerprint
+    GW.LootTelemetry.lastCapturedAt = capturedAt
 
     local targetGuid = type(_G.UnitGUID) == "function" and _G.UnitGUID("target") or nil
     local payload = {
