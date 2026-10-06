@@ -1,6 +1,6 @@
 # Character telemetry contract
 
-Guildweaver SavedVariables schema 4 keeps the existing per-character snapshot mailbox and adds a generic bounded telemetry outbox.
+Guildweaver SavedVariables schema 4 keeps the existing per-character snapshot mailbox and adds generic state and event telemetry outboxes.
 
 ## Existing compatibility mailbox
 
@@ -15,7 +15,7 @@ Guildweaver SavedVariables schema 4 keeps the existing per-character snapshot ma
 
 The revision only changes when stable character data changes. Capture timestamps and capture reasons do not create a new revision by themselves.
 
-## Generic telemetry mailbox
+## Generic telemetry state mailbox
 
 `GuildweaverDB.sync.outbound.telemetry[streamKey]` stores the newest unsuperseded snapshot for a telemetry stream.
 
@@ -45,7 +45,29 @@ Envelope schema 1 contains:
 - optional `guildId`
 - `payload`
 
-The outbox is bounded and keeps only the latest revision per stream. This is intentionally suitable for state snapshots rather than an unbounded event log.
+The state outbox is bounded and keeps only the latest revision per stream.
+
+## Generic telemetry event queue
+
+High-volume observations must not use latest-state semantics. `GuildweaverDB.sync.outbound.events` is a separate bounded queue for append-only observations such as loot, gathering, crafts, recipe discoveries, vendors, and future AH samples.
+
+The queue contains:
+
+- monotonic `nextSequence`
+- cumulative `dropped` count
+- `items[eventId]`
+
+Each event record contains:
+
+- record `schemaVersion`
+- stable `eventId`
+- monotonic `sequence`
+- `createdAt`
+- the same generic envelope schema used by state telemetry
+
+The queue retains the newest 512 events. When offline long enough to exceed the bound, the oldest observation is dropped and `dropped` increments. Event ids are stable across bridge retries, allowing server-side idempotency even if bridge state is lost.
+
+`GW.TelemetryEvents.Queue(eventType, payload)` is the collector-facing API. Domain collectors should enqueue observations through it rather than writing SavedVariables directly.
 
 ## Character payload
 
@@ -69,7 +91,7 @@ Character payload schema 2 includes:
 
 Recipe capture is opportunistic and never opens profession UI on the player's behalf. Previously captured recipe data is retained when later character captures occur outside the profession UI.
 
-`/gw telemetry` prints a compact local coverage summary so missing level/spec/talent/profession/recipe data can be distinguished from transport problems.
+`/gw telemetry` prints a compact local coverage summary including event queue occupancy/drop count so missing data can be distinguished from transport or offline-backlog problems.
 
 ## Privacy
 

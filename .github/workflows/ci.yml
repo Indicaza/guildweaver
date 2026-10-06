@@ -31,6 +31,7 @@ jobs:
         run: |
           lua5.1 test/character_spec.lua
           lua5.1 test/profession_telemetry_spec.lua
+          lua5.1 test/telemetry_events_spec.lua
 
       - name: Validate TOC file manifest
         shell: bash
