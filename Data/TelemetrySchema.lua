@@ -371,9 +371,10 @@ local function normalizeTalents(talents, snapshot)
         allocations = {},
     }
     local definitions = {}
+    local hasDeclaredTreeIds = #state.treeIds > 0
 
     for _, tree in ipairs(type(talents.trees) == "table" and talents.trees or {}) do
-        if not state.treeIds or #state.treeIds == 0 then
+        if not hasDeclaredTreeIds then
             table.insert(state.treeIds, tree.id)
         end
 
@@ -441,7 +442,8 @@ local function normalizeCharacterSnapshot(snapshot)
 end
 
 local function streamKeyPart(value)
-    return string.lower(tostring(value or "unknown")):gsub("[^%w]+", "-")
+    local normalized = string.lower(tostring(value or "unknown")):gsub("[^%w]+", "-")
+    return normalized
 end
 
 local originalSetCharacterSnapshot = GW.Store.SetCharacterSnapshot
