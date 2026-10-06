@@ -24,6 +24,32 @@ local function professionSummary(snapshot)
     return table.concat(names, ", ")
 end
 
+local function printTelemetryStatus()
+    local status = GW.Store.GetTelemetryStatus()
+    GW.Print("Telemetry streams: " .. tostring(status.count) .. "/" .. tostring(status.limit))
+
+    if status.count == 0 then
+        GW.Print("No telemetry captured yet.")
+        return
+    end
+
+    for _, stream in ipairs(status.streams) do
+        GW.Print(
+            tostring(stream.streamKey)
+                .. " | "
+                .. tostring(stream.kind)
+                .. " | rev "
+                .. tostring(stream.revision)
+                .. " | "
+                .. tostring(stream.eventType or "unknown")
+                .. " | schema "
+                .. tostring(stream.schemaVersion or "?")
+                .. " | captured "
+                .. tostring(stream.updatedAt or "?")
+        )
+    end
+end
+
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("PLAYER_LOGIN")
@@ -82,6 +108,11 @@ SlashCmdList.GUILDWEAVER = function(message)
         return
     end
 
+    if command == "telemetry" then
+        printTelemetryStatus()
+        return
+    end
+
     if command == "reset" then
         GW.MainFrame:ResetPosition()
         GW.Print("Window position reset.")
@@ -89,7 +120,7 @@ SlashCmdList.GUILDWEAVER = function(message)
     end
 
     if command == "help" then
-        GW.Print("/gw opens Guildweaver. Sync is automatic on normal play, reload, and logout. /gw snapshot is diagnostic only. /gw version shows the addon version. /gw reset resets the window position.")
+        GW.Print("/gw opens Guildweaver. Sync is automatic on normal play, reload, and logout. /gw snapshot captures a diagnostic snapshot. /gw telemetry shows captured telemetry streams. /gw version shows the addon version. /gw reset resets the window position.")
         return
     end
 
