@@ -89,7 +89,7 @@ SlashCmdList.GUILDWEAVER = function(message)
     end
 
     if command == "help" then
-        GW.Print("/gw opens Guildweaver. /gw snapshot captures player data. /gw version shows the addon version. /gw reset resets the window position.")
+        GW.Print("/gw opens Guildweaver. Sync is automatic on normal play, reload, and logout. /gw snapshot is diagnostic only. /gw version shows the addon version. /gw reset resets the window position.")
         return
     end
 
