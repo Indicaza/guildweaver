@@ -75,6 +75,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         GW.ProfessionTelemetry:Initialize()
         GW.LootTelemetry:Initialize()
         GW.InventoryTelemetry:Initialize()
+        GW.AuctionTelemetry:Initialize()
         return
     end
 
