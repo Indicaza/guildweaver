@@ -73,6 +73,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         GW.MainFrame:Initialize()
         GW.Character:Initialize()
         GW.ProfessionTelemetry:Initialize()
+        GW.LootTelemetry:Initialize()
         return
     end
 
