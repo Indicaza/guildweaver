@@ -24,6 +24,27 @@ local function professionSummary(snapshot)
     return table.concat(names, ", ")
 end
 
+local function telemetrySummary()
+    if not GW.ProfessionTelemetry or not GW.ProfessionTelemetry.GetDiagnostics then
+        return "Telemetry diagnostics unavailable."
+    end
+
+    local diagnostics = GW.ProfessionTelemetry.GetDiagnostics()
+    local specName = diagnostics.specialization and diagnostics.specialization.name or "unknown spec"
+    local talentApi = diagnostics.talentApi or "no talent API"
+
+    return "Level "
+        .. tostring(diagnostics.level or "?")
+        .. " | "
+        .. specName
+        .. " | talents: "
+        .. talentApi
+        .. " | professions: "
+        .. tostring(diagnostics.professionCount or 0)
+        .. " | known recipes: "
+        .. tostring(diagnostics.knownRecipeCount or 0)
+end
+
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("PLAYER_LOGIN")
@@ -38,6 +59,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         GW.Quests.Initialize()
         GW.MainFrame:Initialize()
         GW.Character:Initialize()
+        GW.ProfessionTelemetry:Initialize()
         return
     end
 
@@ -82,6 +104,11 @@ SlashCmdList.GUILDWEAVER = function(message)
         return
     end
 
+    if command == "telemetry" then
+        GW.Print(telemetrySummary())
+        return
+    end
+
     if command == "reset" then
         GW.MainFrame:ResetPosition()
         GW.Print("Window position reset.")
@@ -89,7 +116,7 @@ SlashCmdList.GUILDWEAVER = function(message)
     end
 
     if command == "help" then
-        GW.Print("/gw opens Guildweaver. Sync is automatic on normal play, reload, and logout. /gw snapshot is diagnostic only. /gw version shows the addon version. /gw reset resets the window position.")
+        GW.Print("/gw opens Guildweaver. Sync is automatic on normal play, reload, and logout. /gw snapshot captures the current character. /gw telemetry shows collector coverage. /gw version shows the addon version. /gw reset resets the window position.")
         return
     end
 
