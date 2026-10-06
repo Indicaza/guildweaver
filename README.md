@@ -11,6 +11,9 @@ The first milestone establishes a reliable addon foundation:
 - WoW Forever Interface 16001
 - Lua 5.1-compatible code
 - SavedVariables through `GuildweaverDB`
+- automatic character snapshots during normal play
+- automatic final snapshot on `/reload`, logout, or UI shutdown before SavedVariables are flushed
+- background bridge sync with no manual export step
 - `/gw` and `/guildweaver` slash commands
 - draggable native WoW frame
 - persisted frame position
@@ -20,8 +23,13 @@ The first milestone establishes a reliable addon foundation:
 
 - `/gw` toggles the Guildweaver window
 - `/gw version` prints the current addon version
+- `/gw snapshot` captures a diagnostic snapshot; normal synchronization does not require it
 - `/gw reset` resets the window position
 - `/gw help` prints command help
+
+## Synchronization
+
+Guildweaver is designed so players do not need to export data manually. The addon continuously updates its in-memory outbound SavedVariables state as character data changes. When WoW writes SavedVariables to disk, including during `/reload` and logout, the Guildweaver Bridge notices the new revision and sends it to the paired Holdfast service automatically.
 
 ## Local development
 
