@@ -25,6 +25,31 @@ local function professionSummary(snapshot)
 end
 
 local function telemetrySummary()
+    if GW.CollectorHealthTelemetry and GW.CollectorHealthTelemetry.GetDiagnostics then
+        local diagnostics = GW.CollectorHealthTelemetry.GetDiagnostics()
+        if diagnostics then
+            local observed = diagnostics.observed or {}
+            local eventQueue = diagnostics.eventQueue or {}
+            local talentApi = observed.talentApi or "no talent API"
+
+            return "streams: "
+                .. tostring(observed.stateStreamCount or 0)
+                .. " | talents: "
+                .. talentApi
+                .. " | professions: "
+                .. tostring(observed.professionCount or 0)
+                .. " | known recipes: "
+                .. tostring(observed.knownRecipeCount or 0)
+                .. " | events: "
+                .. tostring(eventQueue.queued or 0)
+                .. "/"
+                .. tostring(eventQueue.capacity or 0)
+                .. " queued, "
+                .. tostring(eventQueue.dropped or 0)
+                .. " dropped"
+        end
+    end
+
     if not GW.ProfessionTelemetry or not GW.ProfessionTelemetry.GetDiagnostics then
         return "Telemetry diagnostics unavailable."
     end
@@ -76,6 +101,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         GW.LootTelemetry:Initialize()
         GW.InventoryTelemetry:Initialize()
         GW.AuctionTelemetry:Initialize()
+        GW.CollectorHealthTelemetry:Initialize()
         return
     end
 
