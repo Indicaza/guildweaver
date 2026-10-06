@@ -24,6 +24,7 @@ Current state streams include:
 - `character_snapshot:<anonymous character id>`
 - `profession_snapshot:<anonymous character id>`
 - `recipe_catalog_snapshot:<anonymous character id>:<profession key>`
+- `inventory_snapshot:<anonymous character id>`
 
 Each record contains:
 
@@ -83,6 +84,19 @@ The queue retains the newest 512 events. When offline long enough to exceed the 
 `LOOT_READY` and `LOOT_OPENED` are both feature-detected. Equivalent windows observed within two seconds are deduplicated so clients that fire both events do not double-count the same drop table.
 
 This event is the foundation for rare-drop and gathering-yield analysis. Server-side analysis should treat it as an observation of a loot result, not proof that a player clicked every item.
+
+## Carried inventory state
+
+`inventory_snapshot` records the current character's carried bags using modern `C_Container` APIs when available and legacy container APIs as a fallback.
+
+The payload includes:
+
+- per-bag slot/used/free counts
+- item id/link, icon and quality
+- aggregate quantity and stack count per item
+- aggregate bound vs unbound quantities when the client exposes binding state
+
+The collector intentionally excludes gold, bank contents, mail and Auction House state. Bag changes are fingerprinted as latest state, so repeated unchanged captures do not create new revisions.
 
 ## Character payload
 
