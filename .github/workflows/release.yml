@@ -82,7 +82,7 @@ jobs:
             "releaseVersion": "${RELEASE_VERSION}",
             "channel": "${CHANNEL}",
             "commit": "${GITHUB_SHA}",
-            "savedVariablesSchema": 3,
+            "savedVariablesSchema": 4,
             "bridgeProtocol": 2
           }
           EOF
@@ -97,7 +97,7 @@ jobs:
             "releaseVersion": "${RELEASE_VERSION}",
             "channel": "${CHANNEL}",
             "commit": "${GITHUB_SHA}",
-            "savedVariablesSchema": 3,
+            "savedVariablesSchema": 4,
             "bridgeProtocol": 2,
             "artifact": "Guildweaver.zip",
             "checksum": "Guildweaver.zip.sha256"

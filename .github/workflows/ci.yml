@@ -27,6 +27,9 @@ jobs:
       - name: Run Luacheck
         run: luacheck .
 
+      - name: Run addon tests
+        run: lua5.1 test/character_spec.lua
+
       - name: Validate TOC file manifest
         shell: bash
         run: |
