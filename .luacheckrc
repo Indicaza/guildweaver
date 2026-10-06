@@ -3,6 +3,7 @@ max_line_length = false
 
 globals = {
     "C_AddOns",
+    "C_AuctionHouse",
     "C_ClassTalents",
     "C_Container",
     "C_Map",
