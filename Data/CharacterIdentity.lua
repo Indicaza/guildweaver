@@ -1,0 +1,108 @@
+local _, GW = ...
+
+local function currentRealm()
+    if type(GetRealmName) ~= "function" then
+        return nil
+    end
+
+    local ok, realm = pcall(GetRealmName)
+    if not ok or type(realm) ~= "string" or realm == "" then
+        return nil
+    end
+
+    return realm
+end
+
+local function nameFromKey(characterKey)
+    if type(characterKey) ~= "string" then
+        return nil
+    end
+
+    return characterKey:match("^[^:]*:(.+)$")
+end
+
+local function canonicalCharacterKey(characterKey, characterName)
+    local realm = currentRealm()
+    local name = characterName or nameFromKey(characterKey)
+
+    if not realm or not name or name == "" then
+        return characterKey
+    end
+
+    return string.lower(realm .. ":" .. name)
+end
+
+local function migrateCharacterKey(oldKey, newKey)
+    if not oldKey or not newKey or oldKey == newKey then
+        return
+    end
+
+    local database = GW.Store.GetDatabase()
+    if type(database) ~= "table" then
+        return
+    end
+
+    database.meta = database.meta or {}
+    database.meta.characterIds = database.meta.characterIds or {}
+    local ids = database.meta.characterIds
+    if ids[oldKey] and not ids[newKey] then
+        ids[newKey] = ids[oldKey]
+    end
+    ids[oldKey] = nil
+
+    database.characters = database.characters or {}
+    if database.characters[oldKey] and not database.characters[newKey] then
+        database.characters[newKey] = database.characters[oldKey]
+    end
+    database.characters[oldKey] = nil
+
+    local outbound = database.sync and database.sync.outbound and database.sync.outbound.characters
+    if type(outbound) == "table" then
+        if outbound[oldKey] and not outbound[newKey] then
+            outbound[newKey] = outbound[oldKey]
+        end
+        outbound[oldKey] = nil
+    end
+end
+
+local originalGetCharacterId = GW.Store.GetCharacterId
+local originalGetCharacterSnapshot = GW.Store.GetCharacterSnapshot
+local originalSetCharacterSnapshot = GW.Store.SetCharacterSnapshot
+local originalSetTelemetrySnapshot = GW.Store.SetTelemetrySnapshot
+
+function GW.Store.GetCharacterId(characterKey)
+    local canonicalKey = canonicalCharacterKey(characterKey)
+    migrateCharacterKey(characterKey, canonicalKey)
+    return originalGetCharacterId(canonicalKey)
+end
+
+function GW.Store.GetCharacterSnapshot(characterKey)
+    local canonicalKey = canonicalCharacterKey(characterKey)
+    migrateCharacterKey(characterKey, canonicalKey)
+    return originalGetCharacterSnapshot(canonicalKey)
+end
+
+function GW.Store.SetCharacterSnapshot(characterKey, snapshot)
+    local canonicalKey = canonicalCharacterKey(characterKey, snapshot and snapshot.name)
+    migrateCharacterKey(characterKey, canonicalKey)
+
+    local realm = currentRealm()
+    if type(snapshot) == "table" then
+        snapshot.characterKey = canonicalKey
+        snapshot.realm = realm or snapshot.realm
+    end
+
+    return originalSetCharacterSnapshot(canonicalKey, snapshot)
+end
+
+function GW.Store.SetTelemetrySnapshot(streamKey, envelope)
+    local realm = currentRealm()
+    if realm and type(envelope) == "table" and envelope.eventType == "character_snapshot" then
+        envelope.realm = realm
+        if type(envelope.payload) == "table" then
+            envelope.payload.realm = realm
+        end
+    end
+
+    return originalSetTelemetrySnapshot(streamKey, envelope)
+end
