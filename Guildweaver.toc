@@ -10,6 +10,7 @@ Data/BridgeInbox.generated.lua
 Data/Store.lua
 Data/MockData.lua
 Systems/Character.lua
+Systems/ProfessionTelemetry.lua
 Systems/Quests.lua
 UI/QuestLog.lua
 UI/MainFrame.lua
