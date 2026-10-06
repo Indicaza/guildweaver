@@ -4,6 +4,7 @@ max_line_length = false
 globals = {
     "C_AddOns",
     "C_ClassTalents",
+    "C_Container",
     "C_Map",
     "C_ProfSpecs",
     "C_SpecializationInfo",
@@ -50,6 +51,7 @@ globals = {
     "GetTradeSkillRecipeLink",
     "GetZoneText",
     "GuildweaverDB",
+    "NUM_BAG_SLOTS",
     "SLASH_GUILDWEAVER1",
     "SLASH_GUILDWEAVER2",
     "SlashCmdList",
