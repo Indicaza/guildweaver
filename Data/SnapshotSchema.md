@@ -50,7 +50,7 @@ The state outbox is bounded and keeps only the latest revision per stream.
 
 ## Generic telemetry event queue
 
-High-volume observations must not use latest-state semantics. `GuildweaverDB.sync.outbound.events` is a separate bounded queue for append-only observations such as loot, gathering, crafts, recipe discoveries, vendors, and future AH samples.
+High-volume observations must not use latest-state semantics. `GuildweaverDB.sync.outbound.events` is a separate bounded queue for append-only observations such as loot, gathering, crafts, recipe discoveries, vendors, and Auction House samples.
 
 The queue contains:
 
@@ -98,6 +98,24 @@ The payload includes:
 
 The collector intentionally excludes gold, bank contents, mail and Auction House state. Bag changes are fingerprinted as latest state, so repeated unchanged captures do not create new revisions.
 
+## Auction observations
+
+`auction_observation` passively records result sets the player has already requested in the Auction House UI. The addon does not automate searches, purchases, bids, postings, or scans.
+
+Modern clients are feature-detected for browse, commodity-search, and item-search result APIs. A legacy list-results fallback is also supported when exposed by the client.
+
+Observations can include:
+
+- item id/item key/item link when exposed
+- quantity or total observed quantity
+- minimum price, unit price, minimum bid, current bid and buyout when exposed
+- auction id, time-left and sale-status metadata when exposed
+- result count, truncation state, API family and the item/item-key query context necessary to interpret the result set
+
+To bound SavedVariables growth, each observation records at most 200 result rows. Equivalent results for the same observation mode within five seconds are suppressed. Results seen later remain separate historical observations so the server can build price and supply history.
+
+Owner and bidder identities are intentionally excluded even when the client API exposes them. The collector is interested in market state, not player identity.
+
 ## Character payload
 
 Character payload schema 2 includes:
@@ -124,4 +142,4 @@ Recipe capture is opportunistic and never opens profession UI on the player's be
 
 ## Privacy
 
-Guildweaver does not collect BattleTags, account identifiers, whispers, chat logs, or private messages. Installation and character identifiers are locally generated anonymous ids. The generic telemetry payload does not depend on inspect spam or remote-player inspection.
+Guildweaver does not collect BattleTags, account identifiers, whispers, chat logs, private messages, Auction House owner names, or bidder names. Installation and character identifiers are locally generated anonymous ids. The generic telemetry payload does not depend on inspect spam or remote-player inspection.
