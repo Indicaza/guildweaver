@@ -17,7 +17,13 @@ The revision only changes when stable character data changes. Capture timestamps
 
 ## Generic telemetry mailbox
 
-`GuildweaverDB.sync.outbound.telemetry[streamKey]` stores the newest unsuperseded snapshot for a telemetry stream. Initial streams use `character_snapshot:<anonymous character id>`.
+`GuildweaverDB.sync.outbound.telemetry[streamKey]` stores the newest unsuperseded snapshot for a telemetry stream.
+
+Current state streams include:
+
+- `character_snapshot:<anonymous character id>`
+- `profession_snapshot:<anonymous character id>`
+- `recipe_catalog_snapshot:<anonymous character id>:<profession key>`
 
 Each record contains:
 
@@ -55,7 +61,15 @@ Character payload schema 2 includes:
 - recipe snapshots collected opportunistically while the profession UI exposes them
 - every equipped slot with item id/link, quality, item level, icon, parsed enchant/gem/bonus/link modifier data, and safely cached item metadata
 
+## Profession and recipe payloads
+
+`profession_snapshot` is independently collected with explicit profession slots instead of iterating the potentially sparse return values from `GetProfessions()`. It records primary and secondary profession names, skill/max skill, modifiers, specialization metadata, recipe scan freshness, and recipe counts.
+
+`recipe_catalog_snapshot` is emitted per profession whenever the character collector has a recipe catalog available. It carries the profession skill state plus the retained recipe list, crafted item ids, icons, and reagent metadata already exposed by the character collector.
+
 Recipe capture is opportunistic and never opens profession UI on the player's behalf. Previously captured recipe data is retained when later character captures occur outside the profession UI.
+
+`/gw telemetry` prints a compact local coverage summary so missing level/spec/talent/profession/recipe data can be distinguished from transport problems.
 
 ## Privacy
 
