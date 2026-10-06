@@ -214,6 +214,7 @@ function GW.Store.SetTelemetrySnapshot(streamKey, envelope)
 
     local revision = existing and tonumber(existing.revision) or 0
     outbound[streamKey] = {
+        kind = "state",
         revision = revision + 1,
         updatedAt = envelope.capturedAt,
         fingerprint = nextFingerprint,
@@ -221,6 +222,32 @@ function GW.Store.SetTelemetrySnapshot(streamKey, envelope)
     }
     pruneTelemetry(outbound)
     return true
+end
+
+function GW.Store.GetTelemetryStatus()
+    local outbound = GuildweaverDB and GuildweaverDB.sync and GuildweaverDB.sync.outbound and GuildweaverDB.sync.outbound.telemetry or {}
+    local streams = {}
+
+    for streamKey, record in pairs(outbound) do
+        table.insert(streams, {
+            streamKey = streamKey,
+            kind = record.kind or "state",
+            revision = tonumber(record.revision) or 0,
+            updatedAt = record.updatedAt,
+            eventType = record.envelope and record.envelope.eventType or nil,
+            schemaVersion = record.envelope and record.envelope.schemaVersion or nil,
+        })
+    end
+
+    table.sort(streams, function(left, right)
+        return tostring(left.streamKey) < tostring(right.streamKey)
+    end)
+
+    return {
+        count = #streams,
+        limit = MAX_TELEMETRY_STREAMS,
+        streams = streams,
+    }
 end
 
 function GW.Store.GetMainFramePosition()
@@ -239,6 +266,6 @@ function GW.Store.ResetMainFramePosition()
     local position = GuildweaverDB.ui.mainFrame
     position.point = defaults.ui.mainFrame.point
     position.relativePoint = defaults.ui.mainFrame.relativePoint
-    position.x = defaults.ui.mainFrame.x
-    position.y = defaults.ui.mainFrame.y
+    position.x = 0
+    position.y = 0
 end
