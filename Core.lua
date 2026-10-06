@@ -32,6 +32,18 @@ local function telemetrySummary()
     local diagnostics = GW.ProfessionTelemetry.GetDiagnostics()
     local specName = diagnostics.specialization and diagnostics.specialization.name or "unknown spec"
     local talentApi = diagnostics.talentApi or "no talent API"
+    local eventStats = GW.TelemetryEvents and GW.TelemetryEvents.GetStats and GW.TelemetryEvents.GetStats() or nil
+    local queueSummary = ""
+
+    if eventStats then
+        queueSummary = " | events: "
+            .. tostring(eventStats.queued)
+            .. "/"
+            .. tostring(eventStats.capacity)
+            .. " queued, "
+            .. tostring(eventStats.dropped)
+            .. " dropped"
+    end
 
     return "Level "
         .. tostring(diagnostics.level or "?")
@@ -43,6 +55,7 @@ local function telemetrySummary()
         .. tostring(diagnostics.professionCount or 0)
         .. " | known recipes: "
         .. tostring(diagnostics.knownRecipeCount or 0)
+        .. queueSummary
 end
 
 local eventFrame = CreateFrame("Frame")
@@ -116,7 +129,7 @@ SlashCmdList.GUILDWEAVER = function(message)
     end
 
     if command == "help" then
-        GW.Print("/gw opens Guildweaver. Sync is automatic on normal play, reload, and logout. /gw snapshot captures the current character. /gw telemetry shows collector coverage. /gw version shows the addon version. /gw reset resets the window position.")
+        GW.Print("/gw opens Guildweaver. Sync is automatic on normal play, reload, and logout. /gw snapshot captures the current character. /gw telemetry shows collector coverage and event queue health. /gw version shows the addon version. /gw reset resets the window position.")
         return
     end
 
