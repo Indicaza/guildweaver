@@ -35,6 +35,14 @@ local function identityFromKey(characterKey, snapshot)
     local keyRealm, keyName, keyLastName = splitCharacterKey(characterKey)
     local firstName = snapshot and (snapshot.firstName or snapshot.name) or keyName
     local lastName = snapshot and (snapshot.lastName or snapshot.surname) or keyLastName
+    local reportedSecondName = snapshot and snapshot.realm or nil
+
+    if realm and not lastName and reportedSecondName and normalize(reportedSecondName) ~= normalize(realm) then
+        -- Before the compatibility layer runs, Character.lua still has the
+        -- original-cased second UnitFullName value in snapshot.realm. Forever
+        -- uses that value for the surname, so prefer it over the lowercased key.
+        lastName = reportedSecondName
+    end
 
     if realm and keyRealm and keyName and not lastName and normalize(keyRealm) ~= normalize(realm) then
         -- WoW Forever returns the character surname as UnitFullName's second value.
