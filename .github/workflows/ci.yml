@@ -31,6 +31,7 @@ jobs:
         run: |
           lua5.1 test/character_spec.lua
           lua5.1 test/realm_identity_spec.lua
+          lua5.1 test/armory_capture_spec.lua
           lua5.1 test/telemetry_schema_spec.lua
           lua5.1 test/session_capture_spec.lua
 
