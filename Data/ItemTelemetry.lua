@@ -1,5 +1,6 @@
 local _, GW = ...
 
+local Globals = _G or {}
 local MAX_TOOLTIP_LINES = 40
 local MAX_TOOLTIP_TEXT = 320
 local tooltipScanner = nil
@@ -58,11 +59,12 @@ local function normalizeTooltipLine(line)
 end
 
 local function collectModernTooltip(itemLink)
-    if not C_TooltipInfo or type(C_TooltipInfo.GetHyperlink) ~= "function" then
+    local tooltipInfo = Globals.C_TooltipInfo
+    if type(tooltipInfo) ~= "table" or type(tooltipInfo.GetHyperlink) ~= "function" then
         return nil
     end
 
-    local ok, data = pcall(C_TooltipInfo.GetHyperlink, itemLink)
+    local ok, data = pcall(tooltipInfo.GetHyperlink, itemLink)
     if not ok or type(data) ~= "table" or type(data.lines) ~= "table" then
         return nil
     end
@@ -144,10 +146,9 @@ local function collectLegacyTooltip(itemLink)
 
     local lines = {}
     local count = math.min(tonumber(lineCount) or 0, MAX_TOOLTIP_LINES)
-    local globals = _G or {}
     for index = 1, count do
-        local leftField = globals["GuildweaverItemScanTooltipTextLeft" .. index]
-        local rightField = globals["GuildweaverItemScanTooltipTextRight" .. index]
+        local leftField = Globals["GuildweaverItemScanTooltipTextLeft" .. index]
+        local rightField = Globals["GuildweaverItemScanTooltipTextRight" .. index]
         local left = fontStringText(leftField)
         local right = fontStringText(rightField)
         if left or right then
@@ -175,11 +176,12 @@ local function collectTooltip(itemLink)
 end
 
 local function collectStats(itemLink)
-    if type(GetItemStats) ~= "function" then
+    local getItemStats = Globals.GetItemStats
+    if type(getItemStats) ~= "function" then
         return nil
     end
 
-    local ok, stats = pcall(GetItemStats, itemLink)
+    local ok, stats = pcall(getItemStats, itemLink)
     if not ok or type(stats) ~= "table" then
         return nil
     end
@@ -200,11 +202,12 @@ local function collectStats(itemLink)
 end
 
 local function collectDurability(slotId)
-    if not slotId or type(GetInventoryItemDurability) ~= "function" then
+    local getDurability = Globals.GetInventoryItemDurability
+    if not slotId or type(getDurability) ~= "function" then
         return nil
     end
 
-    local ok, current, maximum = pcall(GetInventoryItemDurability, slotId)
+    local ok, current, maximum = pcall(getDurability, slotId)
     if not ok or not tonumber(maximum) or tonumber(maximum) <= 0 then
         return nil
     end
@@ -216,11 +219,12 @@ local function collectDurability(slotId)
 end
 
 local function collectSpell(itemLink)
-    if type(GetItemSpell) ~= "function" then
+    local getItemSpell = Globals.GetItemSpell
+    if type(getItemSpell) ~= "function" then
         return nil
     end
 
-    local ok, name, spellId = pcall(GetItemSpell, itemLink)
+    local ok, name, spellId = pcall(getItemSpell, itemLink)
     if not ok or (not name and not spellId) then
         return nil
     end
