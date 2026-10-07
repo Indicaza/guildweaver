@@ -14,20 +14,41 @@ local function compact(value)
 end
 
 local originalCapture = GW.CharacterStats and GW.CharacterStats.Capture
+local safeNumber = GW.CharacterStats and GW.CharacterStats.SafeNumber
+
+local function number(value)
+    if type(safeNumber) ~= "function" then
+        return nil
+    end
+    return safeNumber(value)
+end
 
 local function capture()
-    local snapshot = type(originalCapture) == "function" and originalCapture() or { schemaVersion = 1 }
+    -- Stats are useful enrichment, never a reason to abort the authoritative
+    -- character snapshot. Any client/API surprise degrades to partial stats.
+    local ok, snapshot = pcall(function()
+        return type(originalCapture) == "function" and originalCapture() or { schemaVersion = 1 }
+    end)
+    if not ok or type(snapshot) ~= "table" then
+        snapshot = { schemaVersion = 1 }
+    end
+
     snapshot.utility = type(snapshot.utility) == "table" and snapshot.utility or {}
 
     local getAverageItemLevel = Globals.GetAverageItemLevel
     if type(getAverageItemLevel) == "function" then
-        local ok, overall, equipped, pvp = pcall(getAverageItemLevel)
-        if ok and (tonumber(overall) or tonumber(equipped) or tonumber(pvp)) then
-            snapshot.utility.itemLevel = {
-                overall = tonumber(overall),
-                equipped = tonumber(equipped),
-                pvp = tonumber(pvp),
-            }
+        local callOk, overall, equipped, pvp = pcall(getAverageItemLevel)
+        if callOk then
+            local overallValue = number(overall)
+            local equippedValue = number(equipped)
+            local pvpValue = number(pvp)
+            if overallValue or equippedValue or pvpValue then
+                snapshot.utility.itemLevel = {
+                    overall = overallValue,
+                    equipped = equippedValue,
+                    pvp = pvpValue,
+                }
+            end
         end
     end
 

@@ -90,12 +90,63 @@ local function safeCall(name, ...)
     return a, b, c, d, e, f, g, h
 end
 
+-- WoW Forever 1.60.1 can return Secret Values from combat/stat APIs. Addons may
+-- store or pass those values, but tainted execution cannot compare or perform
+-- arithmetic on them. Treat inaccessible values as unavailable telemetry.
+local function canOperate(value)
+    local canAccess = Globals.canaccessvalue
+    if type(canAccess) == "function" then
+        local ok, allowed = pcall(canAccess, value)
+        if ok then
+            return allowed == true
+        end
+    end
+
+    local isSecret = Globals.issecretvalue
+    if type(isSecret) == "function" then
+        local ok, secret = pcall(isSecret, value)
+        if ok and secret == true then
+            return false
+        end
+    end
+
+    return true
+end
+
 local function number(value)
-    local parsed = tonumber(value)
-    if not parsed or parsed ~= parsed then
+    if not canOperate(value) then
         return nil
     end
+
+    local ok, parsed = pcall(tonumber, value)
+    if not ok or parsed == nil then
+        return nil
+    end
+
+    -- Keep the NaN guard, but put the comparison behind pcall as a final
+    -- defense in case a client returns a secret that escaped feature detection.
+    local compareOk, isSelfEqual = pcall(function()
+        return parsed == parsed
+    end)
+    if not compareOk or not isSelfEqual then
+        return nil
+    end
+
     return parsed
+end
+
+local function text(value)
+    if not canOperate(value) or type(value) ~= "string" then
+        return nil
+    end
+    return value
+end
+
+local function boolean(value)
+    if not canOperate(value) or type(value) ~= "boolean" then
+        return nil
+    end
+    return value
 end
 
 local function hasNumbers(value)
@@ -149,7 +200,7 @@ local function collectResources()
         health = (health or maxHealth) and { current = health, max = maxHealth } or nil,
         power = (power or maxPower or powerTypeId) and {
             typeId = powerTypeId,
-            token = type(powerToken) == "string" and powerToken or nil,
+            token = text(powerToken),
             current = power,
             max = maxPower,
         } or nil,
@@ -211,10 +262,12 @@ local function collectWeaponSkills()
     local skills = {}
     for index = 1, count do
         local name, isHeader, _, rank, temporary, modifier, maxRank = safeCall("GetSkillLineInfo", index)
-        local key = type(name) == "string" and string.lower(name) or nil
-        if not isHeader and key and WEAPON_SKILL_NAMES[key] then
+        local skillName = text(name)
+        local header = boolean(isHeader)
+        local key = skillName and string.lower(skillName) or nil
+        if header == false and key and WEAPON_SKILL_NAMES[key] then
             table.insert(skills, {
-                name = name,
+                name = skillName,
                 current = number(rank),
                 max = number(maxRank),
                 temporary = number(temporary),
@@ -238,13 +291,14 @@ local function collectRatings()
         local ratingId = number(Globals[globalName])
         if ratingId then
             local ok, raw = pcall(getRating, ratingId)
-            if ok and number(raw) then
+            local rating = ok and number(raw) or nil
+            if rating then
                 local bonus = nil
                 if type(getBonus) == "function" then
                     local bonusOk, value = pcall(getBonus, ratingId)
                     if bonusOk then bonus = number(value) end
                 end
-                result[key] = { rating = number(raw), bonus = bonus }
+                result[key] = { rating = rating, bonus = bonus }
             end
         end
     end
@@ -345,13 +399,15 @@ end
 local function collectDefense()
     local defenseBase, defenseModifier = safeCall("UnitDefense", "player")
     local armor, resistances = collectArmorAndResistances()
+    local defenseBaseNumber = number(defenseBase)
+    local defenseModifierNumber = number(defenseModifier)
 
     return {
         armor = armor,
-        defenseSkill = (number(defenseBase) or number(defenseModifier)) and {
-            base = number(defenseBase),
-            modifier = number(defenseModifier),
-            effective = (number(defenseBase) or 0) + (number(defenseModifier) or 0),
+        defenseSkill = (defenseBaseNumber or defenseModifierNumber) and {
+            base = defenseBaseNumber,
+            modifier = defenseModifierNumber,
+            effective = (defenseBaseNumber or 0) + (defenseModifierNumber or 0),
         } or nil,
         dodge = number(safeCall("GetDodgeChance")),
         parry = number(safeCall("GetParryChance")),
@@ -365,7 +421,7 @@ end
 
 local function collectUtility()
     local currentSpeed, runSpeed, flightSpeed, swimSpeed = safeCall("GetUnitSpeed", "player")
-    local averageEquipped, averageOverall = safeCall("GetAverageItemLevel")
+    local averageOverall, averageEquipped, averagePvp = safeCall("GetAverageItemLevel")
     local xp = number(safeCall("UnitXP", "player"))
     local xpMax = number(safeCall("UnitXPMax", "player"))
     local rested = number(safeCall("GetXPExhaustion"))
@@ -378,9 +434,10 @@ local function collectUtility()
             swimYardsPerSecond = number(swimSpeed),
             bonusPercent = number(safeCall("GetSpeed")),
         } or nil,
-        itemLevel = (number(averageEquipped) or number(averageOverall)) and {
-            equipped = number(averageEquipped),
+        itemLevel = (number(averageOverall) or number(averageEquipped) or number(averagePvp)) and {
             overall = number(averageOverall),
+            equipped = number(averageEquipped),
+            pvp = number(averagePvp),
         } or nil,
         experience = (xp or xpMax or rested) and {
             current = xp,
@@ -394,17 +451,27 @@ local function collectUtility()
     }
 end
 
+local function safeCollect(collector)
+    local ok, value = pcall(collector)
+    if not ok then
+        return nil
+    end
+    return value
+end
+
 local function capture()
     return {
         schemaVersion = 1,
-        resources = collectResources(),
-        attributes = collectAttributes(),
-        offense = collectOffense(),
-        defense = collectDefense(),
-        ratings = collectRatings(),
-        utility = collectUtility(),
+        resources = safeCollect(collectResources),
+        attributes = safeCollect(collectAttributes),
+        offense = safeCollect(collectOffense),
+        defense = safeCollect(collectDefense),
+        ratings = safeCollect(collectRatings),
+        utility = safeCollect(collectUtility),
     }
 end
 
 GW.CharacterStats = GW.CharacterStats or {}
 GW.CharacterStats.Capture = capture
+GW.CharacterStats.SafeNumber = number
+GW.CharacterStats.CanOperate = canOperate
