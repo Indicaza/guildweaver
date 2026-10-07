@@ -80,10 +80,25 @@ local function instantItemInfo(item)
     }
 end
 
+local function normalizeExistingIcon(item)
+    local existing = item.iconFileDataId
+    if type(existing) == "string" and existing ~= "" then
+        local numeric = tonumber(existing)
+        if numeric then
+            item.iconFileDataId = numeric
+        else
+            item.iconTexture = item.iconTexture or existing
+            item.iconFileDataId = nil
+        end
+    end
+end
+
 local function enrichEquipmentItem(item)
     if type(item) ~= "table" then
         return
     end
+
+    normalizeExistingIcon(item)
 
     local instant = instantItemInfo(item)
     if instant then
@@ -99,13 +114,23 @@ local function enrichEquipmentItem(item)
     if type(item.icon) == "number" then
         item.iconFileDataId = item.icon
     elseif type(item.icon) == "string" and item.icon ~= "" then
-        item.iconTexture = item.icon
+        local numeric = tonumber(item.icon)
+        if numeric then
+            item.iconFileDataId = numeric
+        else
+            item.iconTexture = item.icon
+        end
     end
 
     if instant and type(instant.icon) == "number" then
         item.iconFileDataId = item.iconFileDataId or instant.icon
     elseif instant and type(instant.icon) == "string" and instant.icon ~= "" then
-        item.iconTexture = item.iconTexture or instant.icon
+        local numeric = tonumber(instant.icon)
+        if numeric then
+            item.iconFileDataId = item.iconFileDataId or numeric
+        else
+            item.iconTexture = item.iconTexture or instant.icon
+        end
     end
 
     item.tooltipLines = tooltipData(item) or item.tooltipLines
