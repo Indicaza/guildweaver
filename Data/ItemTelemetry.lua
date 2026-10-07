@@ -236,11 +236,17 @@ local function enrichMetadata(item, itemLink)
         return
     end
 
-    local ok, _, _, _, _, _, itemClass, itemSubclass, stackCount, equipLocation, _, sellPrice, classId, subclassId, bindType, expansionId, setId, isCraftingReagent = pcall(GetItemInfo, itemLink)
+    local ok, name, link, quality, itemLevel, requiredLevel, itemClass, itemSubclass, stackCount, equipLocation, icon, sellPrice, classId, subclassId, bindType, expansionId, setId, isCraftingReagent = pcall(GetItemInfo, itemLink)
     if not ok then
         return
     end
 
+    item.name = item.name or cleanText(name)
+    item.itemLink = item.itemLink or cleanText(link)
+    item.qualityId = item.qualityId or quality
+    item.itemLevel = item.itemLevel or itemLevel
+    item.requiredLevel = item.requiredLevel or requiredLevel
+    item.iconFileDataId = item.iconFileDataId or icon
     item.stackCount = item.stackCount or stackCount
     item.sellPrice = item.sellPrice or sellPrice
     item.equipLocation = item.equipLocation or equipLocation
