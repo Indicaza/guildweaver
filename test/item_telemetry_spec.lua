@@ -14,29 +14,29 @@ GuildweaverDB = nil
 GetServerTime = function() return 1791322510 end
 GetRealmName = function() return "Classic Beta PvE 2" end
 
-GetItemStats = function()
+rawset(_G, "GetItemStats", function()
     return {
         ITEM_MOD_STAMINA_SHORT = 8,
         ITEM_MOD_STRENGTH_SHORT = 5,
         NOT_NUMERIC = "ignored",
     }
-end
+end)
 
-GetInventoryItemDurability = function(slotId)
+rawset(_G, "GetInventoryItemDurability", function(slotId)
     equal(slotId, 5, "durability slot")
     return 42, 50
-end
+end)
 
-GetItemSpell = function()
+rawset(_G, "GetItemSpell", function()
     return "Helm Effect", 9001
-end
+end)
 
 GetItemInfo = function(itemLink)
     return "Golem Skull Helm", itemLink, 3, 35, 20, "Armor", "Plate", 1,
         "INVTYPE_HEAD", 132767, 12345, 4, 4, 1, 0, 77, false
 end
 
-C_TooltipInfo = {
+rawset(_G, "C_TooltipInfo", {
     GetHyperlink = function()
         return {
             lines = {
@@ -47,7 +47,7 @@ C_TooltipInfo = {
             },
         }
     end,
-}
+})
 
 local addon = { version = "test" }
 local function loadAddonFile(path)
