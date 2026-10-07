@@ -138,7 +138,8 @@ local function enrichDefinition(definition, rawTree)
 end
 
 local function streamKeyPart(value)
-    return string.lower(tostring(value or "unknown")):gsub("[^%w]+", "-")
+    local normalized = string.lower(tostring(value or "unknown")):gsub("[^%w]+", "-")
+    return normalized
 end
 
 local originalSetCharacterSnapshot = GW.Store.SetCharacterSnapshot
