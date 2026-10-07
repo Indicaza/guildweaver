@@ -10,7 +10,10 @@ Data/BridgeInbox.generated.lua
 Data/Store.lua
 Data/CharacterIdentity.lua
 Data/ItemTelemetry.lua
+Data/SpellTelemetry.lua
 Data/TelemetrySchema.lua
+Data/CharacterStats.lua
+Data/CharacterTelemetryEnrichment.lua
 Data/MockData.lua
 Systems/Character.lua
 Systems/SessionCapture.lua
