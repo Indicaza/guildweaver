@@ -39,6 +39,7 @@ assert(loadfile("Data/Store.lua"))("Guildweaver", GW)
 GW.Store.Initialize()
 assert(loadfile("Data/CharacterIdentity.lua"))("Guildweaver", GW)
 assert(loadfile("Data/ArmoryCapture.lua"))("Guildweaver", GW)
+assert(loadfile("Data/TelemetrySchema.lua"))("Guildweaver", GW)
 
 local snapshot = {
     schemaVersion = 2,
@@ -61,12 +62,12 @@ GW.Store.SetCharacterSnapshot("darkwing:rook", snapshot)
 local item = snapshot.equipment[1]
 equal(snapshot.schemaVersion, 3, "identity schema")
 equal(snapshot.displayName, "Rook Darkwing", "display name")
-equal(item.iconTexture, "Interface\\Icons\\INV_Misc_Gem_Pearl_05", "client texture path")
+equal(item.iconTexture, "Interface\\Icons\\INV_Misc_Gem_Pearl_05", "client texture path survives schema wrapper")
 equal(item.iconFileDataId, 134123, "instant icon file id")
 equal(item.class, "Armor", "instant class")
 equal(item.subclass, "Miscellaneous", "instant subclass")
 equal(item.equipLocation, "INVTYPE_NECK", "instant equip location")
-truthy(item.tooltipLines, "tooltip lines")
+truthy(item.tooltipLines, "tooltip lines survive schema wrapper")
 equal(item.tooltipLines[2].left, "Item Level 22", "tooltip text")
 equal(item.tooltipLines[3].right, "+3 Stamina", "tooltip right text")
 
