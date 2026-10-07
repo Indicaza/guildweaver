@@ -34,6 +34,7 @@ jobs:
           lua5.1 test/telemetry_schema_spec.lua
           lua5.1 test/item_telemetry_spec.lua
           lua5.1 test/character_stats_spec.lua
+          lua5.1 test/secret_values_spec.lua
           lua5.1 test/talent_enrichment_spec.lua
           lua5.1 test/character_stat_events_spec.lua
           lua5.1 test/session_capture_spec.lua
