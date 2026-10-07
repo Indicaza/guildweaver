@@ -13,6 +13,57 @@ local function currentRealm()
     return realm
 end
 
+local function normalized(value)
+    if type(value) ~= "string" then
+        return ""
+    end
+    return string.lower(value:gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+local function currentCharacterNames()
+    local firstName = nil
+    local secondValue = nil
+
+    if type(UnitFullName) == "function" then
+        local ok, first, second = pcall(UnitFullName, "player")
+        if ok then
+            firstName = first
+            secondValue = second
+        end
+    end
+
+    if (not firstName or firstName == "") and type(UnitName) == "function" then
+        local ok, value = pcall(UnitName, "player")
+        if ok then
+            firstName = value
+        end
+    end
+
+    if not firstName or firstName == "" then
+        return nil, nil, nil
+    end
+
+    local realm = currentRealm()
+    local lastName = nil
+
+    -- Retail/Classic normally return the realm as UnitFullName's second value.
+    -- WoW Forever currently returns the character surname there instead. Treat a
+    -- second value that differs from GetRealmName() as a surname so both clients
+    -- remain compatible.
+    if type(secondValue) == "string" and secondValue ~= "" then
+        if not realm or normalized(secondValue) ~= normalized(realm) then
+            lastName = secondValue
+        end
+    end
+
+    local fullName = firstName
+    if lastName and lastName ~= "" then
+        fullName = firstName .. " " .. lastName
+    end
+
+    return firstName, lastName, fullName
+end
+
 local function nameFromKey(characterKey)
     if type(characterKey) ~= "string" then
         return nil
@@ -23,7 +74,8 @@ end
 
 local function canonicalCharacterKey(characterKey, characterName)
     local realm = currentRealm()
-    local name = characterName or nameFromKey(characterKey)
+    local _, _, fullName = currentCharacterNames()
+    local name = fullName or characterName or nameFromKey(characterKey)
 
     if not realm or not name or name == "" then
         return characterKey
@@ -65,6 +117,20 @@ local function migrateCharacterKey(oldKey, newKey)
     end
 end
 
+local function migrateKnownAliases(characterKey, canonicalKey)
+    migrateCharacterKey(characterKey, canonicalKey)
+
+    local realm = currentRealm()
+    local firstName = currentCharacterNames()
+    if realm and firstName then
+        -- The previous compatibility layer already repaired the realm but keyed
+        -- every Forever character by first name only. The first surnamed
+        -- character seen after this upgrade inherits that stable ID; another
+        -- character with the same first name then receives its own ID.
+        migrateCharacterKey(string.lower(realm .. ":" .. firstName), canonicalKey)
+    end
+end
+
 local originalGetCharacterId = GW.Store.GetCharacterId
 local originalGetCharacterSnapshot = GW.Store.GetCharacterSnapshot
 local originalSetCharacterSnapshot = GW.Store.SetCharacterSnapshot
@@ -72,24 +138,31 @@ local originalSetTelemetrySnapshot = GW.Store.SetTelemetrySnapshot
 
 function GW.Store.GetCharacterId(characterKey)
     local canonicalKey = canonicalCharacterKey(characterKey)
-    migrateCharacterKey(characterKey, canonicalKey)
+    migrateKnownAliases(characterKey, canonicalKey)
     return originalGetCharacterId(canonicalKey)
 end
 
 function GW.Store.GetCharacterSnapshot(characterKey)
     local canonicalKey = canonicalCharacterKey(characterKey)
-    migrateCharacterKey(characterKey, canonicalKey)
+    migrateKnownAliases(characterKey, canonicalKey)
     return originalGetCharacterSnapshot(canonicalKey)
 end
 
 function GW.Store.SetCharacterSnapshot(characterKey, snapshot)
-    local canonicalKey = canonicalCharacterKey(characterKey, snapshot and snapshot.name)
-    migrateCharacterKey(characterKey, canonicalKey)
+    local firstName, lastName, fullName = currentCharacterNames()
+    local canonicalKey = canonicalCharacterKey(characterKey, fullName or (snapshot and snapshot.name))
+    migrateKnownAliases(characterKey, canonicalKey)
 
     local realm = currentRealm()
     if type(snapshot) == "table" then
+        local reportedFirstName = firstName or snapshot.firstName or snapshot.name
+        local reportedFullName = fullName or snapshot.fullName or snapshot.name
         snapshot.characterKey = canonicalKey
         snapshot.realm = realm or snapshot.realm
+        snapshot.firstName = reportedFirstName
+        snapshot.lastName = lastName or snapshot.lastName
+        snapshot.fullName = reportedFullName
+        snapshot.name = reportedFullName
     end
 
     return originalSetCharacterSnapshot(canonicalKey, snapshot)
