@@ -12,6 +12,7 @@ Data/CharacterIdentity.lua
 Data/TelemetrySchema.lua
 Data/MockData.lua
 Systems/Character.lua
+Systems/SessionCapture.lua
 Systems/Quests.lua
 UI/QuestLog.lua
 UI/MainFrame.lua
