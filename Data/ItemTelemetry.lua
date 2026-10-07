@@ -1,0 +1,301 @@
+local _, GW = ...
+
+local Globals = _G or {}
+local MAX_TOOLTIP_LINES = 40
+local MAX_TOOLTIP_TEXT = 320
+local tooltipScanner = nil
+local tooltipScannerInitialized = false
+
+local function cleanText(value)
+    if type(value) ~= "string" then
+        return nil
+    end
+
+    local text = value:gsub("Player%-%d+%-%x+", "Player-REDACTED")
+    if #text > MAX_TOOLTIP_TEXT then
+        text = text:sub(1, MAX_TOOLTIP_TEXT)
+    end
+    return text ~= "" and text or nil
+end
+
+local function colorValue(value)
+    if type(value) ~= "table" then
+        return nil
+    end
+
+    local r = tonumber(value.r)
+    local g = tonumber(value.g)
+    local b = tonumber(value.b)
+    local a = tonumber(value.a)
+    if not r and not g and not b and not a then
+        return nil
+    end
+
+    return {
+        r = r,
+        g = g,
+        b = b,
+        a = a,
+    }
+end
+
+local function normalizeTooltipLine(line)
+    if type(line) ~= "table" then
+        return nil
+    end
+
+    local left = cleanText(line.leftText or line.text or line.left)
+    local right = cleanText(line.rightText or line.right)
+    if not left and not right then
+        return nil
+    end
+
+    return {
+        left = left,
+        right = right,
+        leftColor = colorValue(line.leftColor or line.color),
+        rightColor = colorValue(line.rightColor),
+    }
+end
+
+local function collectModernTooltip(itemLink)
+    local tooltipInfo = Globals.C_TooltipInfo
+    if type(tooltipInfo) ~= "table" or type(tooltipInfo.GetHyperlink) ~= "function" then
+        return nil
+    end
+
+    local ok, data = pcall(tooltipInfo.GetHyperlink, itemLink)
+    if not ok or type(data) ~= "table" or type(data.lines) ~= "table" then
+        return nil
+    end
+
+    local lines = {}
+    for _, line in ipairs(data.lines) do
+        if #lines >= MAX_TOOLTIP_LINES then
+            break
+        end
+        local normalized = normalizeTooltipLine(line)
+        if normalized then
+            table.insert(lines, normalized)
+        end
+    end
+
+    return #lines > 0 and { source = "C_TooltipInfo", lines = lines } or nil
+end
+
+local function scannerFrame()
+    if tooltipScannerInitialized then
+        return tooltipScanner
+    end
+    tooltipScannerInitialized = true
+
+    if type(CreateFrame) ~= "function" or not UIParent then
+        return nil
+    end
+
+    local ok, frame = pcall(CreateFrame, "GameTooltip", "GuildweaverItemScanTooltip", UIParent, "GameTooltipTemplate")
+    if not ok or not frame then
+        return nil
+    end
+
+    tooltipScanner = frame
+    return tooltipScanner
+end
+
+local function fontStringText(value)
+    if not value or type(value.GetText) ~= "function" then
+        return nil
+    end
+    local ok, text = pcall(value.GetText, value)
+    return ok and cleanText(text) or nil
+end
+
+local function fontStringColor(value)
+    if not value or type(value.GetTextColor) ~= "function" then
+        return nil
+    end
+    local ok, r, g, b, a = pcall(value.GetTextColor, value)
+    if not ok then
+        return nil
+    end
+    return colorValue({ r = r, g = g, b = b, a = a })
+end
+
+local function collectLegacyTooltip(itemLink)
+    local frame = scannerFrame()
+    if not frame or type(frame.SetHyperlink) ~= "function" or type(frame.NumLines) ~= "function" then
+        return nil
+    end
+
+    if type(frame.SetOwner) == "function" then
+        pcall(frame.SetOwner, frame, UIParent, "ANCHOR_NONE")
+    end
+    if type(frame.ClearLines) == "function" then
+        pcall(frame.ClearLines, frame)
+    end
+
+    local ok = pcall(frame.SetHyperlink, frame, itemLink)
+    if not ok then
+        return nil
+    end
+
+    local linesOk, lineCount = pcall(frame.NumLines, frame)
+    if not linesOk then
+        return nil
+    end
+
+    local lines = {}
+    local count = math.min(tonumber(lineCount) or 0, MAX_TOOLTIP_LINES)
+    for index = 1, count do
+        local leftField = Globals["GuildweaverItemScanTooltipTextLeft" .. index]
+        local rightField = Globals["GuildweaverItemScanTooltipTextRight" .. index]
+        local left = fontStringText(leftField)
+        local right = fontStringText(rightField)
+        if left or right then
+            table.insert(lines, {
+                left = left,
+                right = right,
+                leftColor = fontStringColor(leftField),
+                rightColor = fontStringColor(rightField),
+            })
+        end
+    end
+
+    if type(frame.Hide) == "function" then
+        pcall(frame.Hide, frame)
+    end
+
+    return #lines > 0 and { source = "GameTooltip", lines = lines } or nil
+end
+
+local function collectTooltip(itemLink)
+    if type(itemLink) ~= "string" or itemLink == "" then
+        return nil
+    end
+    return collectModernTooltip(itemLink) or collectLegacyTooltip(itemLink)
+end
+
+local function collectStats(itemLink)
+    local getItemStats = Globals.GetItemStats
+    if type(getItemStats) ~= "function" then
+        return nil
+    end
+
+    local ok, stats = pcall(getItemStats, itemLink)
+    if not ok or type(stats) ~= "table" then
+        return nil
+    end
+
+    local result = {}
+    local count = 0
+    for key, value in pairs(stats) do
+        if type(key) == "string" and type(value) == "number" then
+            result[key:sub(1, 96)] = value
+            count = count + 1
+            if count >= 64 then
+                break
+            end
+        end
+    end
+
+    return next(result) and result or nil
+end
+
+local function collectDurability(slotId)
+    local getDurability = Globals.GetInventoryItemDurability
+    if not slotId or type(getDurability) ~= "function" then
+        return nil
+    end
+
+    local ok, current, maximum = pcall(getDurability, slotId)
+    if not ok or not tonumber(maximum) or tonumber(maximum) <= 0 then
+        return nil
+    end
+
+    return {
+        current = tonumber(current) or 0,
+        max = tonumber(maximum),
+    }
+end
+
+local function collectSpell(itemLink)
+    local getItemSpell = Globals.GetItemSpell
+    if type(getItemSpell) ~= "function" then
+        return nil
+    end
+
+    local ok, name, spellId = pcall(getItemSpell, itemLink)
+    if not ok or (not name and not spellId) then
+        return nil
+    end
+
+    return {
+        name = cleanText(name),
+        id = tonumber(spellId),
+    }
+end
+
+local function enrichMetadata(item, itemLink)
+    if type(GetItemInfo) ~= "function" then
+        return
+    end
+
+    local ok, name, link, quality, itemLevel, requiredLevel, itemClass, itemSubclass, stackCount, equipLocation, icon, sellPrice, classId, subclassId, bindType, expansionId, setId, isCraftingReagent = pcall(GetItemInfo, itemLink)
+    if not ok then
+        return
+    end
+
+    item.name = item.name or cleanText(name)
+    item.itemLink = item.itemLink or cleanText(link)
+    item.qualityId = item.qualityId or quality
+    item.itemLevel = item.itemLevel or itemLevel
+    item.requiredLevel = item.requiredLevel or requiredLevel
+    item.iconFileDataId = item.iconFileDataId or icon
+    item.stackCount = item.stackCount or stackCount
+    item.sellPrice = item.sellPrice or sellPrice
+    item.equipLocation = item.equipLocation or equipLocation
+    item.bindType = item.bindType or bindType
+    item.expansionId = item.expansionId or expansionId
+    item.setId = item.setId or setId
+    if item.isCraftingReagent == nil then
+        item.isCraftingReagent = isCraftingReagent
+    end
+    if not item.itemClass and (classId or itemClass) then
+        item.itemClass = { id = classId, name = itemClass }
+    end
+    if not item.itemSubclass and (subclassId or itemSubclass) then
+        item.itemSubclass = { id = subclassId, name = itemSubclass }
+    end
+end
+
+local function enrichEquipmentItem(item)
+    if type(item) ~= "table" then
+        return
+    end
+
+    local itemLink = item.itemLink
+    if type(itemLink) ~= "string" or itemLink == "" then
+        return
+    end
+
+    enrichMetadata(item, itemLink)
+    item.stats = collectStats(itemLink) or item.stats
+    item.durability = collectDurability(item.slotId) or item.durability
+    item.spell = collectSpell(itemLink) or item.spell
+    item.tooltip = collectTooltip(itemLink) or item.tooltip
+end
+
+local originalSetCharacterSnapshot = GW.Store.SetCharacterSnapshot
+
+function GW.Store.SetCharacterSnapshot(characterKey, snapshot)
+    if type(snapshot) == "table" and type(snapshot.equipment) == "table" then
+        for _, item in ipairs(snapshot.equipment) do
+            enrichEquipmentItem(item)
+        end
+    end
+
+    return originalSetCharacterSnapshot(characterKey, snapshot)
+end
+
+GW.ItemTelemetry = GW.ItemTelemetry or {}
+GW.ItemTelemetry.EnrichEquipmentItem = enrichEquipmentItem
