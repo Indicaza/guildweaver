@@ -14,6 +14,11 @@ local defaults = {
     meta = {
         installationId = nil,
         characterIds = {},
+        capture = {
+            sessionId = nil,
+            startedAt = nil,
+            reloadPending = false,
+        },
     },
     sync = {
         inbound = {
@@ -140,6 +145,12 @@ local function pruneTelemetry(outbound)
     end
 end
 
+local function captureMeta()
+    GuildweaverDB.meta = GuildweaverDB.meta or {}
+    GuildweaverDB.meta.capture = GuildweaverDB.meta.capture or {}
+    return GuildweaverDB.meta.capture
+end
+
 function GW.Store.Initialize()
     if type(GuildweaverDB) ~= "table" then
         GuildweaverDB = {}
@@ -149,6 +160,7 @@ function GW.Store.Initialize()
     GuildweaverDB.schemaVersion = defaults.schemaVersion
     GuildweaverDB.meta = GuildweaverDB.meta or {}
     GuildweaverDB.meta.characterIds = GuildweaverDB.meta.characterIds or {}
+    GuildweaverDB.meta.capture = GuildweaverDB.meta.capture or {}
     GuildweaverDB.meta.addonVersion = GW.version
 end
 
@@ -179,6 +191,46 @@ end
 
 function GW.Store.Fingerprint(value)
     return fingerprint(value)
+end
+
+function GW.Store.BeginCaptureSession()
+    local capture = captureMeta()
+
+    if capture.sessionId and capture.reloadPending then
+        capture.reloadPending = false
+        return capture.sessionId, true
+    end
+
+    if capture.sessionId then
+        return capture.sessionId, false
+    end
+
+    capture.sessionId = generateId("session")
+    capture.startedAt = type(GetServerTime) == "function" and GetServerTime() or 0
+    capture.reloadPending = false
+    return capture.sessionId, false
+end
+
+function GW.Store.GetCaptureSession()
+    local capture = captureMeta()
+    return capture.sessionId, capture.startedAt
+end
+
+function GW.Store.MarkCaptureReloadPending()
+    captureMeta().reloadPending = true
+end
+
+function GW.Store.IsCaptureReloadPending()
+    return captureMeta().reloadPending == true
+end
+
+function GW.Store.EndCaptureSession()
+    local capture = captureMeta()
+    local sessionId = capture.sessionId
+    capture.sessionId = nil
+    capture.startedAt = nil
+    capture.reloadPending = false
+    return sessionId
 end
 
 function GW.Store.SetCharacterSnapshot(characterKey, snapshot)
@@ -215,6 +267,27 @@ function GW.Store.SetTelemetrySnapshot(streamKey, envelope)
     local revision = existing and tonumber(existing.revision) or 0
     outbound[streamKey] = {
         kind = "state",
+        revision = revision + 1,
+        updatedAt = envelope.capturedAt,
+        fingerprint = nextFingerprint,
+        envelope = envelope,
+    }
+    pruneTelemetry(outbound)
+    return true
+end
+
+function GW.Store.SetTelemetryEvent(streamKey, envelope)
+    local outbound = GuildweaverDB.sync.outbound.telemetry
+    local existing = outbound[streamKey]
+    local nextFingerprint = fingerprint(envelope.payload)
+
+    if existing and existing.fingerprint == nextFingerprint then
+        return false
+    end
+
+    local revision = existing and tonumber(existing.revision) or 0
+    outbound[streamKey] = {
+        kind = "event",
         revision = revision + 1,
         updatedAt = envelope.capturedAt,
         fingerprint = nextFingerprint,
