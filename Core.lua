@@ -64,11 +64,12 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         GW.Quests.Initialize()
         GW.MainFrame:Initialize()
         GW.Character:Initialize()
+        GW.SessionCapture:Initialize()
         return
     end
 
     if event == "PLAYER_LOGIN" then
-        GW.Print("v" .. GW.version .. " loaded. Type /gw to open.")
+        GW.Print("v" .. GW.version .. " loaded. Telemetry capture is automatic; /gw opens Guildweaver.")
     end
 end)
 
@@ -108,6 +109,15 @@ SlashCmdList.GUILDWEAVER = function(message)
         return
     end
 
+    if command == "capture" or command == "sync" then
+        if GW.SessionCapture.CaptureAndReload("MANUAL_CHECKPOINT") then
+            GW.Print("Telemetry checkpoint captured. Reloading so the bridge can sync it now.")
+        else
+            GW.Print("Telemetry checkpoint unavailable.")
+        end
+        return
+    end
+
     if command == "telemetry" then
         printTelemetryStatus()
         return
@@ -120,7 +130,7 @@ SlashCmdList.GUILDWEAVER = function(message)
     end
 
     if command == "help" then
-        GW.Print("/gw opens Guildweaver. Sync is automatic on normal play, reload, and logout. /gw snapshot captures a diagnostic snapshot. /gw telemetry shows captured telemetry streams. /gw version shows the addon version. /gw reset resets the window position.")
+        GW.Print("/gw opens Guildweaver. Telemetry capture is automatic at session start, during play, and logout. /gw capture forces a checkpoint and reload for immediate bridge sync. /gw snapshot captures a diagnostic snapshot. /gw telemetry shows captured telemetry streams. /gw version shows the addon version. /gw reset resets the window position.")
         return
     end
 

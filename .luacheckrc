@@ -42,6 +42,7 @@ globals = {
     "GetTradeSkillReagentItemLink",
     "GetTradeSkillRecipeLink",
     "GuildweaverDB",
+    "ReloadUI",
     "SLASH_GUILDWEAVER1",
     "SLASH_GUILDWEAVER2",
     "SlashCmdList",
