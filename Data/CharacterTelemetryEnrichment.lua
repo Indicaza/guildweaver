@@ -2,14 +2,6 @@ local _, GW = ...
 
 local spellCache = {}
 
-local function copyArray(values)
-    local result = {}
-    for _, value in ipairs(type(values) == "table" and values or {}) do
-        table.insert(result, value)
-    end
-    return result
-end
-
 local function replaceTable(target, source)
     for key in pairs(target) do
         target[key] = nil
