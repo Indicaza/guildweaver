@@ -13,27 +13,75 @@ local function currentRealm()
     return realm
 end
 
-local function nameFromKey(characterKey)
+local function normalize(value)
+    return string.lower((tostring(value or ""):gsub("[^%w]", "")))
+end
+
+local function splitCharacterKey(characterKey)
     if type(characterKey) ~= "string" then
-        return nil
+        return nil, nil, nil
     end
 
-    return characterKey:match("^[^:]*:(.+)$")
+    local first, second, third = characterKey:match("^([^:]+):([^:]+):?(.*)$")
+    if not first or not second then
+        return nil, nil, nil
+    end
+
+    return first, second, third ~= "" and third or nil
 end
 
-local function canonicalCharacterKey(characterKey, characterName)
+local function identityFromKey(characterKey, snapshot)
     local realm = currentRealm()
-    local name = characterName or nameFromKey(characterKey)
+    local keyRealm, keyName, keyLastName = splitCharacterKey(characterKey)
+    local firstName = snapshot and (snapshot.firstName or snapshot.name) or keyName
+    local lastName = snapshot and (snapshot.lastName or snapshot.surname) or keyLastName
 
-    if not realm or not name or name == "" then
-        return characterKey
+    if realm and keyRealm and keyName and not lastName and normalize(keyRealm) ~= normalize(realm) then
+        -- WoW Forever returns the character surname as UnitFullName's second value.
+        -- Older Guildweaver builds mistook that value for a realm and produced
+        -- keys like "darkwing:rook". Preserve it as the surname instead.
+        lastName = keyRealm
     end
 
-    return string.lower(realm .. ":" .. name)
+    if not firstName or firstName == "" then
+        return realm, nil, nil, characterKey
+    end
+
+    if not realm or realm == "" then
+        return realm, firstName, lastName, characterKey
+    end
+
+    local canonical = string.lower(realm .. ":" .. firstName)
+    if lastName and lastName ~= "" then
+        canonical = canonical .. ":" .. string.lower(lastName)
+    end
+
+    return realm, firstName, lastName, canonical
 end
 
-local function migrateCharacterKey(oldKey, newKey)
-    if not oldKey or not newKey or oldKey == newKey then
+local function migrateTableKey(values, oldKey, newKey)
+    if type(values) ~= "table" or not oldKey or not newKey or oldKey == newKey then
+        return
+    end
+
+    local oldValue = values[oldKey]
+    if oldValue == nil then
+        return
+    end
+
+    if values[newKey] == nil then
+        values[newKey] = oldValue
+        values[oldKey] = nil
+        return
+    end
+
+    if values[newKey] == oldValue then
+        values[oldKey] = nil
+    end
+end
+
+local function migrateCharacterKey(oldKey, newKey, firstName, lastName)
+    if not newKey then
         return
     end
 
@@ -44,24 +92,28 @@ local function migrateCharacterKey(oldKey, newKey)
 
     database.meta = database.meta or {}
     database.meta.characterIds = database.meta.characterIds or {}
-    local ids = database.meta.characterIds
-    if ids[oldKey] and not ids[newKey] then
-        ids[newKey] = ids[oldKey]
-    end
-    ids[oldKey] = nil
-
     database.characters = database.characters or {}
-    if database.characters[oldKey] and not database.characters[newKey] then
-        database.characters[newKey] = database.characters[oldKey]
+
+    local candidates = {}
+    local realm = currentRealm()
+    if realm and firstName then
+        table.insert(candidates, string.lower(realm .. ":" .. firstName))
     end
-    database.characters[oldKey] = nil
+    if oldKey then
+        table.insert(candidates, oldKey)
+    end
+    if lastName and firstName then
+        table.insert(candidates, string.lower(lastName .. ":" .. firstName))
+    end
 
     local outbound = database.sync and database.sync.outbound and database.sync.outbound.characters
-    if type(outbound) == "table" then
-        if outbound[oldKey] and not outbound[newKey] then
-            outbound[newKey] = outbound[oldKey]
+
+    for _, candidate in ipairs(candidates) do
+        if candidate ~= newKey then
+            migrateTableKey(database.meta.characterIds, candidate, newKey)
+            migrateTableKey(database.characters, candidate, newKey)
+            migrateTableKey(outbound, candidate, newKey)
         end
-        outbound[oldKey] = nil
     end
 end
 
@@ -71,25 +123,31 @@ local originalSetCharacterSnapshot = GW.Store.SetCharacterSnapshot
 local originalSetTelemetrySnapshot = GW.Store.SetTelemetrySnapshot
 
 function GW.Store.GetCharacterId(characterKey)
-    local canonicalKey = canonicalCharacterKey(characterKey)
-    migrateCharacterKey(characterKey, canonicalKey)
+    local _, firstName, lastName, canonicalKey = identityFromKey(characterKey)
+    migrateCharacterKey(characterKey, canonicalKey, firstName, lastName)
     return originalGetCharacterId(canonicalKey)
 end
 
 function GW.Store.GetCharacterSnapshot(characterKey)
-    local canonicalKey = canonicalCharacterKey(characterKey)
-    migrateCharacterKey(characterKey, canonicalKey)
+    local _, firstName, lastName, canonicalKey = identityFromKey(characterKey)
+    migrateCharacterKey(characterKey, canonicalKey, firstName, lastName)
     return originalGetCharacterSnapshot(canonicalKey)
 end
 
 function GW.Store.SetCharacterSnapshot(characterKey, snapshot)
-    local canonicalKey = canonicalCharacterKey(characterKey, snapshot and snapshot.name)
-    migrateCharacterKey(characterKey, canonicalKey)
+    local realm, firstName, lastName, canonicalKey = identityFromKey(characterKey, snapshot)
+    migrateCharacterKey(characterKey, canonicalKey, firstName, lastName)
 
-    local realm = currentRealm()
     if type(snapshot) == "table" then
+        snapshot.schemaVersion = math.max(tonumber(snapshot.schemaVersion) or 0, 3)
         snapshot.characterKey = canonicalKey
         snapshot.realm = realm or snapshot.realm
+        snapshot.firstName = firstName or snapshot.firstName or snapshot.name
+        snapshot.lastName = lastName or nil
+        snapshot.displayName = snapshot.firstName or snapshot.name or ""
+        if snapshot.lastName and snapshot.lastName ~= "" then
+            snapshot.displayName = snapshot.displayName .. " " .. snapshot.lastName
+        end
     end
 
     return originalSetCharacterSnapshot(canonicalKey, snapshot)
