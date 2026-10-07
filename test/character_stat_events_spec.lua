@@ -16,11 +16,11 @@ local handler = nil
 local scheduled = {}
 local frame = {}
 
-function frame:RegisterEvent(event)
+frame.RegisterEvent = function(_, event)
     registered[event] = true
 end
 
-function frame:SetScript(script, callback)
+frame.SetScript = function(_, script, callback)
     equal(script, "OnEvent", "event script")
     handler = callback
 end
