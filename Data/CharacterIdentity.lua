@@ -141,11 +141,14 @@ function GW.Store.SetCharacterSnapshot(characterKey, snapshot)
 
     local realm = currentRealm()
     if type(snapshot) == "table" then
+        local reportedFirstName = firstName or snapshot.firstName or snapshot.name
+        local reportedFullName = fullName or snapshot.fullName or snapshot.name
         snapshot.characterKey = canonicalKey
         snapshot.realm = realm or snapshot.realm
-        snapshot.firstName = firstName or snapshot.firstName or snapshot.name
+        snapshot.firstName = reportedFirstName
         snapshot.lastName = lastName or snapshot.lastName
-        snapshot.fullName = fullName or snapshot.fullName or snapshot.name
+        snapshot.fullName = reportedFullName
+        snapshot.name = reportedFullName
     end
 
     return originalSetCharacterSnapshot(canonicalKey, snapshot)
