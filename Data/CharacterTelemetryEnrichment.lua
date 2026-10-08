@@ -11,6 +11,26 @@ local function replaceTable(target, source)
     end
 end
 
+local function safeCall(func, ...)
+    if type(func) ~= "function" then
+        return nil
+    end
+
+    local ok, value = pcall(func, ...)
+    if not ok then
+        return nil
+    end
+
+    return value
+end
+
+local function spellMetadataComplete(value)
+    return type(value) == "table"
+        and value.name ~= nil
+        and value.iconFileDataId ~= nil
+        and value.description ~= nil
+end
+
 local function resolveSpell(spellId)
     spellId = tonumber(spellId)
     if not spellId or spellId <= 0 then
@@ -18,13 +38,29 @@ local function resolveSpell(spellId)
     end
 
     if spellCache[spellId] ~= nil then
-        return spellCache[spellId] or nil
+        return spellCache[spellId]
     end
 
     local resolver = GW.SpellTelemetry and GW.SpellTelemetry.Resolve
     local resolved = type(resolver) == "function" and resolver(spellId) or nil
-    spellCache[spellId] = resolved or false
+
+    if spellMetadataComplete(resolved) then
+        spellCache[spellId] = resolved
+    end
+
     return resolved
+end
+
+local function currentLocale()
+    return safeCall(GetLocale)
+end
+
+local function treeHash(treeId)
+    if not C_Traits or type(C_Traits.GetTreeHash) ~= "function" then
+        return nil
+    end
+
+    return safeCall(C_Traits.GetTreeHash, treeId)
 end
 
 local function conditionStates(conditions)
@@ -107,12 +143,16 @@ local function rawEntryMap(node)
     return result
 end
 
-local function enrichDefinition(definition, rawTree)
+local function enrichDefinition(definition, rawTree, snapshot)
     if type(definition) ~= "table" then
         return
     end
 
-    definition.schemaVersion = 2
+    definition.schemaVersion = 3
+    definition.treeHash = treeHash(definition.treeId)
+    definition.locale = currentLocale()
+    definition.specialization = snapshot and snapshot.specialization or nil
+
     if type(rawTree) == "table" then
         definition.name = rawTree.name
         definition.iconFileDataId = rawTree.iconFileDataId or rawTree.icon
@@ -137,6 +177,21 @@ local function enrichDefinition(definition, rawTree)
     end
 end
 
+local function addTreeHashes(talents, definitions)
+    if type(talents) ~= "table" then
+        return
+    end
+
+    local hashes = {}
+    for _, definition in ipairs(definitions or {}) do
+        table.insert(hashes, {
+            treeId = definition.treeId,
+            treeHash = definition.treeHash,
+        })
+    end
+    talents.treeHashes = hashes
+end
+
 local function streamKeyPart(value)
     local normalized = string.lower(tostring(value or "unknown")):gsub("[^%w]+", "-")
     return normalized
@@ -147,14 +202,18 @@ local originalSetTelemetrySnapshot = GW.Store.SetTelemetrySnapshot
 
 local function emitDefinitions(snapshot, definitions)
     local classToken = snapshot.class and (snapshot.class.token or snapshot.class.name) or "unknown"
+    local specialization = snapshot.specialization and (snapshot.specialization.id or snapshot.specialization.name) or "unknown"
     local build = snapshot.gameBuild and snapshot.gameBuild.build or "unknown"
 
     for _, definition in ipairs(definitions or {}) do
+        local version = definition.treeHash or build
         originalSetTelemetrySnapshot(table.concat({
             "talent_tree_definition",
             streamKeyPart(classToken),
-            streamKeyPart(build),
+            streamKeyPart(specialization),
             streamKeyPart(definition.treeId),
+            streamKeyPart(version),
+            streamKeyPart(definition.locale),
         }, ":"), {
             schemaVersion = 1,
             eventType = "talent_tree_definition",
@@ -183,8 +242,9 @@ function GW.Store.SetCharacterSnapshot(characterKey, snapshot)
 
         local treesById = rawTreeMap(rawTalents)
         for _, definition in ipairs(definitions or {}) do
-            enrichDefinition(definition, treesById[tostring(definition.treeId or "")])
+            enrichDefinition(definition, treesById[tostring(definition.treeId or "")], normalized)
         end
+        addTreeHashes(normalized.talents, definitions)
 
         replaceTable(snapshot, normalized)
         local changed = originalSetCharacterSnapshot(characterKey, snapshot)

@@ -21,6 +21,7 @@ globals = {
     "GetInventoryItemTexture",
     "GetInventorySlotInfo",
     "GetItemInfo",
+    "GetLocale",
     "GetNumTalents",
     "GetNumTalentTabs",
     "GetNumTradeSkills",
