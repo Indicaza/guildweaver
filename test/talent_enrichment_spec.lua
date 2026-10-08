@@ -20,7 +20,7 @@ local Globals = _G
 Globals.C_Traits = {
     GetTreeHash = function(treeId)
         equal(treeId, 1111, "tree hash id")
-        return "tree-hash-v1"
+        return { 212, 56, 61, 140, 136, 171, 187, 49, 204, 101, 89, 76, 51, 172, 148, 93 }
     end,
 }
 Globals.C_Spell = {
@@ -145,7 +145,8 @@ local function makeSnapshot()
     }
 end
 
-local streamKey = "talent_tree_definition:rogue:259:1111:tree-hash-v1:enus"
+local canonicalHash = "d4383d8c88abbb31cc65594c33ac945d"
+local streamKey = "talent_tree_definition:rogue:259:1111:" .. canonicalHash .. ":enus"
 local snapshot = makeSnapshot()
 addon.Store.SetCharacterSnapshot(snapshot.characterKey, snapshot)
 
@@ -157,21 +158,28 @@ equal(snapshot.talents.nodeStates[1].isAvailable, true, "node availability")
 equal(snapshot.talents.nodeStates[1].conditions[1].isMet, true, "condition state")
 equal(snapshot.talents.nodeStates[1].entries[1].isActiveEntry, true, "entry active state")
 equal(snapshot.talents.treeHashes[1].treeId, 1111, "tree hash state id")
-equal(snapshot.talents.treeHashes[1].treeHash, "tree-hash-v1", "tree hash state value")
+equal(snapshot.talents.treeHashes[1].treeHash, canonicalHash, "canonical tree hash state value")
 
 local definition = GuildweaverDB.sync.outbound.telemetry[streamKey]
-truthy(definition, "versioned definition emitted")
+truthy(definition, "stable versioned definition emitted")
 equal(definition.revision, 1, "definition emitted once")
-equal(definition.envelope.payload.schemaVersion, 3, "definition schema")
-equal(definition.envelope.payload.treeHash, "tree-hash-v1", "definition tree hash")
+equal(definition.envelope.payload.schemaVersion, 4, "definition schema")
+equal(definition.envelope.payload.treeHash, canonicalHash, "definition canonical tree hash")
+equal(definition.envelope.payload.treeHashBytes[1], 212, "raw hash byte retained")
+equal(definition.envelope.payload.treeHashBytes[16], 93, "raw hash bytes retained")
 equal(definition.envelope.payload.locale, "enUS", "definition locale")
 equal(definition.envelope.payload.specialization.id, 259, "definition specialization")
+equal(definition.envelope.payload.metadata.status, "partial", "definition metadata initially partial")
+equal(definition.envelope.payload.metadata.entryCount, 1, "definition entry count")
+equal(definition.envelope.payload.metadata.incompleteEntryCount, 1, "definition incomplete entry count")
 
 local entry = definition.envelope.payload.nodes[1].entries[1]
 equal(entry.spellId, 14162, "spell id")
 equal(entry.name, "Improved Eviscerate", "resolved talent name")
 equal(entry.iconFileDataId, 132292, "resolved talent icon")
 equal(entry.description, nil, "description initially unavailable")
+equal(entry.metadataStatus, "partial", "entry metadata initially partial")
+equal(entry.missingMetadata[1], "description", "missing description declared")
 equal(entry.spellLink, "|Hspell:14162|h[Improved Eviscerate]|h", "resolved spell link")
 equal(entry.tooltip.source, "C_TooltipInfo.GetSpellByID", "tooltip source")
 equal(entry.tooltip.lines[2].left, "Rank 1/3", "tooltip rank line")
@@ -184,6 +192,10 @@ addon.Store.SetCharacterSnapshot(refreshedSnapshot.characterKey, refreshedSnapsh
 
 local healedDefinition = GuildweaverDB.sync.outbound.telemetry[streamKey]
 equal(healedDefinition.revision, 2, "definition revision advances when metadata heals")
+equal(healedDefinition.envelope.payload.metadata.status, "complete", "definition metadata heals")
+equal(healedDefinition.envelope.payload.metadata.incompleteEntryCount, 0, "definition has no incomplete entries")
+equal(healedDefinition.envelope.payload.nodes[1].entries[1].metadataStatus, "complete", "entry metadata heals")
+equal(healedDefinition.envelope.payload.nodes[1].entries[1].missingMetadata, nil, "missing metadata clears")
 equal(
     healedDefinition.envelope.payload.nodes[1].entries[1].description,
     "Increases the damage done by your Eviscerate ability by 15%.",
