@@ -24,6 +24,15 @@ GetTalentTabInfo = function(index)
     local tab = tabs[index]
     return unpack(tab)
 end
+GetFileIDFromPath = function(path)
+    local ids = {
+        ["Interface\\TalentFrame\\WarriorArms-TopLeft"] = 900001,
+        ["Interface\\TalentFrame\\WarriorArms-TopRight"] = 900002,
+        ["Interface\\TalentFrame\\WarriorArms-BottomLeft"] = 900003,
+        ["Interface\\TalentFrame\\WarriorArms-BottomRight"] = 900004,
+    }
+    return ids[path] or 0
+end
 
 C_SpecializationInfo = {
     GetSpecialization = GetSpecialization,
@@ -85,10 +94,13 @@ equal(normalized.talents.art.specialization.iconFileDataId, 132355, "specializat
 equal(#normalized.talents.art.talentTabs, 3, "talent tab count")
 equal(normalized.talents.art.talentTabs[1].background, "WarriorArms", "arms background")
 equal(
-    normalized.talents.art.talentTabs[1].backgroundTextures.topLeft,
+    normalized.talents.art.talentTabs[1].backgroundTextures.topLeft.path,
     "Interface\\TalentFrame\\WarriorArms-TopLeft",
     "classic background texture path"
 )
+equal(normalized.talents.art.talentTabs[1].backgroundTextures.topLeft.fileDataId, 900001, "background file data id")
+equal(normalized.talents.art.talentTabs[1].backgroundTextures.bottomRight.fileDataId, 900004, "background bottom right file data id")
+equal(normalized.talents.art.talentTabs[2].backgroundTextures.topLeft.fileDataId, nil, "unresolved background id stays nil")
 
 local definition = definitions[1]
 truthy(definition.art, "definition art")
