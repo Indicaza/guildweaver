@@ -14,6 +14,7 @@ globals = {
     "GetBuildInfo",
     "GetCurrentRegion",
     "GetDetailedItemLevelInfo",
+    "GetFileIDFromPath",
     "GetGuildInfo",
     "GetInventoryItemID",
     "GetInventoryItemLink",
