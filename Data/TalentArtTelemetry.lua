@@ -57,6 +57,25 @@ local function collectSpecializationArt(snapshot)
     }
 end
 
+local function textureDescriptor(path)
+    if not nonEmpty(path) then
+        return nil
+    end
+
+    local fileDataId = nil
+    if type(GetFileIDFromPath) == "function" then
+        local ok, value = pcall(GetFileIDFromPath, path)
+        if ok and tonumber(value) and tonumber(value) > 0 then
+            fileDataId = tonumber(value)
+        end
+    end
+
+    return {
+        path = path,
+        fileDataId = fileDataId,
+    }
+end
+
 local function talentBackgroundTextures(background)
     if not nonEmpty(background) then
         return nil
@@ -64,10 +83,10 @@ local function talentBackgroundTextures(background)
 
     local prefix = "Interface\\TalentFrame\\" .. background
     return {
-        topLeft = prefix .. "-TopLeft",
-        topRight = prefix .. "-TopRight",
-        bottomLeft = prefix .. "-BottomLeft",
-        bottomRight = prefix .. "-BottomRight",
+        topLeft = textureDescriptor(prefix .. "-TopLeft"),
+        topRight = textureDescriptor(prefix .. "-TopRight"),
+        bottomLeft = textureDescriptor(prefix .. "-BottomLeft"),
+        bottomRight = textureDescriptor(prefix .. "-BottomRight"),
     }
 end
 
