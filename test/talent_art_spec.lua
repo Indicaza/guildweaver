@@ -10,6 +10,9 @@ local function truthy(value, label)
     end
 end
 
+GuildweaverDB = nil
+GetServerTime = function() return 1791392500 end
+GetRealmName = function() return "Classic Beta PvE 2" end
 GetSpecialization = function() return 1 end
 GetSpecializationInfo = function()
     return 1491, "Warrior", "A master of armed combat.", 132355, "DAMAGER", 1, 12, "Warrior", 12, true
@@ -59,6 +62,8 @@ local function loadAddonFile(path)
     return chunk("Guildweaver", addon)
 end
 
+loadAddonFile("Data/Store.lua")
+addon.Store.Initialize()
 loadAddonFile("Data/TelemetrySchema.lua")
 loadAddonFile("Data/TalentArtTelemetry.lua")
 
