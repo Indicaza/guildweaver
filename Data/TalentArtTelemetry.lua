@@ -57,31 +57,77 @@ local function collectSpecializationArt(snapshot)
     }
 end
 
+local function addUnique(values, seen, value)
+    if not nonEmpty(value) or seen[value] then
+        return
+    end
+
+    seen[value] = true
+    table.insert(values, value)
+end
+
+local function texturePathCandidates(path)
+    local values = {}
+    local seen = {}
+    local slashPath = path:gsub("\\", "/")
+
+    addUnique(values, seen, path)
+    addUnique(values, seen, path .. ".blp")
+    addUnique(values, seen, slashPath)
+    addUnique(values, seen, slashPath .. ".blp")
+
+    return values
+end
+
 local function textureDescriptor(path)
     if not nonEmpty(path) then
         return nil
     end
 
     local fileDataId = nil
+    local resolvedPath = nil
     if type(GetFileIDFromPath) == "function" then
-        local ok, value = pcall(GetFileIDFromPath, path)
-        if ok and tonumber(value) and tonumber(value) > 0 then
-            fileDataId = tonumber(value)
+        for _, candidate in ipairs(texturePathCandidates(path)) do
+            local ok, value = pcall(GetFileIDFromPath, candidate)
+            if ok and tonumber(value) and tonumber(value) > 0 then
+                fileDataId = tonumber(value)
+                resolvedPath = candidate
+                break
+            end
         end
     end
 
     return {
         path = path,
+        resolvedPath = resolvedPath,
         fileDataId = fileDataId,
     }
 end
 
-local function talentBackgroundTextures(background)
+local function talentBackgroundPrefix(background)
     if not nonEmpty(background) then
         return nil
     end
 
-    local prefix = "Interface\\TalentFrame\\" .. background
+    local prefix = background:gsub("%.blp$", "")
+    prefix = prefix:gsub("%-TopLeft$", "")
+    prefix = prefix:gsub("%-TopRight$", "")
+    prefix = prefix:gsub("%-BottomLeft$", "")
+    prefix = prefix:gsub("%-BottomRight$", "")
+
+    if not prefix:find("[\\/]", 1) then
+        prefix = "Interface\\TalentFrame\\" .. prefix
+    end
+
+    return prefix
+end
+
+local function talentBackgroundTextures(background)
+    local prefix = talentBackgroundPrefix(background)
+    if not prefix then
+        return nil
+    end
+
     return {
         topLeft = textureDescriptor(prefix .. "-TopLeft"),
         topRight = textureDescriptor(prefix .. "-TopRight"),
