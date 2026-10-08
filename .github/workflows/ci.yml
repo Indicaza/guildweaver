@@ -28,17 +28,19 @@ jobs:
         run: luacheck .
 
       - name: Run addon tests
+        shell: bash
         run: |
-          lua5.1 test/character_spec.lua
-          lua5.1 test/realm_identity_spec.lua
-          lua5.1 test/telemetry_schema_spec.lua
-          lua5.1 test/item_telemetry_spec.lua
-          lua5.1 test/character_stats_spec.lua
-          lua5.1 test/secret_values_spec.lua
-          lua5.1 test/talent_enrichment_spec.lua
-          lua5.1 test/talent_art_spec.lua
-          lua5.1 test/character_stat_events_spec.lua
-          lua5.1 test/session_capture_spec.lua
+          set -euo pipefail
+          shopt -s nullglob
+          specs=(test/*_spec.lua)
+          if (( ${#specs[@]} == 0 )); then
+            echo "No addon specs found"
+            exit 1
+          fi
+          for spec in "${specs[@]}"; do
+            echo "==> $spec"
+            lua5.1 "$spec"
+          done
 
       - name: Validate TOC file manifest
         shell: bash

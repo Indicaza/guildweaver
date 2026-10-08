@@ -403,6 +403,8 @@ local function normalizeCharacterSnapshot(snapshot)
         schemaVersion = 3,
         capturedAt = snapshot.capturedAt,
         addonVersion = snapshot.addonVersion,
+        installationId = snapshot.installationId,
+        capture = snapshot.capture,
         characterKey = snapshot.characterKey,
         characterId = snapshot.characterId,
         name = snapshot.name,

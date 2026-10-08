@@ -18,6 +18,7 @@ Data/CharacterTelemetryEnrichment.lua
 Data/TalentArtTelemetry.lua
 Data/MockData.lua
 Systems/Character.lua
+Data/CaptureIntegrity.lua
 Systems/CharacterStatEvents.lua
 Systems/SessionCapture.lua
 Systems/Quests.lua
