@@ -22,7 +22,7 @@ GetTalentTabInfo = function(index)
     local tabs = {
         { 71, "Arms", "A battle-hardened master of two-handed weapons.", 132355, 5, "WarriorArms", 5, true },
         { 72, "Fury", "A furious berserker wielding a weapon in each hand.", 132347, 5, "WarriorFury", 5, true },
-        { 73, "Protection", "A stalwart protector who uses a shield.", 132341, 2, "WarriorProtection", 2, true },
+        { 73, "Protection", "A stalwart protector who uses a shield.", 132341, 2, "Interface\\TalentFrame\\WarriorProtection.blp", 2, true },
     }
     local tab = tabs[index]
     return unpack(tab)
@@ -33,6 +33,11 @@ GetFileIDFromPath = function(path)
         ["Interface\\TalentFrame\\WarriorArms-TopRight"] = 900002,
         ["Interface\\TalentFrame\\WarriorArms-BottomLeft"] = 900003,
         ["Interface\\TalentFrame\\WarriorArms-BottomRight"] = 900004,
+        ["Interface/TalentFrame/WarriorFury-TopLeft.blp"] = 910001,
+        ["Interface/TalentFrame/WarriorFury-TopRight.blp"] = 910002,
+        ["Interface/TalentFrame/WarriorFury-BottomLeft.blp"] = 910003,
+        ["Interface/TalentFrame/WarriorFury-BottomRight.blp"] = 910004,
+        ["Interface\\TalentFrame\\WarriorProtection-TopLeft.blp"] = 920001,
     }
     return ids[path] or 0
 end
@@ -105,7 +110,18 @@ equal(
 )
 equal(normalized.talents.art.talentTabs[1].backgroundTextures.topLeft.fileDataId, 900001, "background file data id")
 equal(normalized.talents.art.talentTabs[1].backgroundTextures.bottomRight.fileDataId, 900004, "background bottom right file data id")
-equal(normalized.talents.art.talentTabs[2].backgroundTextures.topLeft.fileDataId, nil, "unresolved background id stays nil")
+equal(normalized.talents.art.talentTabs[2].backgroundTextures.topLeft.fileDataId, 910001, "slash blp background fallback")
+equal(
+    normalized.talents.art.talentTabs[2].backgroundTextures.topLeft.resolvedPath,
+    "Interface/TalentFrame/WarriorFury-TopLeft.blp",
+    "resolved fallback path"
+)
+equal(normalized.talents.art.talentTabs[3].backgroundTextures.topLeft.fileDataId, 920001, "full background path normalization")
+equal(
+    normalized.talents.art.talentTabs[3].backgroundTextures.topLeft.path,
+    "Interface\\TalentFrame\\WarriorProtection-TopLeft",
+    "full background path strips extension"
+)
 
 local definition = definitions[1]
 truthy(definition.art, "definition art")
