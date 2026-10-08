@@ -55,12 +55,46 @@ local function currentLocale()
     return safeCall(GetLocale)
 end
 
-local function treeHash(treeId)
-    if not C_Traits or type(C_Traits.GetTreeHash) ~= "function" then
-        return nil
+local function canonicalTreeHash(value)
+    if type(value) == "table" then
+        local bytes = {}
+        local hex = {}
+
+        for _, rawByte in ipairs(value) do
+            local byte = tonumber(rawByte)
+            if not byte or byte < 0 or byte > 255 then
+                return nil, nil
+            end
+
+            byte = math.floor(byte)
+            table.insert(bytes, byte)
+            table.insert(hex, string.format("%02x", byte))
+        end
+
+        if #hex == 0 then
+            return nil, nil
+        end
+
+        return table.concat(hex), bytes
     end
 
-    return safeCall(C_Traits.GetTreeHash, treeId)
+    if type(value) == "string" and value ~= "" then
+        return value, nil
+    end
+
+    if type(value) == "number" then
+        return tostring(value), nil
+    end
+
+    return nil, nil
+end
+
+local function treeHash(treeId)
+    if not C_Traits or type(C_Traits.GetTreeHash) ~= "function" then
+        return nil, nil
+    end
+
+    return canonicalTreeHash(safeCall(C_Traits.GetTreeHash, treeId))
 end
 
 local function conditionStates(conditions)
@@ -143,13 +177,33 @@ local function rawEntryMap(node)
     return result
 end
 
+local function markEntryMetadata(entry)
+    local missing = {}
+
+    if not entry.name or entry.name == "" then
+        table.insert(missing, "name")
+    end
+    if not entry.iconFileDataId then
+        table.insert(missing, "iconFileDataId")
+    end
+    if not entry.description or entry.description == "" then
+        table.insert(missing, "description")
+    end
+
+    entry.metadataStatus = #missing == 0 and "complete" or "partial"
+    entry.missingMetadata = #missing > 0 and missing or nil
+    return #missing == 0
+end
+
 local function enrichDefinition(definition, rawTree, snapshot)
     if type(definition) ~= "table" then
         return
     end
 
-    definition.schemaVersion = 3
-    definition.treeHash = treeHash(definition.treeId)
+    local hash, hashBytes = treeHash(definition.treeId)
+    definition.schemaVersion = 4
+    definition.treeHash = hash
+    definition.treeHashBytes = hashBytes
     definition.locale = currentLocale()
     definition.specialization = snapshot and snapshot.specialization or nil
 
@@ -158,6 +212,8 @@ local function enrichDefinition(definition, rawTree, snapshot)
         definition.iconFileDataId = rawTree.iconFileDataId or rawTree.icon
     end
 
+    local incompleteEntries = 0
+    local entryCount = 0
     local nodesById = rawNodeMap(rawTree)
     for _, node in ipairs(type(definition.nodes) == "table" and definition.nodes or {}) do
         local rawNode = nodesById[tostring(node.nodeId or "")]
@@ -173,8 +229,19 @@ local function enrichDefinition(definition, rawTree, snapshot)
             entry.description = (type(rawEntry) == "table" and rawEntry.description) or (resolved and resolved.description)
             entry.spellLink = (type(rawEntry) == "table" and rawEntry.spellLink) or (resolved and resolved.spellLink)
             entry.tooltip = (type(rawEntry) == "table" and rawEntry.tooltip) or (resolved and resolved.tooltip)
+
+            entryCount = entryCount + 1
+            if not markEntryMetadata(entry) then
+                incompleteEntries = incompleteEntries + 1
+            end
         end
     end
+
+    definition.metadata = {
+        status = incompleteEntries == 0 and "complete" or "partial",
+        entryCount = entryCount,
+        incompleteEntryCount = incompleteEntries,
+    }
 end
 
 local function addTreeHashes(talents, definitions)
