@@ -15,6 +15,7 @@ Data/TelemetrySchema.lua
 Data/CharacterStats.lua
 Data/CharacterStatsFinalize.lua
 Data/CharacterTelemetryEnrichment.lua
+Data/TalentArtTelemetry.lua
 Data/MockData.lua
 Systems/Character.lua
 Systems/CharacterStatEvents.lua
