@@ -3,7 +3,8 @@ local _, GW = ...
 GW.TelemetryDomain = GW.TelemetryDomain or {}
 
 local function streamKeyPart(value)
-    return string.lower(tostring(value or "unknown")):gsub("[^%w%-_]+", "-")
+    local normalized = string.lower(tostring(value or "unknown")):gsub("[^%w%-_]+", "-")
+    return normalized
 end
 
 local function defaultStreamKey(module, snapshot)
