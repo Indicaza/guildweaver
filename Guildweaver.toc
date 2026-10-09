@@ -12,6 +12,7 @@ Data/CharacterIdentity.lua
 Data/ItemTelemetry.lua
 Data/SpellTelemetry.lua
 Data/ProfessionTelemetry.lua
+Data/ProfessionRecipeLink.lua
 Data/TelemetrySchema.lua
 Data/CharacterStats.lua
 Data/CharacterStatsFinalize.lua
