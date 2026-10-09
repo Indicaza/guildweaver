@@ -37,6 +37,7 @@ C_TradeSkillUI = nil
 
 local GW = { version = "test" }
 assert(loadfile("Data/Store.lua"))("Guildweaver", GW)
+assert(loadfile("Data/ProfessionTelemetry.lua"))("Guildweaver", GW)
 assert(loadfile("Systems/Character.lua"))("Guildweaver", GW)
 
 GW.Store.Initialize()
