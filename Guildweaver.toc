@@ -14,6 +14,7 @@ Data/SpellTelemetry.lua
 Data/ProfessionTelemetry.lua
 Data/ProfessionRecipeLink.lua
 Data/RecipeTooltipTelemetry.lua
+Data/RecipeBookDetails.lua
 Data/TelemetrySchema.lua
 Data/CharacterStats.lua
 Data/CharacterStatsFinalize.lua

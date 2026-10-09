@@ -535,7 +535,7 @@ function GW.ProfessionTelemetry.RememberRecipeBook(characterKey, book)
         table.insert(cache.order, key)
     end
 
-    local fingerprint = GW.Store.Fingerprint(book.recipes)
+    local fingerprint = GW.Store.Fingerprint({ recipes = book.recipes, categories = book.categories, items = book.items })
     local existing = cache.recipeBooks[key]
     if existing and existing.fingerprint == fingerprint then
         return false
@@ -546,6 +546,8 @@ function GW.ProfessionTelemetry.RememberRecipeBook(characterKey, book)
         capturedAt = now(),
         fingerprint = fingerprint,
         recipes = book.recipes,
+        categories = book.categories,
+        items = book.items,
     }
     return true
 end
@@ -572,6 +574,8 @@ function GW.ProfessionTelemetry.BuildPayload(characterKey)
                     knownCount = known,
                 }
                 profession.recipes = book.recipes
+                profession.categories = book.categories
+                profession.items = book.items
             end
             table.insert(professions, profession)
         end

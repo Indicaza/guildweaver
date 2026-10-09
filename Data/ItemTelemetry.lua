@@ -304,6 +304,14 @@ local function describeItem(itemIdOrLink, options)
         item.itemLink = cleanText(itemIdOrLink)
     end
     enrichMetadata(item, itemLink)
+    -- GetItemInfo returns nothing until the client has cached the item, but
+    -- the icon is in the static item data and always available instantly.
+    if not item.iconFileDataId and itemId and type(Globals.GetItemInfoInstant) == "function" then
+        local ok, _, _, _, _, icon = pcall(Globals.GetItemInfoInstant, itemId)
+        if ok and tonumber(icon) then
+            item.iconFileDataId = tonumber(icon)
+        end
+    end
     if not (type(options) == "table" and options.tooltip == false) then
         item.tooltip = collectTooltip(item.itemLink or itemLink)
     end
