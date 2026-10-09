@@ -27,6 +27,7 @@ Telemetry/Domains/Professions.lua
 Telemetry/Domains/Talents.lua
 Telemetry/Registry.lua
 Systems/Character.lua
+Systems/ProfessionCapture.lua
 Data/CaptureIntegrity.lua
 Systems/CharacterStatEvents.lua
 Systems/SessionCapture.lua
