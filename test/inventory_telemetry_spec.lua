@@ -35,7 +35,14 @@ local bags = {
         },
     },
 }
+bags[-2] = {
+    size = 4,
+    slots = {
+        [1] = { iconFileID = 134235, stackCount = 1, quality = 1, hyperlink = "|cffffffff|Hitem:5396::::::::20:::::::|h[Key to Searing Gorge]|h|r", itemID = 5396 },
+    },
+}
 local money = 1234567
+local tooltipReady = true
 local itemInfoReady = true
 
 rawset(_G, "C_Container", {
@@ -75,6 +82,9 @@ GetItemInfo = function(link)
     if not itemInfoReady then
         return nil
     end
+    if tostring(link):find("5396", 1, true) then
+        return "Key to Searing Gorge", link, 1, 1, 0, "Key", "Key", 1, "", 134235, 0, 13, 0, 1, 0, nil, false
+    end
     if tostring(link):find("15210", 1, true) then
         return "Raider Shortsword of the Tiger", link, 2, 18, 13, "Weapon", "One-Handed Swords", 1,
             "INVTYPE_WEAPON", 135274, 461, 2, 7, 2, 0, nil, false
@@ -85,6 +95,9 @@ end
 
 rawset(_G, "C_TooltipInfo", {
     GetHyperlink = function(link)
+        if not tooltipReady then
+            return nil
+        end
         local name = tostring(link):match("%[(.-)%]") or "Item"
         return { lines = { { leftText = name }, { leftText = "Crafted by Player-4620-014B5E8E" } } }
     end,
@@ -124,9 +137,11 @@ truthy(payload, "inventory collected")
 equal(payload.scope, "carried", "scope")
 equal(payload.source, "C_Container", "source")
 equal(payload.money.copper, 1234567, "money")
-equal(payload.slotCount, 22, "total slots")
-equal(payload.freeSlots, 18, "free slots")
-equal(#payload.containers, 2, "only containers with slots")
+equal(payload.slotCount, 22, "total slots exclude the keyring")
+equal(payload.freeSlots, 18, "free slots exclude the keyring")
+equal(#payload.containers, 3, "only containers with slots")
+equal(payload.containers[3].kind, "keyring", "keyring last")
+equal(payload.containers[3].slots[1].itemId, 5396, "keys are captured")
 
 local backpack = payload.containers[1]
 equal(backpack.bagId, 0, "backpack id")
@@ -147,7 +162,7 @@ equal(bag.item.name, "Linen Bag", "bag item name")
 equal(bag.iconFileDataId, 133627, "bag icon from inventory slot")
 equal(bag.freeSlots, 5, "bag free slots")
 
-equal(#payload.items, 2, "distinct items described once")
+equal(#payload.items, 3, "distinct items described once")
 local ore, sword
 for _, item in ipairs(payload.items) do
     if item.itemId == 2770 then ore = item end
@@ -167,11 +182,11 @@ equal(sword.stats.ITEM_MOD_AGILITY_SHORT, 3, "shared stats enrichment")
 equal(sword.requiredLevel, 13, "required level")
 equal(sword.bindType, 2, "bind type")
 
-equal(#payload.totals, 2, "totals per item id")
+equal(#payload.totals, 3, "totals per item id")
 equal(payload.totals[1].itemId, 2770, "totals sorted by item id")
 equal(payload.totals[1].count, 20, "ore summed across bags")
 equal(payload.totals[1].stacks, 3, "ore stacks")
-equal(payload.totals[2].count, 1, "sword count")
+equal(payload.totals[3].count, 1, "sword count")
 
 -- Publishing, revisions, dedupe -----------------------------------------------
 
@@ -219,10 +234,32 @@ addon.InventoryTelemetry.ResetCache()
 itemInfoReady = false
 local partial, pending = addon.InventoryTelemetry.Collect()
 truthy(pending, "pending while item info loads")
-equal(partial.items[2].itemId, 2770, "items sorted by key")
-equal(partial.items[2].name, "Copper Ore", "name falls back to the link")
+local partialOre
+for _, item in ipairs(partial.items) do
+    if item.itemId == 2770 then partialOre = item end
+end
+equal(partialOre.name, "Copper Ore", "name falls back to the link")
 itemInfoReady = true
+tooltipReady = false
+local _, tooltipPending = addon.InventoryTelemetry.Collect()
+truthy(tooltipPending, "an item without its tooltip yet is not cached")
+tooltipReady = true
 local _, stillPending = addon.InventoryTelemetry.Collect()
 equal(stillPending, false, "described once info arrives")
+
+-- A classic client: the id after the last bag is a bank bag, not a reagent bag.
+rawset(_G, "Enum", { BagIndex = { ReagentBag = 5, BankBag_1 = 5 } })
+bags[5] = { size = 28, slots = { [1] = { iconFileID = 1, stackCount = 1, hyperlink = ORE, itemID = 2770 } } }
+for _, container in ipairs(addon.InventoryTelemetry.Collect().containers) do
+    truthy(container.bagId ~= 5, "bank bag is never carried inventory")
+end
+-- A client with a real reagent bag.
+rawset(_G, "Enum", { BagIndex = { ReagentBag = 5, BankBag_1 = 6 } })
+local withReagent = addon.InventoryTelemetry.Collect()
+local reagentKind
+for _, container in ipairs(withReagent.containers) do
+    if container.bagId == 5 then reagentKind = container.kind end
+end
+equal(reagentKind, "reagent", "reagent bag included when the client has one")
 
 print("inventory_telemetry_spec passed")

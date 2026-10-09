@@ -62,12 +62,32 @@ local function call(name, ...)
     return safe(Globals[name], ...)
 end
 
+-- The reagent bag only exists on clients whose bag index enum names one; on
+-- classic clients the id after the last bag is the first bank bag, which must
+-- never be read as carried inventory.
+local function reagentBagId()
+    local bagIndex = type(Globals.Enum) == "table" and Globals.Enum.BagIndex or nil
+    local reagent = type(bagIndex) == "table" and tonumber(bagIndex.ReagentBag) or nil
+    if not reagent then
+        return nil
+    end
+    for key, value in pairs(bagIndex) do
+        if type(key) == "string" and key:find("^Bank") and tonumber(value) == reagent then
+            return nil
+        end
+    end
+    return reagent
+end
+
 local function containerIds()
     local ids = {}
     local bagSlots = tonumber(Globals.NUM_BAG_SLOTS) or DEFAULT_BAG_SLOTS
-    local reagentSlots = tonumber(Globals.NUM_REAGENTBAG_SLOTS) or 0
-    for bagId = BACKPACK_ID, bagSlots + reagentSlots do
+    for bagId = BACKPACK_ID, bagSlots do
         table.insert(ids, bagId)
+    end
+    local reagent = reagentBagId()
+    if reagent and reagent > bagSlots then
+        table.insert(ids, reagent)
     end
     table.insert(ids, KEYRING_ID)
     return ids
@@ -80,8 +100,7 @@ local function containerKind(bagId)
     if bagId == KEYRING_ID then
         return "keyring"
     end
-    local bagSlots = tonumber(Globals.NUM_BAG_SLOTS) or DEFAULT_BAG_SLOTS
-    if bagId > bagSlots then
+    if bagId == reagentBagId() then
         return "reagent"
     end
     return "bag"
@@ -235,7 +254,9 @@ local function describe(itemKey, link, info)
         tooltip = item.tooltip,
     }
 
-    local complete = description.name ~= nil and item.name ~= nil
+    -- Names and tooltips load separately; only cache a description that has
+    -- both, so a half-loaded item is described again on the next scan.
+    local complete = item.name ~= nil and item.tooltip ~= nil
     if complete then
         describedItems[itemKey] = description
     end
@@ -299,6 +320,7 @@ function GW.InventoryTelemetry.Collect()
                         isBound = info.isBound == true or nil,
                         isReadable = info.isReadable == true or nil,
                         hasLoot = info.hasLoot == true or nil,
+                        hasNoValue = info.hasNoValue == true or nil,
                     })
                     local itemId = item.itemId
                     if itemId then
@@ -311,8 +333,11 @@ function GW.InventoryTelemetry.Collect()
             end
 
             container.freeSlots = tonumber(freeSlots) or (slotCount - #container.slots)
-            totalSlots = totalSlots + slotCount
-            totalFree = totalFree + container.freeSlots
+            -- As in game, the keyring does not count toward bag space.
+            if container.kind ~= "keyring" then
+                totalSlots = totalSlots + slotCount
+                totalFree = totalFree + container.freeSlots
+            end
             table.insert(containers, container)
         end
     end
