@@ -63,8 +63,25 @@ jobs:
           set -euo pipefail
           rm -rf dist
           mkdir -p dist/Guildweaver
-          cp Guildweaver.toc Core.lua dist/Guildweaver/
-          cp -R Data Systems UI Utils dist/Guildweaver/
+          cp Guildweaver.toc dist/Guildweaver/
+
+          # Treat the TOC as the release manifest so newly added addon modules cannot
+          # be referenced by the client without also being shipped in the ZIP.
+          while IFS= read -r line || [[ -n "$line" ]]; do
+            line="${line%$'\r'}"
+            [[ -z "$line" ]] && continue
+            [[ "$line" == '##'* ]] && continue
+            [[ "$line" == '#'* ]] && continue
+            [[ "$line" == 'Data/BridgeInbox.generated.lua' ]] && continue
+
+            if [[ ! -f "$line" ]]; then
+              echo "Guildweaver.toc references missing source file: $line"
+              exit 1
+            fi
+
+            mkdir -p "dist/Guildweaver/$(dirname "$line")"
+            cp "$line" "dist/Guildweaver/$line"
+          done < Guildweaver.toc
 
           cat > dist/Guildweaver/Data/BridgeInbox.generated.lua <<'EOF'
           local _, GW = ...
@@ -74,6 +91,20 @@ jobs:
               acknowledgedQuestActions = {},
           }
           EOF
+
+          # Validate the packaged addon, not just the repository checkout. This is
+          # the guard that prevents a valid TOC from producing a broken release.
+          while IFS= read -r line || [[ -n "$line" ]]; do
+            line="${line%$'\r'}"
+            [[ -z "$line" ]] && continue
+            [[ "$line" == '##'* ]] && continue
+            [[ "$line" == '#'* ]] && continue
+
+            if [[ ! -f "dist/Guildweaver/$line" ]]; then
+              echo "Packaged addon is missing TOC file: $line"
+              exit 1
+            fi
+          done < Guildweaver.toc
 
           cat > dist/Guildweaver/release.json <<EOF
           {
@@ -108,6 +139,7 @@ jobs:
           test -s dist/Guildweaver.zip.sha256
           test -s dist/release.json
           test -s dist/Guildweaver/Data/BridgeInbox.generated.lua
+          test -s dist/Guildweaver/Telemetry/Domain.lua
 
       - name: Replace edge release
         if: github.event_name == 'push' && steps.meta.outputs.channel == 'edge'
