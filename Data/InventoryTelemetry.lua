@@ -17,7 +17,9 @@ local Globals = _G or {}
 GW.InventoryTelemetry = GW.InventoryTelemetry or {}
 
 local BACKPACK_ID = 0
-local KEYRING_ID = -2
+-- Classic clients' keyring; clients with a bag index enum name their own
+-- (WoW Forever's is -1, where -2 is a character bank tab).
+local CLASSIC_KEYRING_ID = -2
 local DEFAULT_BAG_SLOTS = 4
 -- INV_Misc_Bag_08: the backpack has no inventory item to read an icon from.
 local BACKPACK_ICON = 133633
@@ -62,17 +64,30 @@ local function call(name, ...)
     return safe(Globals[name], ...)
 end
 
+local function bagIndexEnum()
+    local enum = type(Globals.Enum) == "table" and Globals.Enum.BagIndex or nil
+    return type(enum) == "table" and enum or nil
+end
+
+local function keyringId()
+    local enum = bagIndexEnum()
+    if enum then
+        return tonumber(enum.Keyring)
+    end
+    return CLASSIC_KEYRING_ID
+end
+
 -- The reagent bag only exists on clients whose bag index enum names one; on
 -- classic clients the id after the last bag is the first bank bag, which must
 -- never be read as carried inventory.
 local function reagentBagId()
-    local bagIndex = type(Globals.Enum) == "table" and Globals.Enum.BagIndex or nil
-    local reagent = type(bagIndex) == "table" and tonumber(bagIndex.ReagentBag) or nil
+    local bagIndex = bagIndexEnum()
+    local reagent = bagIndex and tonumber(bagIndex.ReagentBag) or nil
     if not reagent then
         return nil
     end
     for key, value in pairs(bagIndex) do
-        if type(key) == "string" and key:find("^Bank") and tonumber(value) == reagent then
+        if type(key) == "string" and key:lower():find("bank", 1, true) and tonumber(value) == reagent then
             return nil
         end
     end
@@ -89,7 +104,10 @@ local function containerIds()
     if reagent and reagent > bagSlots then
         table.insert(ids, reagent)
     end
-    table.insert(ids, KEYRING_ID)
+    local keyring = keyringId()
+    if keyring then
+        table.insert(ids, keyring)
+    end
     return ids
 end
 
@@ -97,7 +115,7 @@ local function containerKind(bagId)
     if bagId == BACKPACK_ID then
         return "backpack"
     end
-    if bagId == KEYRING_ID then
+    if bagId == keyringId() then
         return "keyring"
     end
     if bagId == reagentBagId() then

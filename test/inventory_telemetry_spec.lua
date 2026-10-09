@@ -111,6 +111,9 @@ rawset(_G, "C_TooltipInfo", {
         end
         if info.itemID == 15210 then
             table.insert(lines, { leftText = "Durability 41 / 55" })
+            table.insert(lines, { type = 1, leftText = "" })
+            table.insert(lines, { leftText = "Shadowcraft Boots", leftOffset = 8 })
+            table.insert(lines, { type = 11, leftText = "Sell Price:", price = 461 })
         end
         if info.itemID == 6948 then
             table.insert(lines, { leftText = "Cooldown remaining: " .. cooldownLeft .. " sec" })
@@ -204,6 +207,11 @@ equal(ore.tooltip.lines[2].left, "Crafted by Player-REDACTED", "tooltip redacts 
 equal(sword.suffixId, 1027, "random suffix parsed from the item string")
 equal(sword.tooltip.lines[2].left, "Soulbound", "tooltip read from the bag slot, binding included")
 equal(sword.tooltip.lines[3].left, "Durability 41 / 55", "per-item durability included")
+equal(sword.tooltip.lines[4].blank, true, "blank lines keep the tooltip's spacing")
+equal(sword.tooltip.lines[5].offset, 8, "indented lines keep their offset")
+for _, line in ipairs(sword.tooltip.lines) do
+    truthy(line.left ~= "Sell Price:", "the sell price line is drawn from the sell price instead")
+end
 equal(sword.stats.ITEM_MOD_AGILITY_SHORT, 3, "shared stats enrichment")
 equal(sword.requiredLevel, 13, "required level")
 equal(sword.bindType, 2, "bind type")
@@ -290,18 +298,23 @@ local _, stillPending = addon.InventoryTelemetry.Collect()
 equal(stillPending, false, "described once info arrives")
 
 -- A classic client: the id after the last bag is a bank bag, not a reagent bag.
-rawset(_G, "Enum", { BagIndex = { ReagentBag = 5, BankBag_1 = 5 } })
+rawset(_G, "Enum", { BagIndex = { Keyring = -2, ReagentBag = 5, BankBag_1 = 5 } })
 bags[5] = { size = 28, slots = { [1] = { iconFileID = 1, stackCount = 1, hyperlink = ORE, itemID = 2770 } } }
 for _, container in ipairs(addon.InventoryTelemetry.Collect().containers) do
     truthy(container.bagId ~= 5, "bank bag is never carried inventory")
 end
--- A client with a real reagent bag.
-rawset(_G, "Enum", { BagIndex = { ReagentBag = 5, BankBag_1 = 6 } })
-local withReagent = addon.InventoryTelemetry.Collect()
-local reagentKind
-for _, container in ipairs(withReagent.containers) do
-    if container.bagId == 5 then reagentKind = container.kind end
+-- WoW Forever: reagent bag 5, keyring -1, and -2 is a character bank tab.
+rawset(_G, "Enum", { BagIndex = { Accountbanktab = -3, Characterbanktab = -2, Keyring = -1, Backpack = 0, ReagentBag = 5, CharacterBankTab_1 = 6 } })
+bags[-1] = bags[-2]
+bags[-2] = { size = 98, slots = { [1] = { iconFileID = 1, stackCount = 1, hyperlink = ORE, itemID = 2770 } } }
+local forever = addon.InventoryTelemetry.Collect()
+local kinds = {}
+for _, container in ipairs(forever.containers) do
+    truthy(container.bagId ~= -2, "a character bank tab is never carried inventory")
+    kinds[container.bagId] = container.kind
 end
-equal(reagentKind, "reagent", "reagent bag included when the client has one")
+equal(kinds[-1], "keyring", "Forever's keyring is -1")
+equal(kinds[5], "reagent", "Forever's reagent bag is 5")
+
 
 print("inventory_telemetry_spec passed")

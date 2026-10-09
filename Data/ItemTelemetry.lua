@@ -2,7 +2,7 @@ local _, GW = ...
 
 local Globals = _G or {}
 local MAX_TOOLTIP_LINES = 40
-local MAX_TOOLTIP_TEXT = 320
+local MAX_TOOLTIP_TEXT = 600
 local tooltipScanner = nil
 local tooltipScannerInitialized = false
 
@@ -39,22 +39,39 @@ local function colorValue(value)
     }
 end
 
+-- Enum.TooltipDataLineType values the client draws without text of their own.
+local LINE_TYPE_BLANK = 1
+local LINE_TYPE_SELL_PRICE = 11
+local LINE_TYPE_SEPARATOR = 23
+
 local function normalizeTooltipLine(line)
     if type(line) ~= "table" then
+        return nil
+    end
+
+    local lineType = tonumber(line.type)
+    -- The sell price is drawn as money from the item's own sell price.
+    if lineType == LINE_TYPE_SELL_PRICE then
         return nil
     end
 
     local left = cleanText(line.leftText or line.text or line.left)
     local right = cleanText(line.rightText or line.right)
     if not left and not right then
+        -- Blank lines and separators space the tooltip's sections apart.
+        if lineType == LINE_TYPE_BLANK or lineType == LINE_TYPE_SEPARATOR then
+            return { blank = true }
+        end
         return nil
     end
 
+    local offset = tonumber(line.leftOffset)
     return {
         left = left,
         right = right,
         leftColor = colorValue(line.leftColor or line.color),
         rightColor = colorValue(line.rightColor),
+        offset = offset and offset > 0 and offset or nil,
     }
 end
 

@@ -59,8 +59,10 @@ function GW.InventoryCapture:Schedule(reason)
         self.latestReason = nil
         local _, itemInfoPending = GW.InventoryCapture.Publish(latest)
 
-        -- Items the client had not cached yet are described once their info
-        -- arrives; retry a few times rather than listening forever.
+        -- Items the client had not cached yet are described again when their
+        -- info arrives (GET_ITEM_INFO_RECEIVED), with a few timed retries for
+        -- clients that never send it.
+        self.itemInfoPending = itemInfoPending == true
         if itemInfoPending and (self.itemInfoRetries or 0) < MAX_ITEM_INFO_RETRIES then
             self.itemInfoRetries = (self.itemInfoRetries or 0) + 1
             C_Timer.After(ITEM_INFO_RETRY_SECONDS, function()
@@ -90,8 +92,14 @@ function GW.InventoryCapture:Initialize()
     safeRegister(frame, "PLAYER_MONEY")
     safeRegister(frame, "PLAYER_ENTERING_WORLD")
     safeRegister(frame, "BAG_CONTAINER_UPDATE")
+    safeRegister(frame, "GET_ITEM_INFO_RECEIVED")
 
     frame:SetScript("OnEvent", function(_, event)
+        -- Item info arrives for every item the client loads anywhere; only an
+        -- incomplete inventory scan cares.
+        if event == "GET_ITEM_INFO_RECEIVED" and not self.itemInfoPending then
+            return
+        end
         self:Schedule(event)
     end)
 
