@@ -93,7 +93,31 @@ GetItemInfo = function(link)
         "", 134566, 5, 7, 7, 0, 0, nil, true
 end
 
+local cooldownLeft = 300
+rawset(_G, "ITEM_COOLDOWN_TIME", "Cooldown remaining: %s")
 rawset(_G, "C_TooltipInfo", {
+    GetBagItem = function(bagId, slot)
+        if not tooltipReady then
+            return nil
+        end
+        local info = bags[bagId] and bags[bagId].slots[slot]
+        if not info then
+            return nil
+        end
+        local name = tostring(info.hyperlink):match("%[(.-)%]") or "Item"
+        local lines = { { leftText = name } }
+        if info.isBound then
+            table.insert(lines, { leftText = "Soulbound" })
+        end
+        if info.itemID == 15210 then
+            table.insert(lines, { leftText = "Durability 41 / 55" })
+        end
+        if info.itemID == 6948 then
+            table.insert(lines, { leftText = "Cooldown remaining: " .. cooldownLeft .. " sec" })
+        end
+        table.insert(lines, { leftText = "Crafted by Player-4620-014B5E8E" })
+        return { lines = lines }
+    end,
     GetHyperlink = function(link)
         if not tooltipReady then
             return nil
@@ -178,6 +202,8 @@ equal(ore.itemSubclass.id, 7, "item subclass")
 equal(ore.isCraftingReagent, true, "crafting reagent")
 equal(ore.tooltip.lines[2].left, "Crafted by Player-REDACTED", "tooltip redacts player GUIDs")
 equal(sword.suffixId, 1027, "random suffix parsed from the item string")
+equal(sword.tooltip.lines[2].left, "Soulbound", "tooltip read from the bag slot, binding included")
+equal(sword.tooltip.lines[3].left, "Durability 41 / 55", "per-item durability included")
 equal(sword.stats.ITEM_MOD_AGILITY_SHORT, 3, "shared stats enrichment")
 equal(sword.requiredLevel, 13, "required level")
 equal(sword.bindType, 2, "bind type")
@@ -213,10 +239,26 @@ truthy(looted.changed, "loot publishes")
 equal(looted.revision, 2, "revision advances")
 equal(looted.envelope.payload.totals[1].count, 23, "ore total after loot")
 
+-- A ticking cooldown in a tooltip is not a change.
+bags[0].slots[9] = { iconFileID = 134414, stackCount = 1, quality = 1, hyperlink = "|cffffffff|Hitem:6948::::::::20:::::::|h[Hearthstone]|h|r", itemID = 6948, isBound = true }
+local hearth = addon.InventoryCapture.Publish("BAG_UPDATE_DELAYED")
+equal(hearth.revision, 3, "new item advances revision")
+for _, item in ipairs(hearth.envelope.payload.items) do
+    if item.itemId == 6948 then
+        for _, line in ipairs(item.tooltip.lines) do
+            truthy(not line.left:find("Cooldown remaining", 1, true), "cooldown line stripped")
+        end
+    end
+end
+cooldownLeft = 120
+equal(addon.InventoryCapture.Publish("BAG_UPDATE_DELAYED").changed, false, "cooldown ticking does not churn revisions")
+bags[0].slots[9] = nil
+equal(addon.InventoryCapture.Publish("BAG_UPDATE_DELAYED").revision, 4, "hearthstone removed")
+
 -- Money alone is a material change.
 money = money + 250
 local paid = addon.InventoryCapture.Publish("PLAYER_MONEY")
-equal(paid.revision, 3, "money change advances revision")
+equal(paid.revision, 5, "money change advances revision")
 equal(paid.envelope.payload.money.copper, 1234817, "new money")
 
 -- Domain publish (from a character capture) reuses the cached scan.

@@ -58,13 +58,15 @@ local function normalizeTooltipLine(line)
     }
 end
 
-local function collectModernTooltip(itemLink)
+-- C_TooltipInfo.<method>(...): GetHyperlink(link) for an item in general,
+-- GetBagItem(bag, slot) for the item a bag slot actually holds.
+local function collectModernTooltip(method, ...)
     local tooltipInfo = Globals.C_TooltipInfo
-    if type(tooltipInfo) ~= "table" or type(tooltipInfo.GetHyperlink) ~= "function" then
+    if type(tooltipInfo) ~= "table" or type(tooltipInfo[method]) ~= "function" then
         return nil
     end
 
-    local ok, data = pcall(tooltipInfo.GetHyperlink, itemLink)
+    local ok, data = pcall(tooltipInfo[method], ...)
     if not ok or type(data) ~= "table" or type(data.lines) ~= "table" then
         return nil
     end
@@ -121,9 +123,11 @@ local function fontStringColor(value)
     return colorValue({ r = r, g = g, b = b, a = a })
 end
 
-local function collectLegacyTooltip(itemLink)
+-- GameTooltip:<method>(...) on a hidden scanner: SetHyperlink(link) or
+-- SetBagItem(bag, slot).
+local function collectLegacyTooltip(method, ...)
     local frame = scannerFrame()
-    if not frame or type(frame.SetHyperlink) ~= "function" or type(frame.NumLines) ~= "function" then
+    if not frame or type(frame[method]) ~= "function" or type(frame.NumLines) ~= "function" then
         return nil
     end
 
@@ -134,7 +138,7 @@ local function collectLegacyTooltip(itemLink)
         pcall(frame.ClearLines, frame)
     end
 
-    local ok = pcall(frame.SetHyperlink, frame, itemLink)
+    local ok = pcall(frame[method], frame, ...)
     if not ok then
         return nil
     end
@@ -172,7 +176,7 @@ local function collectTooltip(itemLink)
     if type(itemLink) ~= "string" or itemLink == "" then
         return nil
     end
-    return collectModernTooltip(itemLink) or collectLegacyTooltip(itemLink)
+    return collectModernTooltip("GetHyperlink", itemLink) or collectLegacyTooltip("SetHyperlink", itemLink)
 end
 
 local function collectStats(itemLink)
@@ -339,3 +343,12 @@ end
 GW.ItemTelemetry = GW.ItemTelemetry or {}
 GW.ItemTelemetry.EnrichEquipmentItem = enrichEquipmentItem
 GW.ItemTelemetry.Describe = describeItem
+
+-- The tooltip of the item in a bag slot, as the player sees it when hovering
+-- it: binding, durability, charges and other per-item lines included.
+function GW.ItemTelemetry.BagItemTooltip(bagId, slot)
+    if not bagId or not slot then
+        return nil
+    end
+    return collectModernTooltip("GetBagItem", bagId, slot) or collectLegacyTooltip("SetBagItem", bagId, slot)
+end
