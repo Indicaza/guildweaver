@@ -80,6 +80,17 @@ C_TradeSkillUI = {
         return { recipeID = 2674, name = "Copper Bracers", icon = 132605, learned = false, relativeDifficulty = 0 }
     end,
     GetTradeSkillLineForRecipe = function() return 164, "Blacksmithing" end,
+    -- Enum.RecipeRequirementType: the Anvil is a station, the hammer a tool.
+    GetRecipeRequirements = function(recipeId)
+        if recipeId == 2674 then
+            return {
+                { name = "Anvil", type = 1, met = false },
+                { name = "Blacksmith Hammer", type = 2, met = true },
+                { type = 2, met = true },
+            }
+        end
+        return {}
+    end,
     GetRecipeOutputItemData = function(recipeId)
         if recipeId == 2660 then
             return { itemID = 2862, hyperlink = ITEMS[2862][2] }
@@ -126,6 +137,13 @@ equal(stone.crafted.maxQuantity, 2, "crafted quantity range")
 equal(stone.reagents[1].itemId, 2835, "reagent id")
 equal(stone.reagents[1].name, "Rough Stone", "reagent name enriched")
 equal(stone.reagents[1].quantity, 1, "reagent quantity")
+equal(stone.tools, nil, "recipes without requirements carry no tools")
+local bracers = book.recipes[2]
+equal(#bracers.tools, 2, "named requirements captured")
+equal(bracers.tools[1].name, "Anvil", "crafting station")
+equal(bracers.tools[1].available, false, "unmet requirement")
+equal(bracers.tools[2].name, "Blacksmith Hammer", "tool")
+equal(bracers.tools[2].available, true, "met requirement")
 equal(stone.reagents[1].tooltip, nil, "reagents skip tooltips")
 equal(stone.cooldown.isDayCooldown, true, "day cooldown")
 equal(stone.cooldown.readyAt % 60, 0, "cooldown ready time rounded to a minute")

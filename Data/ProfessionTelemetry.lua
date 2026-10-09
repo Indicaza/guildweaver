@@ -201,6 +201,25 @@ end
 
 -- Recipe books -------------------------------------------------------------
 
+-- Required tools and crafting stations (an Anvil, a Blacksmith Hammer), as the
+-- schematic form's "Requires:" line lists them; met is whether the character
+-- currently has or stands at each one.
+local function modernTools(api, recipeId)
+    local requirements = safe(api.GetRecipeRequirements, recipeId)
+    if type(requirements) ~= "table" then
+        return nil
+    end
+
+    local tools = {}
+    for _, requirement in ipairs(requirements) do
+        local name = type(requirement) == "table" and cleanText(requirement.name) or nil
+        if name then
+            table.insert(tools, { name = name, available = requirement.met == true })
+        end
+    end
+    return #tools > 0 and tools or nil
+end
+
 local function modernReagents(schematic)
     if type(schematic) ~= "table" or type(schematic.reagentSlotSchematics) ~= "table" then
         return nil
@@ -301,6 +320,7 @@ local function collectModernBook()
                     type(schematic) == "table" and schematic.quantityMax or nil,
                     known
                 ),
+                tools = modernTools(api, recipeId),
                 reagents = modernReagents(schematic),
             })
         end
