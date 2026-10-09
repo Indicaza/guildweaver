@@ -26,11 +26,11 @@ Telemetry/Domains/Professions.lua
 Telemetry/Domains/Talents.lua
 Telemetry/Registry.lua
 Systems/Character.lua
-Telemetry/Compatibility.lua
 Data/CaptureIntegrity.lua
 Systems/CharacterStatEvents.lua
 Systems/SessionCapture.lua
 Systems/Quests.lua
+Telemetry/Compatibility.lua
 UI/QuestLog.lua
 UI/MainFrame.lua
 Core.lua
