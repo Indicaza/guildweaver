@@ -112,4 +112,18 @@ truthy(item.tooltip.lines[1].leftColor, "tooltip color retained")
 truthy(item.tooltip.lines[4].left:find("Player%-REDACTED"), "tooltip guid scrubbed")
 equal(item.tooltip.lines[4].left:find("014B5E8E"), nil, "raw player guid removed")
 
+-- Items the client has not cached yet: GetItemInfo returns nothing, but the
+-- icon still comes from the instant (static) item data.
+GetItemInfo = function() return nil end
+rawset(_G, "GetItemInfoInstant", function(itemId)
+    if tonumber(itemId) == 2840 then
+        return 2840, "Trade Goods", "Metal & Stone", "", 133216, 7, 7
+    end
+end)
+local uncached = addon.ItemTelemetry.Describe(2840, { tooltip = false })
+equal(uncached.itemId, 2840, "uncached item id")
+equal(uncached.name, nil, "uncached item has no name yet")
+equal(uncached.iconFileDataId, 133216, "uncached item icon from instant data")
+rawset(_G, "GetItemInfoInstant", nil)
+
 print("item telemetry spec passed")

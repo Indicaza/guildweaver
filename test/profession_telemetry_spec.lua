@@ -134,6 +134,9 @@ equal(book.recipes[2].known, false, "unlearned recipe")
 -- Publishing ------------------------------------------------------------------
 
 local snapshot = { characterKey = "darkwing:rook", characterId = "character-rook", realm = "Darkwing", capturedAt = serverTime }
+-- Category and reagent details (Data/RecipeBookDetails.lua) travel with the book.
+book.categories = { { categoryId = 2460, name = "Weapon Stones", parentCategoryId = 2425, order = 20 } }
+book.items = { { itemId = 2835, name = "Rough Stone", tooltip = { lines = { { left = "Rough Stone" } } } } }
 truthy(professions.RememberRecipeBook(snapshot.characterKey, book), "first recipe book stored")
 
 local first = domain.Publish(snapshot)
@@ -149,11 +152,16 @@ equal(smithing.recipeBook.recipeCount, 2, "recipe count")
 equal(smithing.recipeBook.knownCount, 1, "known count")
 equal(smithing.recipeBook.source, "C_TradeSkillUI", "book source")
 equal(smithing.recipes[1].crafted.name, "Rough Sharpening Stone", "recipes carried in payload")
+equal(smithing.categories[1].name, "Weapon Stones", "recipe categories carried in payload")
+equal(smithing.items[1].itemId, 2835, "reagent details carried in payload")
 equal(payload.professions[2].recipes, nil, "professions without an opened window have no recipes")
 
 -- Reopening the window a minute later with identical recipes changes nothing.
 serverTime = serverTime + 30
-equal(professions.RememberRecipeBook(snapshot.characterKey, professions.CollectOpenRecipeBook("tradeskill")), false, "unchanged book not re-stored")
+local reopened = professions.CollectOpenRecipeBook("tradeskill")
+reopened.categories = book.categories
+reopened.items = book.items
+equal(professions.RememberRecipeBook(snapshot.characterKey, reopened), false, "unchanged book not re-stored")
 equal(domain.Publish(snapshot).changed, false, "unchanged professions deduped")
 
 -- Skill gain changes the payload.
