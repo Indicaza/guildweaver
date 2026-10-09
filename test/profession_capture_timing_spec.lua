@@ -42,6 +42,18 @@ C_TradeSkillUI = {
     IsTradeSkillReady = function()
         return ready
     end,
+    GetFilteredRecipeIDs = function()
+        return { 2660, 2575, 2538 }
+    end,
+    GetChildProfessionInfo = function()
+        return { professionID = 164, professionName = "Blacksmithing" }
+    end,
+    GetBaseProfessionInfo = function()
+        return { professionID = 164, professionName = "Blacksmithing" }
+    end,
+    IsRecipeInSkillLine = function(recipeId, skillLineId)
+        return skillLineId == 164 and recipeId == 2660
+    end,
 }
 
 local captures = {}
@@ -56,6 +68,11 @@ local GW = {
 assert(loadfile("Systems/ProfessionCapture.lua"))("Guildweaver", GW)
 truthy(registered.TRADE_SKILL_DATA_SOURCE_CHANGED, "data source changed event registered")
 truthy(onEvent, "event handler installed")
+truthy(type(C_TradeSkillUI.GetAllRecipeIDs) == "function", "Forever recipe enumeration compatibility installed")
+
+local compatibleRecipeIds = C_TradeSkillUI.GetAllRecipeIDs()
+equal(#compatibleRecipeIds, 1, "recipe enumeration limited to active profession")
+equal(compatibleRecipeIds[1], 2660, "active profession recipe retained")
 
 onEvent(nil, "TRADE_SKILL_DATA_SOURCE_CHANGED")
 equal(#timers, 1, "capture scheduled")
