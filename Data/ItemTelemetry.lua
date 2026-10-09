@@ -285,6 +285,31 @@ local function enrichEquipmentItem(item)
     item.tooltip = collectTooltip(itemLink) or item.tooltip
 end
 
+-- Shared item description for any telemetry domain (recipes, reagents, ...):
+-- identity, metadata, and tooltip for an item ID or link. Equipment-only data
+-- (durability, socket state) stays in enrichEquipmentItem.
+local function describeItem(itemIdOrLink, options)
+    local itemLink = itemIdOrLink
+    local itemId = tonumber(itemIdOrLink)
+    if itemId then
+        itemLink = "item:" .. itemId
+    elseif type(itemIdOrLink) == "string" and itemIdOrLink ~= "" then
+        itemId = tonumber(itemIdOrLink:match("item:(%d+)"))
+    else
+        return nil
+    end
+
+    local item = { itemId = itemId }
+    if type(itemIdOrLink) == "string" and itemIdOrLink:find("|H", 1, true) then
+        item.itemLink = cleanText(itemIdOrLink)
+    end
+    enrichMetadata(item, itemLink)
+    if not (type(options) == "table" and options.tooltip == false) then
+        item.tooltip = collectTooltip(item.itemLink or itemLink)
+    end
+    return item
+end
+
 local originalSetCharacterSnapshot = GW.Store.SetCharacterSnapshot
 
 function GW.Store.SetCharacterSnapshot(characterKey, snapshot)
@@ -299,3 +324,4 @@ end
 
 GW.ItemTelemetry = GW.ItemTelemetry or {}
 GW.ItemTelemetry.EnrichEquipmentItem = enrichEquipmentItem
+GW.ItemTelemetry.Describe = describeItem

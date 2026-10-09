@@ -22,6 +22,7 @@ end
 loadAddonFile("Data/Store.lua")
 addon.Store.Initialize()
 loadAddonFile("Data/TelemetryEnvelope.lua")
+loadAddonFile("Data/ProfessionTelemetry.lua")
 loadAddonFile("Telemetry/Domain.lua")
 loadAddonFile("Telemetry/Domains/Character.lua")
 loadAddonFile("Telemetry/Domains/Stats.lua")
@@ -61,7 +62,7 @@ local expected = {
     character = "character:character-rook",
     stats = "stats:character-rook",
     equipment = "equipment:character-rook",
-    professions = "professions:character-rook",
+    profession_snapshot = "profession_snapshot:character-rook",
     talents = "talents:character-rook",
 }
 
@@ -85,7 +86,7 @@ equal(characterPayload.stats, nil, "character excludes stats")
 
 equal(telemetry[expected.stats].envelope.payload.stats.attributes.strength.effective, 83, "stats payload")
 equal(telemetry[expected.equipment].envelope.payload.equipment[1].itemId, 5191, "equipment payload")
-equal(telemetry[expected.professions].envelope.payload.professions[1].skillLineId, 164, "professions payload")
+equal(telemetry[expected.profession_snapshot].envelope.payload.professions[1].skillLineId, 164, "professions payload")
 equal(telemetry[expected.talents].envelope.payload.talents.pointsSpent, 11, "talents payload")
 
 local second = addon.Telemetry.PublishCharacterSnapshot(snapshot)

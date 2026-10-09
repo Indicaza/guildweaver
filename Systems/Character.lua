@@ -596,200 +596,6 @@ local function collectGuild()
     }
 end
 
-local function itemIdFromLink(itemLink)
-    local parsed = parseItemLinkData(itemLink)
-    return parsed and parsed.itemId or nil
-end
-
-local function collectRecipeReagents(schematic)
-    if type(schematic) ~= "table" then
-        return nil
-    end
-
-    local slots = {}
-    for slotIndex, slot in ipairs(schematic.reagentSlotSchematics or {}) do
-        if type(slot) == "table" then
-            local record = {
-                slotIndex = slotIndex,
-                dataSlotIndex = slot.dataSlotIndex,
-                quantityRequired = slot.quantityRequired,
-                required = slot.required,
-                reagents = {},
-            }
-
-            for _, reagent in ipairs(slot.reagents or {}) do
-                if type(reagent) == "table" then
-                    local reagentData = reagent.reagent
-                    table.insert(record.reagents, {
-                        itemId = reagent.itemID or (type(reagentData) == "table" and reagentData.itemID or nil),
-                        currencyId = reagent.currencyID or (type(reagentData) == "table" and reagentData.currencyID or nil),
-                        quantityRequired = reagent.quantityRequired or slot.quantityRequired,
-                    })
-                end
-            end
-
-            table.insert(slots, record)
-        end
-    end
-
-    return #slots > 0 and slots or nil
-end
-
-local function collectModernTradeSkillRecipes()
-    if not C_TradeSkillUI or type(C_TradeSkillUI.GetAllRecipeIDs) ~= "function" or type(C_TradeSkillUI.GetRecipeInfo) ~= "function" then
-        return nil
-    end
-
-    local recipeIds = safeCall(C_TradeSkillUI.GetAllRecipeIDs)
-    if type(recipeIds) ~= "table" or #recipeIds == 0 then
-        return nil
-    end
-
-    table.sort(recipeIds)
-    local baseInfo = type(C_TradeSkillUI.GetBaseProfessionInfo) == "function" and safeCall(C_TradeSkillUI.GetBaseProfessionInfo) or nil
-    local childInfo = type(C_TradeSkillUI.GetChildProfessionInfo) == "function" and safeCall(C_TradeSkillUI.GetChildProfessionInfo) or nil
-    local recipes = {}
-    local detectedProfessionId = type(childInfo) == "table" and childInfo.professionID or (type(baseInfo) == "table" and baseInfo.professionID or nil)
-    local detectedProfessionName = type(childInfo) == "table" and childInfo.professionName or (type(baseInfo) == "table" and baseInfo.professionName or nil)
-
-    for _, recipeId in ipairs(recipeIds) do
-        local info = safeCall(C_TradeSkillUI.GetRecipeInfo, recipeId)
-        if type(info) == "table" then
-            local outputInfo = type(C_TradeSkillUI.GetRecipeOutputItemData) == "function" and safeCall(C_TradeSkillUI.GetRecipeOutputItemData, recipeId) or nil
-            local schematic = type(C_TradeSkillUI.GetRecipeSchematic) == "function" and safeCall(C_TradeSkillUI.GetRecipeSchematic, recipeId, false) or nil
-            local tradeSkillId = nil
-            local tradeSkillName = nil
-
-            if type(C_TradeSkillUI.GetTradeSkillLineForRecipe) == "function" then
-                local ok, skillId, skillName = pcall(C_TradeSkillUI.GetTradeSkillLineForRecipe, recipeId)
-                if ok then
-                    tradeSkillId = skillId
-                    tradeSkillName = skillName
-                    detectedProfessionId = detectedProfessionId or skillId
-                    detectedProfessionName = detectedProfessionName or skillName
-                end
-            end
-
-            local outputLink = type(outputInfo) == "table" and outputInfo.hyperlink or info.hyperlink
-            table.insert(recipes, {
-                id = recipeId,
-                name = info.name or "",
-                known = info.learned == true,
-                icon = info.icon or (type(outputInfo) == "table" and outputInfo.icon or nil),
-                professionId = tradeSkillId,
-                professionName = tradeSkillName,
-                skillLineAbilityId = info.skillLineAbilityID,
-                relativeDifficulty = info.relativeDifficulty,
-                maxTrivialLevel = info.maxTrivialLevel,
-                unlockedRecipeLevel = info.unlockedRecipeLevel,
-                craftedItemId = type(outputInfo) == "table" and outputInfo.itemID or itemIdFromLink(outputLink),
-                craftedItemLink = outputLink,
-                reagents = collectRecipeReagents(schematic),
-            })
-        end
-    end
-
-    if #recipes == 0 then
-        return nil
-    end
-
-    return {
-        source = "C_TradeSkillUI",
-        capturedAt = GetServerTime(),
-        professionId = detectedProfessionId,
-        professionName = detectedProfessionName,
-        skillLevel = type(childInfo) == "table" and childInfo.skillLevel or (type(baseInfo) == "table" and baseInfo.skillLevel or nil),
-        maxSkillLevel = type(childInfo) == "table" and childInfo.maxSkillLevel or (type(baseInfo) == "table" and baseInfo.maxSkillLevel or nil),
-        skillModifier = type(childInfo) == "table" and childInfo.skillModifier or (type(baseInfo) == "table" and baseInfo.skillModifier or nil),
-        recipes = recipes,
-    }
-end
-
-local function collectLegacyTradeSkillRecipes()
-    if type(GetNumTradeSkills) ~= "function" or type(GetTradeSkillInfo) ~= "function" then
-        return nil
-    end
-
-    local count = safeCall(GetNumTradeSkills) or 0
-    if count < 1 then
-        return nil
-    end
-
-    local professionName = nil
-    local skillLevel = nil
-    local maxSkillLevel = nil
-    if type(GetTradeSkillLine) == "function" then
-        local ok, name, currentSkill, maxSkill = pcall(GetTradeSkillLine)
-        if ok then
-            professionName = name
-            skillLevel = currentSkill
-            maxSkillLevel = maxSkill
-        end
-    end
-
-    local recipes = {}
-    for index = 1, count do
-        local ok, name, skillType = pcall(GetTradeSkillInfo, index)
-        if ok and name and skillType ~= "header" then
-            local recipeLink = type(GetTradeSkillRecipeLink) == "function" and safeCall(GetTradeSkillRecipeLink, index) or nil
-            local outputLink = type(GetTradeSkillItemLink) == "function" and safeCall(GetTradeSkillItemLink, index) or nil
-            local icon = type(GetTradeSkillIcon) == "function" and safeCall(GetTradeSkillIcon, index) or nil
-            local reagents = {}
-            local reagentCount = type(GetTradeSkillNumReagents) == "function" and (safeCall(GetTradeSkillNumReagents, index) or 0) or 0
-
-            for reagentIndex = 1, reagentCount do
-                local reagentName = nil
-                local reagentIcon = nil
-                local quantityRequired = nil
-                if type(GetTradeSkillReagentInfo) == "function" then
-                    local reagentOk, valueName, valueIcon, required = pcall(GetTradeSkillReagentInfo, index, reagentIndex)
-                    if reagentOk then
-                        reagentName = valueName
-                        reagentIcon = valueIcon
-                        quantityRequired = required
-                    end
-                end
-
-                local reagentLink = type(GetTradeSkillReagentItemLink) == "function" and safeCall(GetTradeSkillReagentItemLink, index, reagentIndex) or nil
-                table.insert(reagents, {
-                    name = reagentName,
-                    icon = reagentIcon,
-                    itemId = itemIdFromLink(reagentLink),
-                    quantityRequired = quantityRequired,
-                })
-            end
-
-            table.insert(recipes, {
-                id = type(recipeLink) == "string" and tonumber(recipeLink:match("spell:(%d+)")) or index,
-                name = name,
-                known = true,
-                icon = icon,
-                professionName = professionName,
-                craftedItemId = itemIdFromLink(outputLink),
-                craftedItemLink = outputLink,
-                reagents = #reagents > 0 and { { slotIndex = 1, reagents = reagents } } or nil,
-            })
-        end
-    end
-
-    if #recipes == 0 then
-        return nil
-    end
-
-    return {
-        source = "legacy_tradeskill",
-        capturedAt = GetServerTime(),
-        professionName = professionName,
-        skillLevel = skillLevel,
-        maxSkillLevel = maxSkillLevel,
-        recipes = recipes,
-    }
-end
-
-local function collectTradeSkillRecipes()
-    return collectModernTradeSkillRecipes() or collectLegacyTradeSkillRecipes()
-end
-
 function GW.Character.Capture(reason, recipeOverride)
     local name, realm, key = currentCharacterIdentity()
     if not key then
@@ -856,12 +662,23 @@ function GW.Character.Capture(reason, recipeOverride)
 end
 
 function GW.Character.CaptureProfessionRecipes(reason)
-    local recipeSnapshot = collectTradeSkillRecipes()
-    if not recipeSnapshot then
+    local professions = GW.ProfessionTelemetry
+    if not professions then
         return nil
     end
 
-    return GW.Character.Capture(reason or "TRADE_SKILL", recipeSnapshot)
+    local kind = string.find(tostring(reason or ""), "CRAFT", 1, true) and "craft" or "tradeskill"
+    local book = professions.CollectOpenRecipeBook(kind)
+    if not book then
+        return nil
+    end
+
+    local _, _, key = currentCharacterIdentity()
+    professions.RememberRecipeBook(key, book)
+    -- Capturing the character publishes every telemetry domain, including
+    -- profession_snapshot; the override keeps character_snapshot's recipes
+    -- populated for older website builds.
+    return GW.Character.Capture(reason or "TRADE_SKILL", professions.ToCharacterRecipeOverride(book))
 end
 
 function GW.Character.GetCurrentSnapshot()
@@ -901,6 +718,8 @@ function GW.Character:Initialize()
         "TRADE_SKILL_SHOW",
         "TRADE_SKILL_LIST_UPDATE",
         "NEW_RECIPE_LEARNED",
+        "CRAFT_SHOW",
+        "CRAFT_UPDATE",
     }
 
     for _, event in ipairs(characterEvents) do
@@ -910,17 +729,21 @@ function GW.Character:Initialize()
         safeRegister(frame, event)
     end
 
-    local professionCapturePending = false
+    local professionCapturePending = {}
     frame:SetScript("OnEvent", function(_, event, unit)
         if event == "PLAYER_SPECIALIZATION_CHANGED" and unit and unit ~= "player" then
             return
         end
 
-        if event == "TRADE_SKILL_SHOW" or event == "TRADE_SKILL_LIST_UPDATE" or event == "NEW_RECIPE_LEARNED" then
-            if not professionCapturePending then
-                professionCapturePending = true
+        if event == "TRADE_SKILL_SHOW" or event == "TRADE_SKILL_LIST_UPDATE" or event == "NEW_RECIPE_LEARNED"
+            or event == "CRAFT_SHOW" or event == "CRAFT_UPDATE" then
+            -- Debounce bursts of list updates; trade skill and craft windows
+            -- are tracked separately so one cannot swallow the other.
+            local kind = string.find(event, "CRAFT", 1, true) and "craft" or "tradeskill"
+            if not professionCapturePending[kind] then
+                professionCapturePending[kind] = true
                 C_Timer.After(0.5, function()
-                    professionCapturePending = false
+                    professionCapturePending[kind] = false
                     GW.Character.CaptureProfessionRecipes(event)
                 end)
             end
