@@ -285,9 +285,11 @@ local function enrichEquipmentItem(item)
     item.tooltip = collectTooltip(itemLink) or item.tooltip
 end
 
--- Shared item description for any telemetry domain (recipes, reagents, ...):
--- identity, metadata, and tooltip for an item ID or link. Equipment-only data
--- (durability, socket state) stays in enrichEquipmentItem.
+-- Shared item description for any telemetry domain (recipes, reagents,
+-- inventory, ...): identity, metadata, and tooltip for an item ID or link.
+-- options.tooltip = false skips the tooltip; options.details = true adds stats
+-- and the use/equip spell. Equipment-only data (durability, socket state)
+-- stays in enrichEquipmentItem.
 local function describeItem(itemIdOrLink, options)
     local itemLink = itemIdOrLink
     local itemId = tonumber(itemIdOrLink)
@@ -314,6 +316,10 @@ local function describeItem(itemIdOrLink, options)
     end
     if not (type(options) == "table" and options.tooltip == false) then
         item.tooltip = collectTooltip(item.itemLink or itemLink)
+    end
+    if type(options) == "table" and options.details == true then
+        item.stats = collectStats(item.itemLink or itemLink)
+        item.spell = collectSpell(item.itemLink or itemLink)
     end
     return item
 end

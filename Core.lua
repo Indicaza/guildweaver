@@ -123,6 +123,30 @@ SlashCmdList.GUILDWEAVER = function(message)
         return
     end
 
+    if command == "inventory" then
+        local result = GW.InventoryCapture and GW.InventoryCapture.Publish("SLASH_COMMAND")
+        local payload = result and result.envelope and result.envelope.payload
+        if not payload then
+            GW.Print("Inventory unavailable.")
+            return
+        end
+        local copper = payload.money and payload.money.copper or 0
+        GW.Print(
+            "Inventory: "
+                .. tostring(payload.slotCount - payload.freeSlots)
+                .. "/"
+                .. tostring(payload.slotCount)
+                .. " slots, "
+                .. tostring(#payload.items)
+                .. " distinct items, "
+                .. string.format("%dg %ds %dc", math.floor(copper / 10000), math.floor(copper / 100) % 100, copper % 100)
+                .. " | rev "
+                .. tostring(result.revision)
+                .. (result.changed and " (new)" or " (unchanged)")
+        )
+        return
+    end
+
     if command == "reset" then
         GW.MainFrame:ResetPosition()
         GW.Print("Window position reset.")
@@ -130,7 +154,7 @@ SlashCmdList.GUILDWEAVER = function(message)
     end
 
     if command == "help" then
-        GW.Print("/gw opens Guildweaver. Telemetry capture is automatic at session start, during play, and logout. /gw capture forces a checkpoint and reload for immediate bridge sync. /gw snapshot captures a diagnostic snapshot. /gw telemetry shows captured telemetry streams. /gw version shows the addon version. /gw reset resets the window position.")
+        GW.Print("/gw opens Guildweaver. Telemetry capture is automatic at session start, during play, and logout. /gw capture forces a checkpoint and reload for immediate bridge sync. /gw snapshot captures a diagnostic snapshot. /gw telemetry shows captured telemetry streams. /gw inventory rescans your bags and shows the inventory revision. /gw version shows the addon version. /gw reset resets the window position.")
         return
     end
 

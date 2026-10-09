@@ -24,6 +24,7 @@ The first milestone establishes a reliable addon foundation:
 - `/gw` toggles the Guildweaver window
 - `/gw version` prints the current addon version
 - `/gw snapshot` captures a diagnostic snapshot; normal synchronization does not require it
+- `/gw inventory` rescans your bags and prints the inventory telemetry revision
 - `/gw reset` resets the window position
 - `/gw help` prints command help
 
