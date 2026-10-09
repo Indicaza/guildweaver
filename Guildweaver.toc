@@ -17,7 +17,16 @@ Data/CharacterStatsFinalize.lua
 Data/CharacterTelemetryEnrichment.lua
 Data/TalentArtTelemetry.lua
 Data/MockData.lua
+Data/TelemetryEnvelope.lua
+Telemetry/Domain.lua
+Telemetry/Domains/Character.lua
+Telemetry/Domains/Stats.lua
+Telemetry/Domains/Equipment.lua
+Telemetry/Domains/Professions.lua
+Telemetry/Domains/Talents.lua
+Telemetry/Registry.lua
 Systems/Character.lua
+Telemetry/Compatibility.lua
 Data/CaptureIntegrity.lua
 Systems/CharacterStatEvents.lua
 Systems/SessionCapture.lua
