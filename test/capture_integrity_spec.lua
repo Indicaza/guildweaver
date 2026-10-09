@@ -22,7 +22,9 @@ GW.Store.Initialize()
 assert(loadfile("Data/CharacterIdentity.lua"))("Guildweaver", GW)
 assert(loadfile("Data/TelemetrySchema.lua"))("Guildweaver", GW)
 
+local originalCaptureCount = 0
 GW.Character.Capture = function(reason)
+    originalCaptureCount = originalCaptureCount + 1
     local snapshot = {
         schemaVersion = 2,
         capturedAt = GetServerTime(),
@@ -40,6 +42,10 @@ GW.Character.Capture = function(reason)
     }
     GW.Store.SetCharacterSnapshot(snapshot.characterKey, snapshot)
     return snapshot
+end
+
+GW.Character.GetCurrentSnapshot = function()
+    return GuildweaverDB.characters["classic beta pve 2:rook"]
 end
 
 assert(loadfile("Data/CaptureIntegrity.lua"))("Guildweaver", GW)
@@ -71,5 +77,19 @@ local outbound = GuildweaverDB.sync.outbound.characters["classic beta pve 2:rook
 truthy(outbound, "outbound snapshot")
 equal(outbound.payload.capture.sections.recipes, "complete", "capture contract reaches bridge payload")
 equal(outbound.payload.installationId, GW.Store.GetInstallationId(), "installation id reaches bridge payload")
+
+local richSnapshot = GW.Character.GetCurrentSnapshot()
+local richRevision = outbound.revision
+local capturesBeforeTeardown = originalCaptureCount
+local teardown = GW.Character.Capture("PLAYER_LOGOUT")
+equal(teardown, richSnapshot, "logout preserves rich snapshot")
+equal(originalCaptureCount, capturesBeforeTeardown, "logout does not recapture from teardown APIs")
+equal(GuildweaverDB.sync.outbound.characters["classic beta pve 2:rook"].revision, richRevision, "logout does not replace outbound rich snapshot")
+equal(teardown.capture.reason, "TRADE_SKILL_SHOW", "last rich capture metadata survives logout")
+equal(teardown.capture.sections.professions, "complete", "rich profession section survives logout")
+
+local reloadFlush = GW.Character.Capture("RELOAD_FLUSH")
+equal(reloadFlush, richSnapshot, "reload flush preserves rich snapshot")
+equal(originalCaptureCount, capturesBeforeTeardown, "reload flush does not recapture")
 
 print("capture integrity spec passed")
