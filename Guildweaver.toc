@@ -15,6 +15,7 @@ Data/ProfessionTelemetry.lua
 Data/ProfessionRecipeLink.lua
 Data/RecipeTooltipTelemetry.lua
 Data/RecipeBookDetails.lua
+Data/InventoryTelemetry.lua
 Data/TelemetrySchema.lua
 Data/CharacterStats.lua
 Data/CharacterStatsFinalize.lua
@@ -28,12 +29,14 @@ Telemetry/Domains/Stats.lua
 Telemetry/Domains/Equipment.lua
 Telemetry/Domains/Professions.lua
 Telemetry/Domains/Talents.lua
+Telemetry/Domains/Inventory.lua
 Telemetry/Registry.lua
 Systems/Character.lua
 Systems/ProfessionCapture.lua
 Data/CaptureIntegrity.lua
 Systems/CharacterStatEvents.lua
 Systems/SessionCapture.lua
+Systems/InventoryCapture.lua
 Systems/Quests.lua
 Telemetry/Compatibility.lua
 UI/QuestLog.lua

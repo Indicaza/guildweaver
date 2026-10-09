@@ -8,6 +8,7 @@ local DOMAINS = {
     GW.TelemetryDomains.Equipment,
     GW.TelemetryDomains.Professions,
     GW.TelemetryDomains.Talents,
+    GW.TelemetryDomains.Inventory,
 }
 
 function GW.Telemetry.GetDomains()
