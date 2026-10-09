@@ -17,7 +17,9 @@ local Globals = _G or {}
 GW.InventoryTelemetry = GW.InventoryTelemetry or {}
 
 local BACKPACK_ID = 0
-local KEYRING_ID = -2
+-- Classic clients' keyring; clients with a bag index enum name their own
+-- (WoW Forever's is -1, where -2 is a character bank tab).
+local CLASSIC_KEYRING_ID = -2
 local DEFAULT_BAG_SLOTS = 4
 -- INV_Misc_Bag_08: the backpack has no inventory item to read an icon from.
 local BACKPACK_ICON = 133633
@@ -62,17 +64,30 @@ local function call(name, ...)
     return safe(Globals[name], ...)
 end
 
+local function bagIndexEnum()
+    local enum = type(Globals.Enum) == "table" and Globals.Enum.BagIndex or nil
+    return type(enum) == "table" and enum or nil
+end
+
+local function keyringId()
+    local enum = bagIndexEnum()
+    if enum then
+        return tonumber(enum.Keyring)
+    end
+    return CLASSIC_KEYRING_ID
+end
+
 -- The reagent bag only exists on clients whose bag index enum names one; on
 -- classic clients the id after the last bag is the first bank bag, which must
 -- never be read as carried inventory.
 local function reagentBagId()
-    local bagIndex = type(Globals.Enum) == "table" and Globals.Enum.BagIndex or nil
-    local reagent = type(bagIndex) == "table" and tonumber(bagIndex.ReagentBag) or nil
+    local bagIndex = bagIndexEnum()
+    local reagent = bagIndex and tonumber(bagIndex.ReagentBag) or nil
     if not reagent then
         return nil
     end
     for key, value in pairs(bagIndex) do
-        if type(key) == "string" and key:find("^Bank") and tonumber(value) == reagent then
+        if type(key) == "string" and key:lower():find("bank", 1, true) and tonumber(value) == reagent then
             return nil
         end
     end
@@ -89,7 +104,10 @@ local function containerIds()
     if reagent and reagent > bagSlots then
         table.insert(ids, reagent)
     end
-    table.insert(ids, KEYRING_ID)
+    local keyring = keyringId()
+    if keyring then
+        table.insert(ids, keyring)
+    end
     return ids
 end
 
@@ -97,7 +115,7 @@ local function containerKind(bagId)
     if bagId == BACKPACK_ID then
         return "backpack"
     end
-    if bagId == KEYRING_ID then
+    if bagId == keyringId() then
         return "keyring"
     end
     if bagId == reagentBagId() then
@@ -209,58 +227,119 @@ local function linkModifiers(itemString)
     }
 end
 
--- Describes each distinct item string once per session through the shared
--- item enrichment. Descriptions the client could not fill yet (item not
--- cached) are retried on the next scan.
-local function describe(itemKey, link, info)
+-- Tooltip lines that count down (cooldowns, durations, refund windows) would
+-- change on every scan and churn revisions without the bags changing. Built
+-- from the client's own format strings, with English fallbacks.
+local volatilePatterns = nil
+
+local function formatPattern(format)
+    local escaped = format:gsub("([%(%)%.%+%-%*%?%[%]%^%$])", "%%%1")
+    local pattern = escaped:gsub("%%[%d%.]*[sdf]", ".-")
+    return "^" .. pattern
+end
+
+local function volatileLinePatterns()
+    if volatilePatterns then
+        return volatilePatterns
+    end
+    volatilePatterns = { "^Cooldown remaining", "^Duration:", "full refund" }
+    for _, name in ipairs({ "ITEM_COOLDOWN_TIME", "ITEM_COOLDOWN_TIME_MIN", "ITEM_COOLDOWN_TIME_SEC", "ITEM_COOLDOWN_TIME_HOURS", "ITEM_COOLDOWN_TIME_DAYS", "REFUND_TIME_REMAINING", "ITEM_DURATION_SEC", "ITEM_DURATION_MIN", "ITEM_DURATION_HOURS", "ITEM_DURATION_DAYS" }) do
+        local format = Globals[name]
+        if type(format) == "string" and format ~= "" then
+            table.insert(volatilePatterns, formatPattern(format))
+        end
+    end
+    return volatilePatterns
+end
+
+local function isVolatile(text)
+    if type(text) ~= "string" then
+        return false
+    end
+    for _, pattern in ipairs(volatileLinePatterns()) do
+        if text:find(pattern) then
+            return true
+        end
+    end
+    return false
+end
+
+local function stableTooltip(tooltip)
+    if type(tooltip) ~= "table" or type(tooltip.lines) ~= "table" then
+        return nil
+    end
+    local lines = {}
+    for _, line in ipairs(tooltip.lines) do
+        if not isVolatile(line.left) and not isVolatile(line.right) then
+            table.insert(lines, line)
+        end
+    end
+    return #lines > 0 and { source = tooltip.source, lines = lines } or nil
+end
+
+-- What the item is, described once per item string per session through the
+-- shared item enrichment (descriptions the client could not fill yet are
+-- retried on the next scan). The tooltip is read fresh from the bag slot on
+-- every scan, as the player would see it when hovering the item.
+local function describe(itemKey, link, info, bagId, slot)
     local cached = describedItems[itemKey]
-    if cached then
-        return cached, true
+    local complete = cached ~= nil
+    if not cached then
+        local describeItem = GW.ItemTelemetry and GW.ItemTelemetry.Describe
+        local item = nil
+        if type(describeItem) == "function" then
+            local ok, value = pcall(describeItem, link, { details = true, tooltip = false })
+            item = ok and type(value) == "table" and value or nil
+        end
+        item = item or { itemId = info.itemId }
+
+        local modifiers = linkModifiers(itemKey)
+        cached = {
+            key = itemKey,
+            itemId = item.itemId or info.itemId,
+            itemLink = item.itemLink or cleanText(link),
+            name = item.name or cleanText(type(link) == "string" and link:match("%[(.-)%]") or nil),
+            iconFileDataId = item.iconFileDataId or positiveNumber(info.iconFileDataId),
+            qualityId = item.qualityId or info.qualityId,
+            itemLevel = item.itemLevel,
+            requiredLevel = item.requiredLevel,
+            maxStackSize = item.stackCount,
+            sellPrice = item.sellPrice,
+            bindType = item.bindType,
+            equipLocation = cleanText(item.equipLocation),
+            expansionId = item.expansionId,
+            setId = item.setId,
+            isCraftingReagent = item.isCraftingReagent,
+            itemClass = item.itemClass,
+            itemSubclass = item.itemSubclass,
+            enchantId = modifiers.enchantId,
+            gemItemIds = modifiers.gemItemIds,
+            suffixId = modifiers.suffixId,
+            bonusIds = modifiers.bonusIds,
+            stats = item.stats,
+            spell = item.spell,
+        }
+        complete = item.name ~= nil
+        if complete then
+            describedItems[itemKey] = cached
+        end
     end
 
-    local describeItem = GW.ItemTelemetry and GW.ItemTelemetry.Describe
-    local item = nil
-    if type(describeItem) == "function" then
-        local ok, value = pcall(describeItem, link, { details = true })
-        item = ok and type(value) == "table" and value or nil
+    local bagTooltip = GW.ItemTelemetry and GW.ItemTelemetry.BagItemTooltip
+    local tooltip = type(bagTooltip) == "function" and stableTooltip(bagTooltip(bagId, slot)) or nil
+    if not tooltip and GW.ItemTelemetry and type(GW.ItemTelemetry.Describe) == "function" then
+        local ok, value = pcall(GW.ItemTelemetry.Describe, link)
+        tooltip = ok and type(value) == "table" and stableTooltip(value.tooltip) or nil
     end
-    item = item or { itemId = info.itemId }
 
-    local modifiers = linkModifiers(itemKey)
-    local description = {
-        key = itemKey,
-        itemId = item.itemId or info.itemId,
-        itemLink = item.itemLink or cleanText(link),
-        name = item.name or cleanText(type(link) == "string" and link:match("%[(.-)%]") or nil),
-        iconFileDataId = item.iconFileDataId or positiveNumber(info.iconFileDataId),
-        qualityId = item.qualityId or info.qualityId,
-        itemLevel = item.itemLevel,
-        requiredLevel = item.requiredLevel,
-        maxStackSize = item.stackCount,
-        sellPrice = item.sellPrice,
-        bindType = item.bindType,
-        equipLocation = cleanText(item.equipLocation),
-        expansionId = item.expansionId,
-        setId = item.setId,
-        isCraftingReagent = item.isCraftingReagent,
-        itemClass = item.itemClass,
-        itemSubclass = item.itemSubclass,
-        enchantId = modifiers.enchantId,
-        gemItemIds = modifiers.gemItemIds,
-        suffixId = modifiers.suffixId,
-        bonusIds = modifiers.bonusIds,
-        stats = item.stats,
-        spell = item.spell,
-        tooltip = item.tooltip,
-    }
-
-    -- Names and tooltips load separately; only cache a description that has
-    -- both, so a half-loaded item is described again on the next scan.
-    local complete = item.name ~= nil and item.tooltip ~= nil
-    if complete then
-        describedItems[itemKey] = description
+    local description = {}
+    for key, value in pairs(cached) do
+        description[key] = value
     end
-    return description, complete
+    description.tooltip = tooltip
+    -- Names and tooltips load separately; a description missing either is
+    -- reported so the scan is retried.
+    return description, complete and tooltip ~= nil
 end
 
 local function itemSort(left, right)
@@ -308,9 +387,14 @@ function GW.InventoryTelemetry.Collect()
                 local link = info and info.link
                 local itemKey = cleanText(itemStringFromLink(link))
                 if info and itemKey then
-                    local item, complete = describe(itemKey, link, info)
-                    pending = pending or not complete
-                    itemsByKey[itemKey] = item
+                    -- Each distinct item is described from the first slot holding it.
+                    local item = itemsByKey[itemKey]
+                    if not item then
+                        local complete
+                        item, complete = describe(itemKey, link, info, bagId, slot)
+                        pending = pending or not complete
+                        itemsByKey[itemKey] = item
+                    end
                     local count = math.max(1, tonumber(info.count) or 1)
                     table.insert(container.slots, {
                         slot = slot,

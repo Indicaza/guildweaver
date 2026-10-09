@@ -93,7 +93,34 @@ GetItemInfo = function(link)
         "", 134566, 5, 7, 7, 0, 0, nil, true
 end
 
+local cooldownLeft = 300
+rawset(_G, "ITEM_COOLDOWN_TIME", "Cooldown remaining: %s")
 rawset(_G, "C_TooltipInfo", {
+    GetBagItem = function(bagId, slot)
+        if not tooltipReady then
+            return nil
+        end
+        local info = bags[bagId] and bags[bagId].slots[slot]
+        if not info then
+            return nil
+        end
+        local name = tostring(info.hyperlink):match("%[(.-)%]") or "Item"
+        local lines = { { leftText = name } }
+        if info.isBound then
+            table.insert(lines, { leftText = "Soulbound" })
+        end
+        if info.itemID == 15210 then
+            table.insert(lines, { leftText = "Durability 41 / 55" })
+            table.insert(lines, { type = 1, leftText = "" })
+            table.insert(lines, { leftText = "Shadowcraft Boots", leftOffset = 8 })
+            table.insert(lines, { type = 11, leftText = "Sell Price:", price = 461 })
+        end
+        if info.itemID == 6948 then
+            table.insert(lines, { leftText = "Cooldown remaining: " .. cooldownLeft .. " sec" })
+        end
+        table.insert(lines, { leftText = "Crafted by Player-4620-014B5E8E" })
+        return { lines = lines }
+    end,
     GetHyperlink = function(link)
         if not tooltipReady then
             return nil
@@ -178,6 +205,13 @@ equal(ore.itemSubclass.id, 7, "item subclass")
 equal(ore.isCraftingReagent, true, "crafting reagent")
 equal(ore.tooltip.lines[2].left, "Crafted by Player-REDACTED", "tooltip redacts player GUIDs")
 equal(sword.suffixId, 1027, "random suffix parsed from the item string")
+equal(sword.tooltip.lines[2].left, "Soulbound", "tooltip read from the bag slot, binding included")
+equal(sword.tooltip.lines[3].left, "Durability 41 / 55", "per-item durability included")
+equal(sword.tooltip.lines[4].blank, true, "blank lines keep the tooltip's spacing")
+equal(sword.tooltip.lines[5].offset, 8, "indented lines keep their offset")
+for _, line in ipairs(sword.tooltip.lines) do
+    truthy(line.left ~= "Sell Price:", "the sell price line is drawn from the sell price instead")
+end
 equal(sword.stats.ITEM_MOD_AGILITY_SHORT, 3, "shared stats enrichment")
 equal(sword.requiredLevel, 13, "required level")
 equal(sword.bindType, 2, "bind type")
@@ -213,10 +247,26 @@ truthy(looted.changed, "loot publishes")
 equal(looted.revision, 2, "revision advances")
 equal(looted.envelope.payload.totals[1].count, 23, "ore total after loot")
 
+-- A ticking cooldown in a tooltip is not a change.
+bags[0].slots[9] = { iconFileID = 134414, stackCount = 1, quality = 1, hyperlink = "|cffffffff|Hitem:6948::::::::20:::::::|h[Hearthstone]|h|r", itemID = 6948, isBound = true }
+local hearth = addon.InventoryCapture.Publish("BAG_UPDATE_DELAYED")
+equal(hearth.revision, 3, "new item advances revision")
+for _, item in ipairs(hearth.envelope.payload.items) do
+    if item.itemId == 6948 then
+        for _, line in ipairs(item.tooltip.lines) do
+            truthy(not line.left:find("Cooldown remaining", 1, true), "cooldown line stripped")
+        end
+    end
+end
+cooldownLeft = 120
+equal(addon.InventoryCapture.Publish("BAG_UPDATE_DELAYED").changed, false, "cooldown ticking does not churn revisions")
+bags[0].slots[9] = nil
+equal(addon.InventoryCapture.Publish("BAG_UPDATE_DELAYED").revision, 4, "hearthstone removed")
+
 -- Money alone is a material change.
 money = money + 250
 local paid = addon.InventoryCapture.Publish("PLAYER_MONEY")
-equal(paid.revision, 3, "money change advances revision")
+equal(paid.revision, 5, "money change advances revision")
 equal(paid.envelope.payload.money.copper, 1234817, "new money")
 
 -- Domain publish (from a character capture) reuses the cached scan.
@@ -248,18 +298,23 @@ local _, stillPending = addon.InventoryTelemetry.Collect()
 equal(stillPending, false, "described once info arrives")
 
 -- A classic client: the id after the last bag is a bank bag, not a reagent bag.
-rawset(_G, "Enum", { BagIndex = { ReagentBag = 5, BankBag_1 = 5 } })
+rawset(_G, "Enum", { BagIndex = { Keyring = -2, ReagentBag = 5, BankBag_1 = 5 } })
 bags[5] = { size = 28, slots = { [1] = { iconFileID = 1, stackCount = 1, hyperlink = ORE, itemID = 2770 } } }
 for _, container in ipairs(addon.InventoryTelemetry.Collect().containers) do
     truthy(container.bagId ~= 5, "bank bag is never carried inventory")
 end
--- A client with a real reagent bag.
-rawset(_G, "Enum", { BagIndex = { ReagentBag = 5, BankBag_1 = 6 } })
-local withReagent = addon.InventoryTelemetry.Collect()
-local reagentKind
-for _, container in ipairs(withReagent.containers) do
-    if container.bagId == 5 then reagentKind = container.kind end
+-- WoW Forever: reagent bag 5, keyring -1, and -2 is a character bank tab.
+rawset(_G, "Enum", { BagIndex = { Accountbanktab = -3, Characterbanktab = -2, Keyring = -1, Backpack = 0, ReagentBag = 5, CharacterBankTab_1 = 6 } })
+bags[-1] = bags[-2]
+bags[-2] = { size = 98, slots = { [1] = { iconFileID = 1, stackCount = 1, hyperlink = ORE, itemID = 2770 } } }
+local forever = addon.InventoryTelemetry.Collect()
+local kinds = {}
+for _, container in ipairs(forever.containers) do
+    truthy(container.bagId ~= -2, "a character bank tab is never carried inventory")
+    kinds[container.bagId] = container.kind
 end
-equal(reagentKind, "reagent", "reagent bag included when the client has one")
+equal(kinds[-1], "keyring", "Forever's keyring is -1")
+equal(kinds[5], "reagent", "Forever's reagent bag is 5")
+
 
 print("inventory_telemetry_spec passed")
