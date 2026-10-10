@@ -29,12 +29,7 @@ GuildweaverDB.characters["classic beta pve 2:rook"] = {
     realm = "Classic Beta PvE 2",
     characterKey = "classic beta pve 2:rook",
 }
-GuildweaverDB.sync.outbound.characters["classic beta pve 2:rook"] = {
-    revision = 14,
-    updatedAt = 1791320400,
-    fingerprint = "legacy",
-    payload = GuildweaverDB.characters["classic beta pve 2:rook"],
-}
+GuildweaverDB.meta.characterFingerprints["classic beta pve 2:rook"] = "legacy"
 
 loadAddonFile("Data/CharacterIdentity.lua")
 
@@ -42,7 +37,7 @@ local characterId = addon.Store.GetCharacterId("classic beta pve 2:rook")
 assertEqual(characterId, "character-existing", "character id is preserved")
 assertEqual(GuildweaverDB.meta.characterIds["classic beta pve 2:rook"], nil, "first-name-only id removed")
 assertEqual(GuildweaverDB.meta.characterIds["classic beta pve 2:rook darkwing"], "character-existing", "full-name id migrated")
-assertEqual(GuildweaverDB.sync.outbound.characters["classic beta pve 2:rook darkwing"].revision, 14, "outbound revision preserved")
+assertEqual(GuildweaverDB.meta.characterFingerprints["classic beta pve 2:rook darkwing"], "legacy", "fingerprint follows the full-name key")
 
 local snapshot = {
     name = "Rook",
@@ -57,18 +52,7 @@ assertEqual(snapshot.firstName, "Rook", "first name captured")
 assertEqual(snapshot.lastName, "Darkwing", "surname captured")
 assertEqual(snapshot.fullName, "Rook Darkwing", "full name captured")
 assertEqual(snapshot.name, "Rook Darkwing", "legacy name field uses full display name")
-assertEqual(GuildweaverDB.sync.outbound.characters["classic beta pve 2:rook darkwing"].revision, 15, "revision continues after repair")
-
-local envelope = {
-    schemaVersion = 1,
-    eventType = "character_snapshot",
-    capturedAt = 1791320496,
-    realm = "Darkwing",
-    payload = snapshot,
-}
-addon.Store.SetTelemetrySnapshot("character_snapshot:" .. characterId, envelope)
-assertEqual(envelope.realm, "Classic Beta PvE 2", "envelope realm uses server realm")
-assertEqual(envelope.payload.realm, "Classic Beta PvE 2", "payload realm stays canonical")
+assertEqual(GuildweaverDB.meta.characterFingerprints["classic beta pve 2:rook"], nil, "no fingerprint under the old key")
 
 surname = "Ravenstar"
 local secondCharacterId = addon.Store.GetCharacterId("classic beta pve 2:rook")

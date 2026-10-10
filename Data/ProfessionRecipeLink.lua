@@ -26,8 +26,7 @@ if type(originalRememberRecipeBook) == "function" then
     end
 end
 
--- character_snapshot still carries recipes for compatibility with older
--- website builds. Use the base profession ID for that merge while retaining
+-- The local character snapshot keeps each profession's recipes. Use the base profession ID for that merge while retaining
 -- the child ID for diagnostics. Without this, a child skill line such as 2823
 -- cannot match GetProfessions()' base skill line such as 197.
 local originalToCharacterRecipeOverride = professions.ToCharacterRecipeOverride

@@ -11,6 +11,11 @@ GW.TelemetryDomains.Character = GW.TelemetryDomain.Define({
         return {
             characterKey = snapshot.characterKey,
             name = snapshot.name,
+            firstName = snapshot.firstName,
+            lastName = snapshot.lastName,
+            fullName = snapshot.fullName,
+            gameBuild = snapshot.gameBuild,
+            addonVersion = snapshot.addonVersion,
             realm = snapshot.realm,
             region = snapshot.region,
             level = snapshot.level,

@@ -108,12 +108,12 @@ local function migrateCharacterKey(oldKey, newKey)
     end
     database.characters[oldKey] = nil
 
-    local outbound = database.sync and database.sync.outbound and database.sync.outbound.characters
-    if type(outbound) == "table" then
-        if outbound[oldKey] and not outbound[newKey] then
-            outbound[newKey] = outbound[oldKey]
+    local fingerprints = database.meta.characterFingerprints
+    if type(fingerprints) == "table" then
+        if fingerprints[oldKey] and not fingerprints[newKey] then
+            fingerprints[newKey] = fingerprints[oldKey]
         end
-        outbound[oldKey] = nil
+        fingerprints[oldKey] = nil
     end
 end
 
@@ -134,7 +134,6 @@ end
 local originalGetCharacterId = GW.Store.GetCharacterId
 local originalGetCharacterSnapshot = GW.Store.GetCharacterSnapshot
 local originalSetCharacterSnapshot = GW.Store.SetCharacterSnapshot
-local originalSetTelemetrySnapshot = GW.Store.SetTelemetrySnapshot
 
 function GW.Store.GetCharacterId(characterKey)
     local canonicalKey = canonicalCharacterKey(characterKey)
@@ -166,16 +165,4 @@ function GW.Store.SetCharacterSnapshot(characterKey, snapshot)
     end
 
     return originalSetCharacterSnapshot(canonicalKey, snapshot)
-end
-
-function GW.Store.SetTelemetrySnapshot(streamKey, envelope)
-    local realm = currentRealm()
-    if realm and type(envelope) == "table" and envelope.eventType == "character_snapshot" then
-        envelope.realm = realm
-        if type(envelope.payload) == "table" then
-            envelope.payload.realm = realm
-        end
-    end
-
-    return originalSetTelemetrySnapshot(streamKey, envelope)
 end

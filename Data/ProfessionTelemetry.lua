@@ -638,8 +638,8 @@ function GW.ProfessionTelemetry.BuildPayload(characterKey)
     return { professions = professions }
 end
 
--- Shape accepted by the character snapshot's profession recipes, so the legacy
--- character_snapshot keeps carrying recipes for older website builds.
+-- Shape accepted by the local character snapshot's profession recipes, so a
+-- capture without the profession window open keeps the last known recipes.
 function GW.ProfessionTelemetry.ToCharacterRecipeOverride(book)
     if type(book) ~= "table" then
         return nil

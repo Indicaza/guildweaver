@@ -36,7 +36,11 @@ local snapshot = {
     capturedAt = 1791322510,
     characterKey = "darkwing:rook",
     characterId = "character-rook",
-    name = "Rook",
+    name = "Rook Ravenstar",
+    firstName = "Rook",
+    lastName = "Ravenstar",
+    fullName = "Rook Ravenstar",
+    addonVersion = "0.6.0",
     realm = "Darkwing",
     region = "US",
     level = 20,
@@ -58,6 +62,15 @@ truthy(first.Professions.changed, "professions first publish")
 truthy(first.Talents.changed, "talents first publish")
 
 local telemetry = GuildweaverDB.sync.outbound.telemetry
+
+-- The character stream carries everything the website used to take from the
+-- whole character snapshot: Forever surnames, game build and addon version.
+local identityPayload = telemetry["character:character-rook"].envelope.payload
+equal(identityPayload.firstName, "Rook", "character stream first name")
+equal(identityPayload.lastName, "Ravenstar", "character stream surname")
+equal(identityPayload.fullName, "Rook Ravenstar", "character stream full name")
+equal(identityPayload.gameBuild.build, "70235", "character stream game build")
+equal(identityPayload.addonVersion, "0.6.0", "character stream addon version")
 local expected = {
     character = "character:character-rook",
     stats = "stats:character-rook",
@@ -78,7 +91,7 @@ for eventType, streamKey in pairs(expected) do
 end
 
 local characterPayload = telemetry[expected.character].envelope.payload
-equal(characterPayload.name, "Rook", "character owns identity")
+equal(characterPayload.name, "Rook Ravenstar", "character owns identity")
 equal(characterPayload.equipment, nil, "character excludes equipment")
 equal(characterPayload.professions, nil, "character excludes professions")
 equal(characterPayload.talents, nil, "character excludes talents")

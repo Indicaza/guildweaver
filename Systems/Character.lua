@@ -608,7 +608,6 @@ function GW.Character.Capture(reason, recipeOverride)
     local previousSnapshot = GW.Store.GetCharacterSnapshot(key)
     local guild = collectGuild()
     local characterId = GW.Store.GetCharacterId(key)
-    local installationId = GW.Store.GetInstallationId()
     local gameBuild = collectGameBuild()
     local sex = UnitSex("player")
     local snapshot = {
@@ -643,21 +642,6 @@ function GW.Character.Capture(reason, recipeOverride)
     }
 
     GW.Store.SetCharacterSnapshot(key, snapshot)
-
-    local envelope = {
-        schemaVersion = 1,
-        eventType = "character_snapshot",
-        capturedAt = capturedAt,
-        gameBuild = gameBuild,
-        realm = realm,
-        region = snapshot.region,
-        installationId = installationId,
-        characterId = characterId,
-        guildId = guild and ("guild-" .. GW.Store.Fingerprint({ name = guild.name, realm = guild.realm })) or nil,
-        payload = snapshot,
-    }
-
-    GW.Store.SetTelemetrySnapshot("character_snapshot:" .. characterId, envelope)
     return snapshot
 end
 
@@ -676,8 +660,7 @@ function GW.Character.CaptureProfessionRecipes(reason)
     local _, _, key = currentCharacterIdentity()
     professions.RememberRecipeBook(key, book)
     -- Capturing the character publishes every telemetry domain, including
-    -- profession_snapshot; the override keeps character_snapshot's recipes
-    -- populated for older website builds.
+    -- profession_snapshot; the override keeps the local snapshot's recipes.
     return GW.Character.Capture(reason or "TRADE_SKILL", professions.ToCharacterRecipeOverride(book))
 end
 

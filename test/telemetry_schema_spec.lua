@@ -202,19 +202,6 @@ equal(definitionRecord.envelope.payload.nodes[1].entries[1].spellId, 14162, "def
 equal(definitionRecord.envelope.payload.nodes[1].entries[1].iconFileDataId, 132292, "definition keeps icon id")
 falsy(definitionRecord.envelope.payload.nodes[1].entries[1].selected, "dynamic selected flag removed from definition")
 
-addon.Store.SetTelemetrySnapshot("character_snapshot:character-existing", {
-    schemaVersion = 1,
-    eventType = "character_snapshot",
-    capturedAt = snapshot.capturedAt,
-    gameBuild = snapshot.gameBuild,
-    realm = "Darkwing",
-    characterId = snapshot.characterId,
-    payload = snapshot,
-})
-
-local characterRecord = GuildweaverDB.sync.outbound.telemetry["character_snapshot:character-existing"]
-equal(characterRecord.envelope.realm, "Classic Beta PvE 2", "telemetry envelope realm")
-equal(characterRecord.envelope.payload.schemaVersion, 3, "telemetry payload schema")
 equal(definitionRecord.revision, 1, "definition revision remains stable")
 
 print("telemetry schema spec passed")
