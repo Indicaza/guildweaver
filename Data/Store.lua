@@ -29,7 +29,6 @@ local defaults = {
             },
         },
         outbound = {
-            characters = {},
             telemetry = {},
             questActions = {},
             nextQuestActionId = 0,
@@ -166,6 +165,16 @@ function GW.Store.Initialize()
     GuildweaverDB.meta.characterIds = GuildweaverDB.meta.characterIds or {}
     GuildweaverDB.meta.capture = GuildweaverDB.meta.capture or {}
     GuildweaverDB.meta.addonVersion = GW.version
+    GuildweaverDB.meta.characterFingerprints = GuildweaverDB.meta.characterFingerprints or {}
+
+    -- Whole character snapshots are no longer sent; each data type has its
+    -- own telemetry stream. Drop what older versions left for the bridge.
+    GuildweaverDB.sync.outbound.characters = nil
+    for streamKey in pairs(GuildweaverDB.sync.outbound.telemetry) do
+        if string.find(streamKey, "character_snapshot:", 1, true) == 1 then
+            GuildweaverDB.sync.outbound.telemetry[streamKey] = nil
+        end
+    end
 end
 
 function GW.Store.GetDatabase()
@@ -237,25 +246,17 @@ function GW.Store.EndCaptureSession()
     return sessionId
 end
 
+-- The latest local snapshot, which the telemetry domains read from. Returns
+-- whether its stable data changed.
 function GW.Store.SetCharacterSnapshot(characterKey, snapshot)
     GuildweaverDB.characters[characterKey] = snapshot
 
-    local outbound = GuildweaverDB.sync.outbound.characters
-    local existing = outbound[characterKey]
+    local fingerprints = GuildweaverDB.meta.characterFingerprints
     local nextFingerprint = fingerprint(snapshot)
-
-    if existing and existing.fingerprint == nextFingerprint then
+    if fingerprints[characterKey] == nextFingerprint then
         return false
     end
-
-    local revision = existing and tonumber(existing.revision) or 0
-    outbound[characterKey] = {
-        revision = revision + 1,
-        updatedAt = snapshot.capturedAt,
-        fingerprint = nextFingerprint,
-        payload = snapshot,
-    }
-
+    fingerprints[characterKey] = nextFingerprint
     return true
 end
 

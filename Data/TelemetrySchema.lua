@@ -491,16 +491,4 @@ function GW.Store.SetCharacterSnapshot(characterKey, snapshot)
     return changed
 end
 
-function GW.Store.SetTelemetrySnapshot(streamKey, envelope)
-    if type(envelope) == "table" and envelope.eventType == "character_snapshot" and type(envelope.payload) == "table" then
-        local normalized, definitions = normalizeCharacterSnapshot(envelope.payload)
-        if normalized ~= envelope.payload then
-            replaceTable(envelope.payload, normalized)
-        end
-        emitTalentDefinitions(envelope.payload, definitions)
-    end
-
-    return originalSetTelemetrySnapshot(streamKey, envelope)
-end
-
 GW.TelemetrySchema.NormalizeCharacterSnapshot = normalizeCharacterSnapshot

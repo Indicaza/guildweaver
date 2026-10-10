@@ -51,4 +51,12 @@ state("talents:character-rook", 3)
 equal(outbound["talents:character-rook"].revision, 3, "a recreated stream continues its revisions")
 equal(state("talents:character-rook", 3), false, "unchanged content is still deduped")
 
+-- Upgrading from a version that also sent whole character snapshots.
+GuildweaverDB.sync.outbound.characters = { ["darkwing:rook"] = { revision = 9, payload = {} } }
+outbound["character_snapshot:character-rook"] = { revision = 9, envelope = { eventType = "character_snapshot" } }
+Store.Initialize()
+equal(GuildweaverDB.sync.outbound.characters, nil, "legacy character mailbox removed")
+equal(GuildweaverDB.sync.outbound.telemetry["character_snapshot:character-rook"], nil, "legacy character_snapshot stream removed")
+truthy(GuildweaverDB.sync.outbound.telemetry["talents:character-rook"], "other streams kept")
+
 print("telemetry_store_spec passed")

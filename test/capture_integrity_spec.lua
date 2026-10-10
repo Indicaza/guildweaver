@@ -73,18 +73,18 @@ local tradeSkill = GW.Character.Capture("TRADE_SKILL_SHOW")
 equal(tradeSkill.capture.sections.professions, "complete", "trade skill professions are authoritative")
 equal(tradeSkill.capture.sections.recipes, "complete", "trade skill recipes are authoritative")
 
-local outbound = GuildweaverDB.sync.outbound.characters["classic beta pve 2:rook"]
-truthy(outbound, "outbound snapshot")
-equal(outbound.payload.capture.sections.recipes, "complete", "capture contract reaches bridge payload")
-equal(outbound.payload.installationId, GW.Store.GetInstallationId(), "installation id reaches bridge payload")
+local stored = GW.Store.GetCharacterSnapshot("classic beta pve 2:rook")
+truthy(stored, "stored snapshot")
+equal(stored.capture.sections.recipes, "complete", "capture contract reaches the stored snapshot")
+equal(stored.installationId, GW.Store.GetInstallationId(), "installation id reaches the stored snapshot")
 
 local richSnapshot = GW.Character.GetCurrentSnapshot()
-local richRevision = outbound.revision
+local richFingerprint = GuildweaverDB.meta.characterFingerprints["classic beta pve 2:rook"]
 local capturesBeforeTeardown = originalCaptureCount
 local teardown = GW.Character.Capture("PLAYER_LOGOUT")
 equal(teardown, richSnapshot, "logout preserves rich snapshot")
 equal(originalCaptureCount, capturesBeforeTeardown, "logout does not recapture from teardown APIs")
-equal(GuildweaverDB.sync.outbound.characters["classic beta pve 2:rook"].revision, richRevision, "logout does not replace outbound rich snapshot")
+equal(GuildweaverDB.meta.characterFingerprints["classic beta pve 2:rook"], richFingerprint, "logout does not replace the rich snapshot")
 equal(teardown.capture.reason, "TRADE_SKILL_SHOW", "last rich capture metadata survives logout")
 equal(teardown.capture.sections.professions, "complete", "rich profession section survives logout")
 

@@ -1,23 +1,14 @@
 # Character telemetry contract
 
-Guildweaver SavedVariables schema 4 keeps the existing per-character snapshot mailbox and adds a generic bounded telemetry outbox.
+Guildweaver SavedVariables schema 4 sends character data as one telemetry stream per data type through a bounded telemetry outbox.
 
-## Existing compatibility mailbox
+## Local character snapshot
 
-`GuildweaverDB.characters` stores the latest local character snapshot.
-
-`GuildweaverDB.sync.outbound.characters[characterKey]` contains:
-
-- `revision`
-- `updatedAt`
-- `fingerprint`
-- `payload`
-
-The revision only changes when stable character data changes. Capture timestamps and capture reasons do not create a new revision by themselves.
+`GuildweaverDB.characters` stores the latest local character snapshot, which the telemetry domains read from. It is not sent as a whole: the per-character `sync.outbound.characters` mailbox and the `character_snapshot` stream were removed, and are cleared on load. `GuildweaverDB.meta.characterFingerprints[characterKey]` records the snapshot's stable data, so capture timestamps and reasons alone do not count as a change.
 
 ## Generic telemetry mailbox
 
-`GuildweaverDB.sync.outbound.telemetry[streamKey]` stores the newest unsuperseded snapshot for a telemetry stream. Initial streams use `character_snapshot:<anonymous character id>`.
+`GuildweaverDB.sync.outbound.telemetry[streamKey]` stores the newest unsuperseded snapshot for a telemetry stream, keyed `<eventType>:<anonymous character id>` (for example `character:`, `stats:`, `equipment:`, `talents:`, `professions:`, `profession_snapshot:`, `inventory_snapshot:`).
 
 Each record contains:
 
@@ -70,8 +61,6 @@ Stream key `profession_snapshot:<anonymous character id>`, payload schema 1, emi
 `recipes[]` fields, as exposed by the client: `recipeId`/`spellId`, `name`, `iconFileDataId`, `recipeLink`, `known`, `craftable`, `difficulty` (optimal, medium, easy, trivial), `relativeDifficulty`, `skillUps`, `maxTrivialLevel`, `unlockedRecipeLevel`, `skillLineAbilityId`, `categoryId`, `trainingPointCost`/`requiredLevel` (Classic crafts), `description`, `tools[]`, `cooldown` (`readyAt` rounded to the minute, `isDayCooldown`, `charges`, `maxCharges`), `crafted` (shared item description plus `minQuantity`/`maxQuantity`; tooltip only for known recipes) and `reagents[]` (shared item description without tooltip, plus `quantity`, `required`, `slotIndex`, `currencyId`).
 
 Recipe books come from `C_TradeSkillUI`, the legacy trade skill API, or the Classic craft frame (`legacy_craft`). The last book per profession is cached in `GuildweaverDB.professionTelemetry[characterKey]`; its `capturedAt` only moves when the recipes change. When the profession API is unavailable (logout teardown), the cached state is published unchanged rather than cleared.
-
-`character_snapshot` still carries professions and a reduced recipe list for older website builds.
 
 ## Privacy
 

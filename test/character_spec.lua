@@ -50,23 +50,19 @@ equal(#first.equipment, 0, "empty equipment")
 truthy(first.characterId, "anonymous character id")
 truthy(GW.Store.GetInstallationId(), "anonymous installation id")
 
-local characterOutbound = GuildweaverDB.sync.outbound.characters["realm:rook"]
-local telemetryKey = "character_snapshot:" .. first.characterId
-local telemetryOutbound = GuildweaverDB.sync.outbound.telemetry[telemetryKey]
-equal(characterOutbound.revision, 1, "first legacy revision")
-equal(telemetryOutbound.revision, 1, "first telemetry revision")
-equal(telemetryOutbound.envelope.eventType, "character_snapshot", "telemetry event type")
-equal(telemetryOutbound.envelope.schemaVersion, 1, "telemetry schema")
+-- Whole snapshots stay local; each data type has its own telemetry stream.
+equal(GuildweaverDB.sync.outbound.characters, nil, "no legacy character mailbox")
+equal(GuildweaverDB.sync.outbound.telemetry["character_snapshot:" .. first.characterId], nil, "no character_snapshot stream")
+truthy(GuildweaverDB.meta.characterFingerprints["realm:rook"], "snapshot fingerprint kept for change detection")
 
 now = 1001
+local fingerprint = GuildweaverDB.meta.characterFingerprints["realm:rook"]
 GW.Character.Capture("UNCHANGED")
-equal(GuildweaverDB.sync.outbound.characters["realm:rook"].revision, 1, "unchanged legacy revision")
-equal(GuildweaverDB.sync.outbound.telemetry[telemetryKey].revision, 1, "unchanged telemetry revision")
+equal(GuildweaverDB.meta.characterFingerprints["realm:rook"], fingerprint, "unchanged capture keeps its fingerprint")
 
 level = 21
 GW.Character.Capture("LEVEL_UP")
-equal(GuildweaverDB.sync.outbound.characters["realm:rook"].revision, 2, "changed legacy revision")
-equal(GuildweaverDB.sync.outbound.telemetry[telemetryKey].revision, 2, "changed telemetry revision")
+truthy(GuildweaverDB.meta.characterFingerprints["realm:rook"] ~= fingerprint, "changed capture updates its fingerprint")
 
 C_ClassTalents = {
     GetActiveConfigID = function() return 10 end,
