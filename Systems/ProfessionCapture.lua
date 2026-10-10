@@ -5,64 +5,6 @@ GW.ProfessionCapture = GW.ProfessionCapture or {}
 local RETRY_DELAY_SECONDS = 0.25
 local MAX_CAPTURE_ATTEMPTS = 20
 
-local function activeProfessionSkillLines(api)
-    local skillLines = {}
-    local seen = {}
-
-    local function add(infoFunction)
-        if type(infoFunction) ~= "function" then
-            return
-        end
-        local ok, info = pcall(infoFunction)
-        local skillLineId = ok and type(info) == "table" and tonumber(info.professionID) or nil
-        if skillLineId and not seen[skillLineId] then
-            seen[skillLineId] = true
-            table.insert(skillLines, skillLineId)
-        end
-    end
-
-    add(api.GetChildProfessionInfo)
-    add(api.GetBaseProfessionInfo)
-    return skillLines
-end
-
-local function installRecipeEnumerationCompatibility()
-    local api = C_TradeSkillUI
-    if type(api) ~= "table"
-        or type(api.GetAllRecipeIDs) == "function"
-        or type(api.GetFilteredRecipeIDs) ~= "function" then
-        return
-    end
-
-    api.GetAllRecipeIDs = function()
-        local ok, recipeIds = pcall(api.GetFilteredRecipeIDs)
-        if not ok or type(recipeIds) ~= "table" then
-            return {}
-        end
-
-        if type(api.IsRecipeInSkillLine) ~= "function" then
-            return recipeIds
-        end
-
-        local skillLines = activeProfessionSkillLines(api)
-        if #skillLines == 0 then
-            return {}
-        end
-
-        local filtered = {}
-        for _, recipeId in ipairs(recipeIds) do
-            for _, skillLineId in ipairs(skillLines) do
-                local matchOk, matches = pcall(api.IsRecipeInSkillLine, recipeId, skillLineId)
-                if matchOk and matches == true then
-                    table.insert(filtered, recipeId)
-                    break
-                end
-            end
-        end
-        return filtered
-    end
-end
-
 local function tradeSkillReady()
     local api = C_TradeSkillUI
     if type(api) ~= "table" then
@@ -114,8 +56,6 @@ function GW.ProfessionCapture:Initialize()
     if self.eventFrame then
         return
     end
-
-    installRecipeEnumerationCompatibility()
 
     local frame = CreateFrame("Frame")
     local registered = pcall(frame.RegisterEvent, frame, "TRADE_SKILL_DATA_SOURCE_CHANGED")

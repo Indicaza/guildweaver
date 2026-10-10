@@ -206,6 +206,22 @@ local teardown = domain.Publish({
 })
 equal(teardown.changed, false, "teardown does not clear professions")
 
+-- Forever: no GetAllRecipeIDs, filtered list spans every profession ---------
+
+local foreverApi = {
+    GetFilteredRecipeIDs = function() return { 2660, 2575, 2538 } end,
+    GetChildProfessionInfo = function() return { professionID = 164, professionName = "Blacksmithing" } end,
+    GetBaseProfessionInfo = function() return { professionID = 164, professionName = "Blacksmithing" } end,
+    IsRecipeInSkillLine = function(recipeId, skillLineId) return skillLineId == 164 and recipeId == 2660 end,
+    GetRecipeInfo = function(recipeId) return { recipeID = recipeId, name = "Recipe " .. recipeId, learned = true } end,
+}
+C_TradeSkillUI = foreverApi
+local forever = professions.CollectOpenRecipeBook("tradeskill")
+truthy(forever, "Forever book collected without GetAllRecipeIDs")
+equal(#forever.recipes, 1, "Forever recipes narrowed to the open profession")
+equal(forever.recipes[1].recipeId, 2660, "Forever open-profession recipe kept")
+equal(foreverApi.GetAllRecipeIDs, nil, "C_TradeSkillUI is not modified")
+
 -- Legacy trade skill window ---------------------------------------------------
 
 C_TradeSkillUI = nil

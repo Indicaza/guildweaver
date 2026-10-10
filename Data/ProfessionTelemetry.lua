@@ -248,13 +248,48 @@ local function modernReagents(schematic)
     return #reagents > 0 and reagents or nil
 end
 
+-- Some clients (Forever) lack GetAllRecipeIDs. Their GetFilteredRecipeIDs
+-- spans every known profession, so it is narrowed to the open one here.
+-- Never written onto C_TradeSkillUI: other addons and Blizzard's UI share it.
+local function allRecipeIds(api)
+    if type(api.GetAllRecipeIDs) == "function" then
+        return safe(api.GetAllRecipeIDs)
+    end
+
+    local ids = safe(api.GetFilteredRecipeIDs)
+    if type(ids) ~= "table" or type(api.IsRecipeInSkillLine) ~= "function" then
+        return ids
+    end
+
+    local skillLines, seen = {}, {}
+    for _, infoFunction in ipairs({ api.GetChildProfessionInfo, api.GetBaseProfessionInfo }) do
+        local info = safe(infoFunction)
+        local skillLineId = type(info) == "table" and tonumber(info.professionID) or nil
+        if skillLineId and not seen[skillLineId] then
+            seen[skillLineId] = true
+            table.insert(skillLines, skillLineId)
+        end
+    end
+
+    local filtered = {}
+    for _, recipeId in ipairs(ids) do
+        for _, skillLineId in ipairs(skillLines) do
+            if safe(api.IsRecipeInSkillLine, recipeId, skillLineId) == true then
+                table.insert(filtered, recipeId)
+                break
+            end
+        end
+    end
+    return filtered
+end
+
 local function collectModernBook()
     local api = Globals.C_TradeSkillUI
-    if type(api) ~= "table" or type(api.GetAllRecipeIDs) ~= "function" or type(api.GetRecipeInfo) ~= "function" then
+    if type(api) ~= "table" or type(api.GetRecipeInfo) ~= "function" then
         return nil
     end
 
-    local ids = safe(api.GetAllRecipeIDs)
+    local ids = allRecipeIds(api)
     if type(ids) ~= "table" or #ids == 0 then
         return nil
     end
