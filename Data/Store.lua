@@ -2,7 +2,7 @@ local _, GW = ...
 
 GW.Store = GW.Store or {}
 
-local MAX_TELEMETRY_STREAMS = 64
+local MAX_TELEMETRY_STREAMS = 128
 local FINGERPRINT_IGNORED_KEYS = {
     capturedAt = true,
     reason = true,
@@ -118,6 +118,9 @@ local function fingerprint(value)
     return string.format("%08x", hash)
 end
 
+-- Keeps the outbound telemetry bounded. One-off events (session
+-- checkpoints, a new set every login) go first, oldest first; a character's
+-- state streams are only pruned when nothing else is left.
 local function pruneTelemetry(outbound)
     local count = 0
     for _ in pairs(outbound) do
@@ -126,12 +129,13 @@ local function pruneTelemetry(outbound)
 
     while count > MAX_TELEMETRY_STREAMS do
         local oldestKey = nil
-        local oldestTimestamp = math.huge
+        local oldestRank = math.huge
 
         for key, record in pairs(outbound) do
             local timestamp = tonumber(record and record.updatedAt) or 0
-            if timestamp < oldestTimestamp then
-                oldestTimestamp = timestamp
+            local rank = (record and record.kind == "event" and 0 or 1e12) + timestamp
+            if rank < oldestRank then
+                oldestRank = rank
                 oldestKey = key
             end
         end
@@ -255,6 +259,14 @@ function GW.Store.SetCharacterSnapshot(characterKey, snapshot)
     return true
 end
 
+-- The last revision of every state stream, kept apart from the outbound
+-- records so a stream that was pruned and recreated continues its revisions
+-- instead of restarting at 1 (which the bridge would read as already sent).
+local function telemetryRevisions()
+    GuildweaverDB.sync.telemetryRevisions = GuildweaverDB.sync.telemetryRevisions or {}
+    return GuildweaverDB.sync.telemetryRevisions
+end
+
 function GW.Store.SetTelemetrySnapshot(streamKey, envelope)
     local outbound = GuildweaverDB.sync.outbound.telemetry
     local existing = outbound[streamKey]
@@ -264,7 +276,9 @@ function GW.Store.SetTelemetrySnapshot(streamKey, envelope)
         return false
     end
 
-    local revision = existing and tonumber(existing.revision) or 0
+    local revisions = telemetryRevisions()
+    local revision = math.max(existing and tonumber(existing.revision) or 0, tonumber(revisions[streamKey]) or 0)
+    revisions[streamKey] = revision + 1
     outbound[streamKey] = {
         kind = "state",
         revision = revision + 1,
