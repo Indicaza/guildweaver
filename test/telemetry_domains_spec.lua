@@ -65,12 +65,12 @@ local telemetry = GuildweaverDB.sync.outbound.telemetry
 
 -- The character stream carries everything the website used to take from the
 -- whole character snapshot: Forever surnames, game build and addon version.
-local characterPayload = telemetry["character:character-rook"].envelope.payload
-equal(characterPayload.firstName, "Rook", "character stream first name")
-equal(characterPayload.lastName, "Ravenstar", "character stream surname")
-equal(characterPayload.fullName, "Rook Ravenstar", "character stream full name")
-equal(characterPayload.gameBuild.build, "70235", "character stream game build")
-equal(characterPayload.addonVersion, "0.6.0", "character stream addon version")
+local identityPayload = telemetry["character:character-rook"].envelope.payload
+equal(identityPayload.firstName, "Rook", "character stream first name")
+equal(identityPayload.lastName, "Ravenstar", "character stream surname")
+equal(identityPayload.fullName, "Rook Ravenstar", "character stream full name")
+equal(identityPayload.gameBuild.build, "70235", "character stream game build")
+equal(identityPayload.addonVersion, "0.6.0", "character stream addon version")
 local expected = {
     character = "character:character-rook",
     stats = "stats:character-rook",
