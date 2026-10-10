@@ -690,6 +690,8 @@ function GW.Character.GetCurrentSnapshot()
     return GW.Store.GetCharacterSnapshot(key)
 end
 
+local CHARACTER_CAPTURE_DEBOUNCE_SECONDS = 0.5
+
 local function safeRegister(frame, event)
     pcall(frame.RegisterEvent, frame, event)
 end
@@ -730,6 +732,9 @@ function GW.Character:Initialize()
     end
 
     local professionCapturePending = {}
+    local characterCapturePending = false
+    local latestCharacterReason = nil
+    local lastGuildKey = nil
     frame:SetScript("OnEvent", function(_, event, unit)
         if event == "PLAYER_SPECIALIZATION_CHANGED" and unit and unit ~= "player" then
             return
@@ -750,7 +755,35 @@ function GW.Character:Initialize()
             return
         end
 
-        GW.Character.Capture(event)
+        if event == "PLAYER_LOGOUT" then
+            -- Timers never fire during teardown.
+            GW.Character.Capture(event)
+            return
+        end
+
+        if event == "GUILD_ROSTER_UPDATE" then
+            -- Fires for every guildmate's change; only our own guild or rank matters.
+            local guildName, rankName = GetGuildInfo("player")
+            local guildKey = tostring(guildName) .. "\0" .. tostring(rankName)
+            if guildKey == lastGuildKey then
+                return
+            end
+            lastGuildKey = guildKey
+        end
+
+        -- A login, spec swap or gear change fires several of these at once;
+        -- they share one capture.
+        latestCharacterReason = event
+        if characterCapturePending then
+            return
+        end
+        characterCapturePending = true
+        C_Timer.After(CHARACTER_CAPTURE_DEBOUNCE_SECONDS, function()
+            characterCapturePending = false
+            local reason = latestCharacterReason
+            latestCharacterReason = nil
+            GW.Character.Capture(reason)
+        end)
     end)
 
     self.eventFrame = frame

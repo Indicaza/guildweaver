@@ -185,3 +185,46 @@ equal(unavailable, nil, "partial recipe api")
 equal(GW.Character.GetCurrentSnapshot().professions[1].recipes[1].id, 1001, "preserved recipes")
 
 print("character telemetry tests passed")
+
+-- Event handling ---------------------------------------------------------------
+
+local onEvent
+local timers = {}
+CreateFrame = function()
+    return {
+        RegisterEvent = function() end,
+        SetScript = function(_, _, callback) onEvent = callback end,
+    }
+end
+C_Timer = { After = function(delay, callback) table.insert(timers, { delay = delay, callback = callback }) end }
+
+local captured = {}
+local realCapture = GW.Character.Capture
+GW.Character.Capture = function(reason) table.insert(captured, reason) end
+GW.Character:Initialize()
+table.remove(timers, 1) -- INITIAL_DELAY
+
+onEvent(nil, "PLAYER_EQUIPMENT_CHANGED")
+onEvent(nil, "PLAYER_TALENT_UPDATE")
+onEvent(nil, "TRAIT_CONFIG_UPDATED")
+equal(#captured, 0, "character events wait for the burst to settle")
+equal(#timers, 1, "a burst schedules one capture")
+timers[1].callback()
+equal(#captured, 1, "a burst captures once")
+equal(captured[1], "TRAIT_CONFIG_UPDATED", "latest reason kept")
+
+timers = {}
+onEvent(nil, "GUILD_ROSTER_UPDATE")
+timers[1].callback()
+onEvent(nil, "GUILD_ROSTER_UPDATE")
+onEvent(nil, "GUILD_ROSTER_UPDATE")
+equal(#timers, 1, "roster updates for other guildmates are ignored")
+GetGuildInfo = function() return "Holdfast", "Officer" end
+onEvent(nil, "GUILD_ROSTER_UPDATE")
+equal(#timers, 2, "own rank change is captured")
+
+onEvent(nil, "PLAYER_LOGOUT")
+equal(captured[#captured], "PLAYER_LOGOUT", "logout captures immediately")
+
+GW.Character.Capture = realCapture
+print("character event tests passed")
