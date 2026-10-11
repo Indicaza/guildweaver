@@ -16,38 +16,38 @@ local eventFrame = nil
 
 GuildweaverDB = nil
 GetServerTime = function() return now end
-GetTime = function() return elapsed end
+_G.GetTime = function() return elapsed end
 UnitLevel = function() return 30 end
-GetRealZoneText = function() return "Duskwood" end
-GetSubZoneText = function() return "The Rotting Orchard" end
-GetNumLootItems = function() return 2 end
-GetLootSlotInfo = function(slot)
+_G.GetRealZoneText = function() return "Duskwood" end
+_G.GetSubZoneText = function() return "The Rotting Orchard" end
+_G.GetNumLootItems = function() return 2 end
+_G.GetLootSlotInfo = function(slot)
     if slot == 1 then
         return 134183, "Peacebloom", 2, nil, 1
     end
     return 134419, "Frilled Lichen", 1, nil, 2
 end
-GetLootSlotLink = function(slot)
+_G.GetLootSlotLink = function(slot)
     if slot == 1 then
         return "|Hitem:2447::::::::|h[Peacebloom]|h"
     end
     return "|Hitem:249399::::::::|h[Frilled Lichen]|h"
 end
-GetLootSourceInfo = function()
+_G.GetLootSourceInfo = function()
     return "GameObject-0-1-2-3-1618-000001", 1
 end
-C_Map = {
+_G.C_Map = {
     GetBestMapForUnit = function() return 1431 end,
     GetPlayerMapPosition = function()
         return { GetXY = function() return 0.42, 0.58 end }
     end,
 }
-C_Spell = {
+_G.C_Spell = {
     GetSpellInfo = function(spellId)
         return { name = spellId == 2366 and "Herbalism" or "Other" }
     end,
 }
-Enum = { TraitConfigType = { Legacy = 7 } }
+_G.Enum = { TraitConfigType = { Legacy = 7 } }
 C_Traits = {
     GetConfigsByType = function() return { 77 } end,
     GetConfigInfo = function() return { name = "Legacy Professions", treeIDs = { 88 } } end,
