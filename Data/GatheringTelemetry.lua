@@ -433,3 +433,7 @@ end
 function GW.GatheringTelemetry.PublishSkinning(pending)
     return publishGathering(pending, "skinning", "creature")
 end
+
+function GW.GatheringTelemetry.PublishMining(pending)
+    return publishGathering(pending, "mining", "ore_node")
+end
