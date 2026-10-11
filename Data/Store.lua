@@ -2,7 +2,7 @@ local _, GW = ...
 
 GW.Store = GW.Store or {}
 
-local MAX_TELEMETRY_STREAMS = 128
+local MAX_TELEMETRY_STREAMS = 4096
 local FINGERPRINT_IGNORED_KEYS = {
     capturedAt = true,
     reason = true,
