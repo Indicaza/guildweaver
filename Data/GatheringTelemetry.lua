@@ -4,7 +4,12 @@ local Globals = _G or {}
 
 GW.GatheringTelemetry = GW.GatheringTelemetry or {}
 
-local HERBALISM_SKILL_LINE_ID = 182
+local PROFESSION_SKILL_LINE_IDS = {
+    herbalism = 182,
+    mining = 186,
+    skinning = 393,
+    fishing = 356,
+}
 local BOUNTIFUL_HARVEST_SPELL_ID = 1225435
 local LEGACY_SYSTEM_PROBE_MAX = 120
 
@@ -90,11 +95,18 @@ local function professionMatches(profession, discipline)
     if type(profession) ~= "table" then
         return false
     end
-    if discipline == "herbalism" and tonumber(profession.skillLineId or profession.id) == HERBALISM_SKILL_LINE_ID then
+
+    local expectedSkillLineId = PROFESSION_SKILL_LINE_IDS[discipline]
+    local skillLineId = tonumber(profession.skillLineId or profession.id)
+    if expectedSkillLineId and skillLineId == expectedSkillLineId then
         return true
     end
+
     local name = cleanString(profession.name)
-    return discipline == "herbalism" and name and string.find(string.lower(name), "herbal", 1, true) ~= nil
+    if not name or not discipline then
+        return false
+    end
+    return string.find(string.lower(name), string.lower(discipline), 1, true) ~= nil
 end
 
 local function professionContext(discipline)
@@ -217,7 +229,10 @@ function GW.GatheringTelemetry.RefreshEconomicModifiers()
     return GW.GatheringTelemetry.cachedModifiers
 end
 
-local function economicModifiers()
+local function economicModifiers(discipline)
+    if discipline ~= "herbalism" then
+        return nil
+    end
     if type(GW.GatheringTelemetry.cachedModifiers) ~= "table" then
         GW.GatheringTelemetry.RefreshEconomicModifiers()
     end
@@ -234,7 +249,7 @@ function GW.GatheringTelemetry.CaptureContext(discipline)
         attemptedAt = serverTime(),
         characterLevel = tonumber(safe(Globals.UnitLevel, "player")) or tonumber(snapshot.level),
         profession = professionContext(discipline),
-        modifiers = economicModifiers(),
+        modifiers = economicModifiers(discipline),
         location = currentLocation(),
     }
 end
@@ -249,7 +264,7 @@ end
 local function sourceIdentity(guid)
     guid = cleanString(guid)
     if not guid then
-        return nil, nil
+        return nil, nil, nil
     end
 
     local parts = {}
@@ -257,8 +272,10 @@ local function sourceIdentity(guid)
         table.insert(parts, part)
     end
     local kind = parts[1]
-    local objectId = kind == "GameObject" and tonumber(parts[6]) or nil
-    return kind, objectId
+    local entityId = tonumber(parts[6])
+    local objectId = kind == "GameObject" and entityId or nil
+    local npcId = (kind == "Creature" or kind == "Vehicle") and entityId or nil
+    return kind, objectId, npcId
 end
 
 function GW.GatheringTelemetry.ReadLoot()
@@ -312,7 +329,7 @@ function GW.GatheringTelemetry.ReadLoot()
     end
 
     local primaryGuid = sourceGuids[1]
-    local sourceKind, sourceObjectId = sourceIdentity(primaryGuid)
+    local sourceKind, sourceObjectId, sourceNpcId = sourceIdentity(primaryGuid)
     return {
         slotCount = slotCount,
         outputs = outputs,
@@ -320,6 +337,7 @@ function GW.GatheringTelemetry.ReadLoot()
         sourceGuid = primaryGuid,
         sourceKind = sourceKind,
         sourceObjectId = sourceObjectId,
+        sourceNpcId = sourceNpcId,
     }
 end
 
@@ -336,7 +354,7 @@ local function observationId(snapshot, payload, capturedAt)
     })
 end
 
-function GW.GatheringTelemetry.PublishHerbalism(pending)
+local function publishGathering(pending, discipline, sourceKind)
     pending = type(pending) == "table" and pending or {}
     local snapshot = currentSnapshot()
     if not snapshot or not snapshot.characterId or type(GW.TelemetryEnvelope) ~= "table" then
@@ -350,18 +368,19 @@ function GW.GatheringTelemetry.PublishHerbalism(pending)
 
     local capturedAt = serverTime()
     local source = {
-        kind = "herb_node",
+        kind = sourceKind,
         name = cleanString(pending.sourceName),
         guid = loot.sourceGuid,
         objectId = loot.sourceObjectId,
+        npcId = loot.sourceNpcId,
         guidKind = loot.sourceKind,
         guids = #loot.sourceGuids > 1 and loot.sourceGuids or nil,
     }
-    local context = type(pending.context) == "table" and pending.context or GW.GatheringTelemetry.CaptureContext("herbalism") or {}
+    local context = type(pending.context) == "table" and pending.context or GW.GatheringTelemetry.CaptureContext(discipline) or {}
     local payload = {
         schemaVersion = 1,
         activity = "harvest",
-        discipline = "herbalism",
+        discipline = discipline,
         source = source,
         outputs = loot.outputs,
         context = {
@@ -405,4 +424,12 @@ function GW.GatheringTelemetry.PublishHerbalism(pending)
         envelope = envelope,
         observationId = payload.observationId,
     }
+end
+
+function GW.GatheringTelemetry.PublishHerbalism(pending)
+    return publishGathering(pending, "herbalism", "herb_node")
+end
+
+function GW.GatheringTelemetry.PublishSkinning(pending)
+    return publishGathering(pending, "skinning", "creature")
 end

@@ -39,6 +39,7 @@ Systems/CharacterStatEvents.lua
 Systems/SessionCapture.lua
 Systems/InventoryCapture.lua
 Systems/HerbalismCapture.lua
+Systems/SkinningCapture.lua
 Systems/Quests.lua
 Telemetry/Compatibility.lua
 UI/QuestLog.lua
