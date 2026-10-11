@@ -92,7 +92,6 @@ GW.ProfessionTelemetry = {
 }
 
 assert(loadfile("Data/GatheringTelemetry.lua"))("Guildweaver", GW)
-assert(loadfile("Data/SkinningTelemetry.lua"))("Guildweaver", GW)
 assert(loadfile("Systems/SkinningCapture.lua"))("Guildweaver", GW)
 truthy(eventFrame, "event frame")
 
