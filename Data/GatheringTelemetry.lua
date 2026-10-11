@@ -354,55 +354,25 @@ local function observationId(snapshot, payload, capturedAt)
     })
 end
 
-local function publishGathering(pending, discipline, sourceKind)
-    pending = type(pending) == "table" and pending or {}
-    local snapshot = currentSnapshot()
-    if not snapshot or not snapshot.characterId or type(GW.TelemetryEnvelope) ~= "table" then
-        return nil
-    end
-
-    local loot = GW.GatheringTelemetry.ReadLoot()
-    if not loot then
-        return nil
-    end
-
-    local capturedAt = serverTime()
-    local source = {
-        kind = sourceKind,
-        name = cleanString(pending.sourceName),
-        guid = loot.sourceGuid,
-        objectId = loot.sourceObjectId,
-        npcId = loot.sourceNpcId,
-        guidKind = loot.sourceKind,
-        guids = #loot.sourceGuids > 1 and loot.sourceGuids or nil,
-    }
+local function contextPayload(pending, discipline)
     local context = type(pending.context) == "table" and pending.context or GW.GatheringTelemetry.CaptureContext(discipline) or {}
-    local payload = {
-        schemaVersion = 1,
-        activity = "harvest",
-        discipline = discipline,
-        source = source,
-        outputs = loot.outputs,
-        context = {
-            attemptedAt = context.attemptedAt,
-            characterLevel = context.characterLevel,
-            profession = context.profession,
-            modifiers = context.modifiers,
-            location = context.location,
-            trigger = {
-                spellId = tonumber(pending.spellId),
-                spellName = cleanString(pending.spellName),
-                castGuid = cleanString(pending.castGuid),
-            },
-        },
-        capture = {
-            lootSlotCount = loot.slotCount,
-            sourceCount = #loot.sourceGuids,
+    return {
+        attemptedAt = context.attemptedAt,
+        characterLevel = context.characterLevel,
+        profession = context.profession,
+        modifiers = context.modifiers,
+        location = context.location,
+        trigger = {
+            spellId = tonumber(pending.spellId),
+            spellName = cleanString(pending.spellName),
+            castGuid = cleanString(pending.castGuid),
         },
     }
-    payload.observationId = observationId(snapshot, payload, capturedAt)
+end
 
-    local envelope = GW.TelemetryEnvelope.Build("gathering_loot", payload, {
+local function publishEvent(eventType, snapshot, payload, capturedAt)
+    payload.observationId = observationId(snapshot, payload, capturedAt)
+    local envelope = GW.TelemetryEnvelope.Build(eventType, payload, {
         capturedAt = capturedAt,
         characterId = snapshot.characterId,
         realm = snapshot.realm,
@@ -413,7 +383,7 @@ local function publishGathering(pending, discipline, sourceKind)
         return nil
     end
 
-    local streamKey = table.concat({ "gathering_loot", tostring(snapshot.characterId), payload.observationId }, ":")
+    local streamKey = table.concat({ eventType, tostring(snapshot.characterId), payload.observationId }, ":")
     local changed = GW.Store.SetTelemetryEvent(streamKey, envelope)
     if not changed then
         return nil
@@ -426,6 +396,79 @@ local function publishGathering(pending, discipline, sourceKind)
     }
 end
 
+local function publishGathering(pending, discipline, sourceKind, options)
+    pending = type(pending) == "table" and pending or {}
+    options = type(options) == "table" and options or {}
+    local snapshot = currentSnapshot()
+    if not snapshot or not snapshot.characterId or type(GW.TelemetryEnvelope) ~= "table" then
+        return nil
+    end
+
+    local loot = GW.GatheringTelemetry.ReadLoot()
+    if not loot then
+        return nil
+    end
+
+    local useLootSource = options.useLootSource ~= false
+    local source = {
+        kind = sourceKind,
+        name = cleanString(pending.sourceName),
+    }
+    if useLootSource then
+        source.guid = loot.sourceGuid
+        source.objectId = loot.sourceObjectId
+        source.npcId = loot.sourceNpcId
+        source.guidKind = loot.sourceKind
+        source.guids = #loot.sourceGuids > 1 and loot.sourceGuids or nil
+    end
+
+    local payload = {
+        schemaVersion = 1,
+        activity = cleanString(options.activity) or "harvest",
+        discipline = discipline,
+        source = source,
+        outputs = loot.outputs,
+        context = contextPayload(pending, discipline),
+        capture = {
+            lootSlotCount = loot.slotCount,
+            sourceCount = #loot.sourceGuids,
+            rawSourceGuid = useLootSource and nil or loot.sourceGuid,
+            rawSourceObjectId = useLootSource and nil or loot.sourceObjectId,
+            rawSourceNpcId = useLootSource and nil or loot.sourceNpcId,
+            rawSourceKind = useLootSource and nil or loot.sourceKind,
+        },
+    }
+
+    return publishEvent("gathering_loot", snapshot, payload, serverTime())
+end
+
+local function publishAttempt(pending, discipline, sourceKind, activity)
+    pending = type(pending) == "table" and pending or {}
+    local snapshot = currentSnapshot()
+    if not snapshot or not snapshot.characterId or type(GW.TelemetryEnvelope) ~= "table" then
+        return nil
+    end
+
+    local capturedAt = serverTime()
+    local payload = {
+        schemaVersion = 1,
+        activity = activity,
+        discipline = discipline,
+        source = {
+            kind = sourceKind,
+            name = cleanString(pending.sourceName),
+        },
+        outputs = {},
+        context = contextPayload(pending, discipline),
+        capture = {
+            accepted = true,
+            acceptedAt = capturedAt,
+        },
+    }
+
+    return publishEvent("gathering_attempt", snapshot, payload, capturedAt)
+end
+
 function GW.GatheringTelemetry.PublishHerbalism(pending)
     return publishGathering(pending, "herbalism", "herb_node")
 end
@@ -436,4 +479,15 @@ end
 
 function GW.GatheringTelemetry.PublishMining(pending)
     return publishGathering(pending, "mining", "ore_vein")
+end
+
+function GW.GatheringTelemetry.PublishFishingAttempt(pending)
+    return publishAttempt(pending, "fishing", "fishing_water", "cast")
+end
+
+function GW.GatheringTelemetry.PublishFishing(pending)
+    return publishGathering(pending, "fishing", "fishing_water", {
+        activity = "catch",
+        useLootSource = false,
+    })
 end
