@@ -435,5 +435,5 @@ function GW.GatheringTelemetry.PublishSkinning(pending)
 end
 
 function GW.GatheringTelemetry.PublishMining(pending)
-    return publishGathering(pending, "mining", "ore_node")
+    return publishGathering(pending, "mining", "ore_vein")
 end
