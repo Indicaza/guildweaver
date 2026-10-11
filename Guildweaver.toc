@@ -17,7 +17,6 @@ Data/RecipeTooltipTelemetry.lua
 Data/RecipeBookDetails.lua
 Data/InventoryTelemetry.lua
 Data/GatheringTelemetry.lua
-Data/SkinningTelemetry.lua
 Data/TelemetrySchema.lua
 Data/CharacterStats.lua
 Data/CharacterStatsFinalize.lua
