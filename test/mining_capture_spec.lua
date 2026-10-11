@@ -121,7 +121,7 @@ equal(record.envelope.eventType, "gathering_loot", "event type")
 local payload = record.envelope.payload
 equal(payload.discipline, "mining", "discipline")
 equal(payload.activity, "harvest", "activity")
-equal(payload.source.kind, "ore_node", "source kind")
+equal(payload.source.kind, "ore_vein", "source kind")
 equal(payload.source.name, "Copper Vein", "source name")
 equal(payload.source.objectId, 1731, "source object id")
 equal(payload.outputs[1].itemId, 2770, "ore item")
