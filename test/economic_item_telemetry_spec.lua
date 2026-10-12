@@ -13,7 +13,7 @@ local itemLoaded = false
 local snapshots = 0
 
 GetServerTime = function() return 1791769800 end
-C_Item = {
+_G.C_Item = {
     RequestLoadItemDataByID = function(itemId)
         requested[#requested + 1] = itemId
     end,
