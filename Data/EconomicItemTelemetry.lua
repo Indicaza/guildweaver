@@ -64,7 +64,7 @@ local function pendingOutput(output)
 end
 
 local function requestItemData(itemId)
-    local itemApi = _G and _G.C_Item or C_Item
+    local itemApi = type(_G) == "table" and _G.C_Item or nil
     local request = type(itemApi) == "table" and itemApi.RequestLoadItemDataByID or nil
     if type(request) ~= "function" or not tonumber(itemId) then
         return false
