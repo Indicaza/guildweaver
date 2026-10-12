@@ -31,6 +31,16 @@ CreateFrame = function()
     }
 end
 
+local function fullTooltip(lines, method)
+    return {
+        source = "GameTooltip",
+        method = method or "SetHyperlink",
+        rendered = true,
+        complete = true,
+        lines = lines,
+    }
+end
+
 local function completeLichen()
     return {
         itemId = 249399,
@@ -40,13 +50,10 @@ local function completeLichen()
         sellPrice = 125,
         itemClass = { id = 7, name = "Trade Goods" },
         itemSubclass = { id = 9, name = "Herb" },
-        tooltip = {
-            source = "C_TooltipInfo",
-            lines = {
-                { left = "Frilled Lichen", leftColor = { r = 0.12, g = 1, b = 0 } },
-                { left = "Crafting Reagent" },
-            },
-        },
+        tooltip = fullTooltip({
+            { left = "Frilled Lichen", leftColor = { r = 0.12, g = 1, b = 0 } },
+            { left = "Crafting Reagent" },
+        }),
     }
 end
 
@@ -58,6 +65,14 @@ local addon = {
         end,
     },
     ItemTelemetry = {
+        IsFullTooltip = function(tooltip)
+            return type(tooltip) == "table"
+                and tooltip.source == "GameTooltip"
+                and tooltip.rendered == true
+                and tooltip.complete == true
+                and type(tooltip.lines) == "table"
+                and #tooltip.lines > 0
+        end,
         Describe = function(item)
             described = described + 1
             local text = tostring(item)
@@ -70,13 +85,13 @@ local addon = {
                     itemClass = { id = 4, name = "Armor" },
                     itemSubclass = { id = 4, name = "Plate" },
                     itemLevel = 35,
-                    tooltip = {
-                        source = "C_TooltipInfo",
-                        lines = {
-                            { left = "Golem Skull Helm" },
-                            { left = "Item Level 35" },
-                        },
-                    },
+                    tooltip = fullTooltip({
+                        { left = "Golem Skull Helm" },
+                        { left = "Head", right = "Plate" },
+                        { left = "120 Armor" },
+                        { left = "+13 Strength" },
+                        { left = "Durability 91 / 100" },
+                    }, "SetInventoryItem"),
                 }
             end
 
@@ -91,6 +106,8 @@ local addon = {
                 iconFileDataId = 134193,
                 tooltip = {
                     source = "C_TooltipInfo",
+                    rendered = false,
+                    complete = false,
                     lines = {
                         { left = "Frilled Lichen" },
                     },
@@ -148,26 +165,26 @@ equal(registered.ITEM_DATA_LOAD_RESULT, true, "registers item-data event")
 local first = addon.GatheringTelemetry.ReadLoot()
 equal(first.outputs[1].quantity, 1, "loot remains unchanged")
 equal(described, 1, "sparse item described")
-equal(#published, 1, "sparse definition is still useful immediately")
-equal(published[1].streamKey, "item_definition:item:249399", "stable item stream")
-equal(published[1].envelope.eventType, "item_definition", "event type")
-equal(published[1].envelope.characterId, nil, "item definition is not character scoped")
-equal(published[1].envelope.payload.itemKey, "item:249399", "item key")
-equal(#published[1].envelope.payload.item.tooltip.lines, 1, "initial tooltip is sparse")
-equal(#requested, 1, "sparse definition requests Blizzard item data")
+equal(#published, 0, "provisional tooltip never enters canonical catalog")
+equal(#requested, 1, "provisional definition requests Blizzard item data")
 equal(requested[1], 249399, "requests the observed item")
 
 equal(type(onEvent), "function", "load event callback installed")
 itemLoaded = true
 onEvent(nil, "GET_ITEM_INFO_RECEIVED", 249399, true)
 equal(described, 2, "loaded item retried once")
-equal(#published, 2, "loaded definition republished")
-equal(published[2].envelope.payload.item.sellPrice, 125, "loaded metadata replaces sparse definition")
-equal(published[2].envelope.payload.item.tooltip.lines[2].left, "Crafting Reagent", "loaded tooltip lines")
+equal(#published, 1, "full rendered definition published after load")
+equal(published[1].streamKey, "item_definition:item:249399", "stable item stream")
+equal(published[1].envelope.eventType, "item_definition", "event type")
+equal(published[1].envelope.characterId, nil, "item definition is not character scoped")
+equal(published[1].envelope.payload.itemKey, "item:249399", "item key")
+equal(published[1].envelope.payload.item.sellPrice, 125, "loaded metadata retained")
+equal(published[1].envelope.payload.item.tooltip.complete, true, "canonical tooltip is explicitly complete")
+equal(published[1].envelope.payload.item.tooltip.lines[2].left, "Crafting Reagent", "loaded tooltip lines")
 
 addon.GatheringTelemetry.ReadLoot()
 equal(described, 2, "complete definition cached for the session")
-equal(#published, 2, "complete definition is not republished on every gather")
+equal(#published, 1, "complete definition is not republished on every gather")
 
 local stored = addon.Store.SetCharacterSnapshot("classic beta pve 2:armorytest", {
     equipment = {
@@ -183,8 +200,10 @@ local stored = addon.Store.SetCharacterSnapshot("classic beta pve 2:armorytest",
 equal(stored, "stored", "character snapshot behavior preserved")
 equal(snapshots, 1, "character snapshot stored once")
 equal(described, 3, "equipment feeds the shared item catalog")
-equal(#published, 3, "equipment item definition published")
-equal(published[3].streamKey, "item_definition:item:11746", "equipment uses canonical item stream")
-equal(published[3].envelope.payload.item.itemLevel, 35, "equipment definition keeps client metadata")
+equal(#published, 2, "full equipment item definition published")
+equal(published[2].streamKey, "item_definition:item:11746", "equipment uses canonical item stream")
+equal(published[2].envelope.payload.item.itemLevel, 35, "equipment definition keeps client metadata")
+equal(published[2].envelope.payload.item.tooltip.method, "SetInventoryItem", "equipment keeps slot-rendered tooltip")
+equal(published[2].envelope.payload.item.tooltip.lines[3].left, "120 Armor", "equipment catalog retains full armor line")
 
 print("economic item telemetry spec passed")
