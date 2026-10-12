@@ -68,13 +68,60 @@ local function pendingExpired(pending)
     return armedAt and elapsed() - armedAt > PENDING_TIMEOUT_SECONDS or false
 end
 
+local function applyPoolCandidate(pending, probeNow)
+    if type(pending) ~= "table" then
+        return
+    end
+
+    local probe = GW.FishingPoolProbe
+    if type(probe) ~= "table" then
+        return
+    end
+
+    if probeNow and type(probe.ProbeNow) == "function" then
+        probe:ProbeNow()
+    end
+
+    local candidate = type(probe.CandidateForCast) == "function"
+        and probe:CandidateForCast(pending.armedAt) or nil
+    if type(candidate) == "table" and candidate.looksLikePool then
+        pending.sourceName = safeText(candidate.name) or "Fishing Pool"
+        pending.sourceKind = "fishing_pool"
+        pending.sourceGuid = safeText(candidate.guid)
+        pending.sourceObjectId = tonumber(candidate.objectId)
+        pending.sourceGuidKind = pending.sourceGuid and "GameObject" or nil
+        pending.sourceDetection = safeText(candidate.detection) or "world_cursor_tooltip"
+        pending.sourceConfidence = safeText(candidate.confidence) or "strong"
+        pending.sourceProbe = candidate
+        return
+    end
+
+    if pending.sourceKind ~= "fishing_pool" then
+        pending.sourceName = "Open Water"
+        pending.sourceKind = "fishing_water"
+        pending.sourceDetection = "open_water_fallback"
+        pending.sourceConfidence = "fallback"
+        pending.sourceProbe = type(probe.GetLastProbe) == "function" and probe:GetLastProbe(8) or nil
+    end
+end
+
+local function resetProbe()
+    local probe = GW.FishingPoolProbe
+    if type(probe) == "table" and type(probe.Reset) == "function" then
+        probe:Reset()
+    end
+end
+
 local function arm(castGuid, spellId)
     if not isFishingSpell(spellId) then
         return false
     end
 
-    GW.FishingCapture.pending = {
+    local pending = {
         sourceName = "Open Water",
+        sourceKind = "fishing_water",
+        sourceDetection = "open_water_fallback",
+        sourceConfidence = "fallback",
         castGuid = safeText(castGuid),
         spellId = tonumber(spellId),
         spellName = spellName(spellId) or "Fishing",
@@ -83,6 +130,8 @@ local function arm(castGuid, spellId)
             and GW.GatheringTelemetry.CaptureContext("fishing") or nil,
         attemptPublished = false,
     }
+    GW.FishingCapture.pending = pending
+    applyPoolCandidate(pending, true)
     return true
 end
 
@@ -107,6 +156,7 @@ local function publishAttempt()
     local pending = GW.FishingCapture.pending
     if pendingExpired(pending) then
         GW.FishingCapture.pending = nil
+        resetProbe()
         return nil
     end
     if type(pending) ~= "table" or pending.attemptPublished
@@ -115,6 +165,7 @@ local function publishAttempt()
         return nil
     end
 
+    applyPoolCandidate(pending, true)
     local result = GW.GatheringTelemetry.PublishFishingAttempt(pending)
     if result then
         pending.attemptPublished = true
@@ -134,6 +185,7 @@ local function publishCatch()
     local pending = GW.FishingCapture.pending
     if pendingExpired(pending) then
         GW.FishingCapture.pending = nil
+        resetProbe()
         return nil
     end
     if type(pending) ~= "table" or not pending.attemptPublished or not fishingLootWindow()
@@ -142,9 +194,11 @@ local function publishCatch()
         return nil
     end
 
+    applyPoolCandidate(pending, false)
     local result = GW.GatheringTelemetry.PublishFishing(pending)
     if result then
         GW.FishingCapture.pending = nil
+        resetProbe()
     end
     return result
 end
@@ -193,6 +247,7 @@ function GW.FishingCapture:Initialize()
         if event == "UNIT_SPELLCAST_FAILED" or event == "UNIT_SPELLCAST_INTERRUPTED" then
             if unit == "player" and matchesPending(arg2, arg3) then
                 self.pending = nil
+                resetProbe()
             end
             return
         end
