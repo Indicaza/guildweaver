@@ -18,11 +18,27 @@ local function safe(fn, ...)
     return value
 end
 
-local function tooltipComplete(item)
+local function hasTableData(value)
+    return type(value) == "table" and next(value) ~= nil
+end
+
+-- A title can appear before GetItemInfo has finished loading. Do not freeze
+-- that one-line tooltip into the shared catalog: a loaded item also has the
+-- core metadata GetItemInfo returns for every item class.
+local function descriptionComplete(item)
     local lines = type(item) == "table"
         and type(item.tooltip) == "table"
         and item.tooltip.lines or nil
-    return type(lines) == "table" and #lines > 0
+    if type(lines) ~= "table" or #lines == 0 then
+        return false
+    end
+    if type(item.name) ~= "string" or item.name == "" then
+        return false
+    end
+    if item.qualityId == nil or not tonumber(item.iconFileDataId) then
+        return false
+    end
+    return hasTableData(item.itemClass) or hasTableData(item.itemSubclass)
 end
 
 local function currentGameBuild()
@@ -50,9 +66,11 @@ end
 local function requestItemData(itemId)
     local itemApi = _G and _G.C_Item or C_Item
     local request = type(itemApi) == "table" and itemApi.RequestLoadItemDataByID or nil
-    if type(request) == "function" and tonumber(itemId) then
-        pcall(request, tonumber(itemId))
+    if type(request) ~= "function" or not tonumber(itemId) then
+        return false
     end
+    local ok = pcall(request, tonumber(itemId))
+    return ok
 end
 
 local function describeOutput(output)
@@ -116,12 +134,17 @@ function GW.EconomicItemTelemetry.Publish(output)
 
     local streamKey = "item_definition:" .. itemKey
     local changed = store.SetTelemetrySnapshot(streamKey, envelope)
-    if tooltipComplete(item) then
+    if descriptionComplete(item) then
         completeItems[itemId] = true
         pendingItems[itemId] = nil
-    else
+    elseif requestItemData(itemId) then
         pendingItems[itemId] = pendingOutput(output)
-        requestItemData(itemId)
+    else
+        -- Older clients may not expose the async item loader. Keep the best
+        -- description we have and avoid rescanning it on every loot event;
+        -- Holdfast can still fill sparse lines from the structured metadata.
+        completeItems[itemId] = true
+        pendingItems[itemId] = nil
     end
 
     if not changed then
