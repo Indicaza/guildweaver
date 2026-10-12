@@ -342,12 +342,12 @@ function GW.GatheringTelemetry.ReadLoot()
 end
 
 local function observationId(snapshot, payload, capturedAt)
-    local elapsed = tonumber(safe(Globals.GetTime)) or 0
+    local elapsedTime = tonumber(safe(Globals.GetTime)) or 0
     local nonce = math.random(0, 2147483647)
     return GW.Store.Fingerprint({
         characterId = snapshot.characterId,
         capturedAt = capturedAt,
-        elapsed = elapsed,
+        elapsed = elapsedTime,
         nonce = nonce,
         source = payload.source,
         outputs = payload.outputs,
@@ -396,6 +396,25 @@ local function publishEvent(eventType, snapshot, payload, capturedAt)
     }
 end
 
+local function pendingSource(pending, sourceKind)
+    return {
+        kind = sourceKind,
+        name = cleanString(pending.sourceName),
+        guid = cleanString(pending.sourceGuid),
+        objectId = tonumber(pending.sourceObjectId),
+        npcId = tonumber(pending.sourceNpcId),
+        guidKind = cleanString(pending.sourceGuidKind),
+    }
+end
+
+local function sourceDiagnostics(pending)
+    return {
+        sourceDetection = cleanString(pending.sourceDetection),
+        sourceConfidence = cleanString(pending.sourceConfidence),
+        worldCursor = type(pending.sourceProbe) == "table" and pending.sourceProbe or nil,
+    }
+end
+
 local function publishGathering(pending, discipline, sourceKind, options)
     pending = type(pending) == "table" and pending or {}
     options = type(options) == "table" and options or {}
@@ -410,10 +429,7 @@ local function publishGathering(pending, discipline, sourceKind, options)
     end
 
     local useLootSource = options.useLootSource ~= false
-    local source = {
-        kind = sourceKind,
-        name = cleanString(pending.sourceName),
-    }
+    local source = pendingSource(pending, sourceKind)
     if useLootSource then
         source.guid = loot.sourceGuid
         source.objectId = loot.sourceObjectId
@@ -422,6 +438,7 @@ local function publishGathering(pending, discipline, sourceKind, options)
         source.guids = #loot.sourceGuids > 1 and loot.sourceGuids or nil
     end
 
+    local diagnostics = sourceDiagnostics(pending)
     local payload = {
         schemaVersion = 1,
         activity = cleanString(options.activity) or "harvest",
@@ -436,6 +453,9 @@ local function publishGathering(pending, discipline, sourceKind, options)
             rawSourceObjectId = useLootSource and nil or loot.sourceObjectId,
             rawSourceNpcId = useLootSource and nil or loot.sourceNpcId,
             rawSourceKind = useLootSource and nil or loot.sourceKind,
+            sourceDetection = diagnostics.sourceDetection,
+            sourceConfidence = diagnostics.sourceConfidence,
+            worldCursor = diagnostics.worldCursor,
         },
     }
 
@@ -450,19 +470,20 @@ local function publishAttempt(pending, discipline, sourceKind, activity)
     end
 
     local capturedAt = serverTime()
+    local diagnostics = sourceDiagnostics(pending)
     local payload = {
         schemaVersion = 1,
         activity = activity,
         discipline = discipline,
-        source = {
-            kind = sourceKind,
-            name = cleanString(pending.sourceName),
-        },
+        source = pendingSource(pending, sourceKind),
         outputs = {},
         context = contextPayload(pending, discipline),
         capture = {
             accepted = true,
             acceptedAt = capturedAt,
+            sourceDetection = diagnostics.sourceDetection,
+            sourceConfidence = diagnostics.sourceConfidence,
+            worldCursor = diagnostics.worldCursor,
         },
     }
 
@@ -482,11 +503,13 @@ function GW.GatheringTelemetry.PublishMining(pending)
 end
 
 function GW.GatheringTelemetry.PublishFishingAttempt(pending)
-    return publishAttempt(pending, "fishing", "fishing_water", "cast")
+    local sourceKind = type(pending) == "table" and pending.sourceKind or "fishing_water"
+    return publishAttempt(pending, "fishing", sourceKind, "cast")
 end
 
 function GW.GatheringTelemetry.PublishFishing(pending)
-    return publishGathering(pending, "fishing", "fishing_water", {
+    local sourceKind = type(pending) == "table" and pending.sourceKind or "fishing_water"
+    return publishGathering(pending, "fishing", sourceKind, {
         activity = "catch",
         useLootSource = false,
     })
