@@ -63,7 +63,7 @@ _G.GameTooltip = { scripts = {} }
 function _G.GameTooltip:HookScript(kind, fn)
     self.scripts[kind] = fn
 end
-function _G.GameTooltip:GetLeftLine()
+_G.GameTooltip.GetLeftLine = function()
     return { GetText = function() return currentTooltipText end }
 end
 CreateFrame = function()
@@ -138,7 +138,6 @@ local function recordForCast(records, eventType, castGuid)
     return nil
 end
 
--- Ordinary open-water fishing remains the safe fallback.
 eventFrame.onEvent(eventFrame, "UNIT_SPELLCAST_SENT", "player", nil, "Cast-Fish-1", 7620)
 truthy(GW.FishingCapture.pending, "pending fishing cast")
 equal(next(GuildweaverDB.sync.outbound.telemetry), nil, "sent cast is not yet an accepted attempt")
@@ -190,8 +189,6 @@ eventFrame.onEvent(eventFrame, "LOOT_READY")
 records = recordsByType()
 equal(#(records.gathering_loot or {}), 1, "duplicate fishing loot event suppressed")
 
--- A named school under the world cursor becomes the semantic source for both
--- the cast and the catch. The bobber remains debug-only raw source data.
 currentCursorData = { type = 4, guid = "GameObject-0-1-2-3-180682-000001" }
 currentTooltipText = "Oily Blackmouth School"
 now = 6120
@@ -216,7 +213,6 @@ equal(poolCatch.source.name, "Oily Blackmouth School", "school catch source name
 equal(poolCatch.source.objectId, 180682, "school catch object id")
 equal(poolCatch.capture.rawSourceObjectId, 35591, "school still keeps raw bobber id")
 
--- A harmless world object is diagnostic evidence, never a fishing pool.
 currentCursorData = { type = 4, guid = "GameObject-0-1-2-3-12345-000001" }
 currentTooltipText = "Mailbox"
 now = 6130
@@ -230,8 +226,6 @@ equal(objectAttempt.source.name, "Open Water", "ordinary object keeps fallback")
 equal(objectAttempt.capture.worldCursor.name, "Mailbox", "ordinary object probe retained")
 equal(objectAttempt.capture.worldCursor.looksLikePool, false, "ordinary object classified safely")
 
--- If a pool only becomes visible after the cast was accepted, preserve the
--- cast denominator as Open Water but promote the catch before loot is read.
 currentCursorData = nil
 currentTooltipText = nil
 now = 6140
@@ -254,8 +248,6 @@ equal(lateCatch.source.kind, "fishing_pool", "late-detected school promotes catc
 equal(lateCatch.source.name, "Firefin Snapper School", "late-detected school name")
 equal(lateCatch.source.objectId, 180683, "late-detected school object id")
 
--- Forever can mark tooltip text secret. A real GameObject identity still gives
--- us a short-lived weak pool candidate without serializing the secret value.
 currentCursorData = { type = 4, guid = "GameObject-0-1-2-3-180684-000001" }
 currentTooltipText = secretPoolName
 now = 6150
@@ -281,7 +273,6 @@ local secretCatch = recordForCast(records, "gathering_loot", "Cast-Secret-1")
 equal(secretCatch.source.kind, "fishing_pool", "restricted pool identity survives to catch")
 equal(secretCatch.source.objectId, 180684, "restricted pool object id survives")
 
--- No-catch casts remain attempts only.
 now = 6170
 elapsed = 190
 eventFrame.onEvent(eventFrame, "UNIT_SPELLCAST_SENT", "player", nil, "Cast-Fish-2", 7620)
