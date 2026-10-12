@@ -18,27 +18,35 @@ local function safe(fn, ...)
     return value
 end
 
-local function hasTableData(value)
-    return type(value) == "table" and next(value) ~= nil
-end
-
--- A title can appear before GetItemInfo has finished loading. Do not freeze
--- that one-line tooltip into the shared catalog: a loaded item also has the
--- core metadata GetItemInfo returns for every item class.
 local function descriptionComplete(item)
-    local lines = type(item) == "table"
-        and type(item.tooltip) == "table"
-        and item.tooltip.lines or nil
-    if type(lines) ~= "table" or #lines == 0 then
+    if type(item) ~= "table" then
         return false
     end
+
+    local itemTelemetry = GW.ItemTelemetry
+    local tooltip = item.tooltip
+    local fullTooltip = type(itemTelemetry) == "table"
+        and type(itemTelemetry.IsFullTooltip) == "function"
+        and safe(itemTelemetry.IsFullTooltip, tooltip)
+    if not fullTooltip then
+        fullTooltip = type(tooltip) == "table"
+            and tooltip.complete == true
+            and tooltip.rendered == true
+            and tooltip.source == "GameTooltip"
+            and type(tooltip.lines) == "table"
+            and #tooltip.lines > 0
+    end
+    if not fullTooltip then
+        return false
+    end
+
     if type(item.name) ~= "string" or item.name == "" then
         return false
     end
     if item.qualityId == nil or not tonumber(item.iconFileDataId) then
         return false
     end
-    return hasTableData(item.itemClass) or hasTableData(item.itemSubclass)
+    return true
 end
 
 local function currentGameBuild()
@@ -112,9 +120,22 @@ function GW.EconomicItemTelemetry.Publish(output)
     end
 
     local itemId = tonumber(item.itemId)
+    if not itemId then
+        return nil
+    end
+
+    -- A canonical item_definition means we have the full client-rendered
+    -- Blizzard tooltip. Sparse C_TooltipInfo data must never poison the shared
+    -- catalog: request the item and wait for a later rendered scan instead.
+    if not descriptionComplete(item) then
+        pendingItems[itemId] = pendingOutput(output)
+        requestItemData(itemId)
+        return nil
+    end
+
     local envelopeModule = GW.TelemetryEnvelope
     local store = GW.Store
-    if not itemId or type(envelopeModule) ~= "table" or type(envelopeModule.Build) ~= "function"
+    if type(envelopeModule) ~= "table" or type(envelopeModule.Build) ~= "function"
         or type(store) ~= "table" or type(store.SetTelemetrySnapshot) ~= "function" then
         return nil
     end
@@ -134,18 +155,8 @@ function GW.EconomicItemTelemetry.Publish(output)
 
     local streamKey = "item_definition:" .. itemKey
     local changed = store.SetTelemetrySnapshot(streamKey, envelope)
-    if descriptionComplete(item) then
-        completeItems[itemId] = true
-        pendingItems[itemId] = nil
-    elseif requestItemData(itemId) then
-        pendingItems[itemId] = pendingOutput(output)
-    else
-        -- Older clients may not expose the async item loader. Keep the best
-        -- description we have and avoid rescanning it on every loot event;
-        -- Holdfast can still fill sparse lines from the structured metadata.
-        completeItems[itemId] = true
-        pendingItems[itemId] = nil
-    end
+    completeItems[itemId] = true
+    pendingItems[itemId] = nil
 
     if not changed then
         return nil
@@ -178,9 +189,9 @@ if type(originalReadLoot) == "function" then
     end
 end
 
--- Equipment has the richest per-item client data we collect. Feed it into the
--- same canonical item catalog so every Holdfast surface can converge on one
--- exact Forever description instead of inventing its own tooltip shape.
+-- Equipment has the richest per-instance tooltip because ItemTelemetry scans
+-- the actual inventory slot. Feed that authoritative render into the shared
+-- catalog so Farming, Bags, Professions and Armory converge on the same text.
 local originalSetCharacterSnapshot = type(GW.Store) == "table" and GW.Store.SetCharacterSnapshot or nil
 if type(originalSetCharacterSnapshot) == "function" then
     GW.Store.SetCharacterSnapshot = function(characterKey, snapshot)
@@ -194,9 +205,6 @@ if type(originalSetCharacterSnapshot) == "function" then
     end
 end
 
--- GetItemInfo/C_TooltipInfo can legitimately be sparse until the client has
--- loaded an item. Ask the client to load it and republish the same state when
--- Blizzard signals completion; fingerprinting keeps unchanged retries free.
 if type(CreateFrame) == "function" then
     local frame = CreateFrame("Frame")
     if frame and type(frame.RegisterEvent) == "function" and type(frame.SetScript) == "function" then
