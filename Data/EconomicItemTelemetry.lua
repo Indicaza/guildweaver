@@ -3,7 +3,9 @@ local _, GW = ...
 GW.EconomicItemTelemetry = GW.EconomicItemTelemetry or {}
 
 local completeItems = GW.EconomicItemTelemetry.completeItems or {}
+local pendingItems = GW.EconomicItemTelemetry.pendingItems or {}
 GW.EconomicItemTelemetry.completeItems = completeItems
+GW.EconomicItemTelemetry.pendingItems = pendingItems
 
 local function safe(fn, ...)
     if type(fn) ~= "function" then
@@ -30,6 +32,27 @@ local function currentGameBuild()
     end
     local snapshot = safe(character.GetCurrentSnapshot)
     return type(snapshot) == "table" and snapshot.gameBuild or nil
+end
+
+local function pendingOutput(output)
+    if type(output) ~= "table" then
+        return nil
+    end
+    return {
+        itemId = tonumber(output.itemId),
+        itemLink = output.itemLink,
+        name = output.name,
+        qualityId = tonumber(output.qualityId),
+        iconFileDataId = tonumber(output.iconFileDataId),
+    }
+end
+
+local function requestItemData(itemId)
+    local itemApi = _G and _G.C_Item or C_Item
+    local request = type(itemApi) == "table" and itemApi.RequestLoadItemDataByID or nil
+    if type(request) == "function" and tonumber(itemId) then
+        pcall(request, tonumber(itemId))
+    end
 end
 
 local function describeOutput(output)
@@ -95,6 +118,10 @@ function GW.EconomicItemTelemetry.Publish(output)
     local changed = store.SetTelemetrySnapshot(streamKey, envelope)
     if tooltipComplete(item) then
         completeItems[itemId] = true
+        pendingItems[itemId] = nil
+    else
+        pendingItems[itemId] = pendingOutput(output)
+        requestItemData(itemId)
     end
 
     if not changed then
@@ -104,6 +131,15 @@ function GW.EconomicItemTelemetry.Publish(output)
         streamKey = streamKey,
         envelope = envelope,
     }
+end
+
+function GW.EconomicItemTelemetry.Retry(itemId)
+    local id = tonumber(itemId)
+    local output = id and pendingItems[id] or nil
+    if not output then
+        return nil
+    end
+    return GW.EconomicItemTelemetry.Publish(output)
 end
 
 local originalReadLoot = type(GW.GatheringTelemetry) == "table" and GW.GatheringTelemetry.ReadLoot or nil
@@ -116,5 +152,40 @@ if type(originalReadLoot) == "function" then
             end
         end
         return loot
+    end
+end
+
+-- Equipment has the richest per-item client data we collect. Feed it into the
+-- same canonical item catalog so every Holdfast surface can converge on one
+-- exact Forever description instead of inventing its own tooltip shape.
+local originalSetCharacterSnapshot = type(GW.Store) == "table" and GW.Store.SetCharacterSnapshot or nil
+if type(originalSetCharacterSnapshot) == "function" then
+    GW.Store.SetCharacterSnapshot = function(characterKey, snapshot)
+        local result = originalSetCharacterSnapshot(characterKey, snapshot)
+        if type(snapshot) == "table" and type(snapshot.equipment) == "table" then
+            for _, item in ipairs(snapshot.equipment) do
+                pcall(GW.EconomicItemTelemetry.Publish, item)
+            end
+        end
+        return result
+    end
+end
+
+-- GetItemInfo/C_TooltipInfo can legitimately be sparse until the client has
+-- loaded an item. Ask the client to load it and republish the same state when
+-- Blizzard signals completion; fingerprinting keeps unchanged retries free.
+if type(CreateFrame) == "function" then
+    local frame = CreateFrame("Frame")
+    if frame and type(frame.RegisterEvent) == "function" and type(frame.SetScript) == "function" then
+        pcall(frame.RegisterEvent, frame, "GET_ITEM_INFO_RECEIVED")
+        pcall(frame.RegisterEvent, frame, "ITEM_DATA_LOAD_RESULT")
+        frame:SetScript("OnEvent", function(_, _, itemId, success)
+            if success == false then
+                return
+            end
+            if pendingItems[tonumber(itemId)] then
+                pcall(GW.EconomicItemTelemetry.Retry, itemId)
+            end
+        end)
     end
 end
