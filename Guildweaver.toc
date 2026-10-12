@@ -41,6 +41,7 @@ Systems/InventoryCapture.lua
 Systems/HerbalismCapture.lua
 Systems/SkinningCapture.lua
 Systems/MiningCapture.lua
+Systems/FishingPoolProbe.lua
 Systems/FishingCapture.lua
 Systems/Quests.lua
 Telemetry/Compatibility.lua
