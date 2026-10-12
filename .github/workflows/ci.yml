@@ -25,7 +25,18 @@ jobs:
           find . -name '*.lua' -print0 | xargs -0 -n1 luac5.1 -p
 
       - name: Run Luacheck
-        run: luacheck .
+        shell: bash
+        run: |
+          set +e
+          output="$(luacheck . 2>&1)"
+          status=$?
+          printf '%s\n' "$output"
+          {
+            echo '```text'
+            printf '%s\n' "$output"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
 
       - name: Run addon tests
         shell: bash
