@@ -24,6 +24,7 @@ Data/CharacterTelemetryEnrichment.lua
 Data/TalentArtTelemetry.lua
 Data/MockData.lua
 Data/TelemetryEnvelope.lua
+Data/EconomicItemTelemetry.lua
 Telemetry/Domain.lua
 Telemetry/Domains/Character.lua
 Telemetry/Domains/Stats.lua
