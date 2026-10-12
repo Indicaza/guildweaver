@@ -13,6 +13,7 @@ end
 GuildweaverDB = nil
 GetServerTime = function() return 1791322510 end
 GetRealmName = function() return "Classic Beta PvE 2" end
+UIParent = {}
 
 rawset(_G, "GetItemStats", function()
     return {
@@ -36,18 +37,77 @@ GetItemInfo = function(itemLink)
         "INVTYPE_HEAD", 132767, 12345, 4, 4, 1, 0, 77, false
 end
 
+-- Forever may return a valid-looking but incomplete C_TooltipInfo payload.
+-- The hidden rendered GameTooltip below is deliberately richer and must win.
 rawset(_G, "C_TooltipInfo", {
     GetHyperlink = function()
         return {
             lines = {
                 { leftText = "Golem Skull Helm", leftColor = { r = 0, g = 0.44, b = 0.87, a = 1 } },
-                { leftText = "Binds when picked up" },
-                { leftText = "+8 Stamina" },
-                { leftText = "Owned by Player-4620-014B5E8E" },
+                { leftText = "Plate" },
+                { leftText = "Requires Level 20" },
             },
         }
     end,
 })
+
+local rendered = {
+    { left = "Golem Skull Helm", color = { 0, 0.44, 0.87, 1 } },
+    { left = "Binds when picked up", color = { 1, 1, 1, 1 } },
+    { left = "Head", right = "Plate", color = { 1, 1, 1, 1 } },
+    { left = "120 Armor", color = { 1, 1, 1, 1 } },
+    { left = "+5 Strength", color = { 1, 1, 1, 1 } },
+    { left = "+8 Stamina", color = { 1, 1, 1, 1 } },
+    false,
+    { left = "Durability 42 / 50", color = { 1, 1, 1, 1 } },
+    { left = "Requires Level 20", color = { 1, 1, 1, 1 } },
+    { left = "Equip: Helm Effect", color = { 0, 1, 0, 1 } },
+    { left = "Owned by Player-4620-014B5E8E", color = { 1, 1, 1, 1 } },
+}
+
+local scannerMethod = nil
+local scanner = {
+    SetOwner = function() end,
+    ClearLines = function() end,
+    SetInventoryItem = function(_, unit, slotId)
+        equal(unit, "player", "inventory tooltip unit")
+        equal(slotId, 5, "inventory tooltip slot")
+        scannerMethod = "SetInventoryItem"
+    end,
+    SetHyperlink = function()
+        scannerMethod = "SetHyperlink"
+    end,
+    NumLines = function()
+        return #rendered
+    end,
+    Hide = function() end,
+}
+
+CreateFrame = function(frameType, name)
+    equal(frameType, "GameTooltip", "scanner frame type")
+    equal(name, "GuildweaverItemScanTooltip", "scanner frame name")
+    return scanner
+end
+
+local function fontString(index, side)
+    return {
+        GetText = function()
+            local line = rendered[index]
+            if not line then return nil end
+            return line[side]
+        end,
+        GetTextColor = function()
+            local line = rendered[index]
+            local color = line and line.color or { 1, 1, 1, 1 }
+            return color[1], color[2], color[3], color[4]
+        end,
+    }
+end
+
+for index = 1, #rendered do
+    rawset(_G, "GuildweaverItemScanTooltipTextLeft" .. index, fontString(index, "left"))
+    rawset(_G, "GuildweaverItemScanTooltipTextRight" .. index, fontString(index, "right"))
+end
 
 local addon = { version = "test" }
 local function loadAddonFile(path)
@@ -105,12 +165,29 @@ equal(item.durability.current, 42, "durability current")
 equal(item.durability.max, 50, "durability max")
 equal(item.spell.name, "Helm Effect", "item spell name")
 equal(item.spell.id, 9001, "item spell id")
-equal(item.tooltip.source, "C_TooltipInfo", "modern tooltip source")
-equal(#item.tooltip.lines, 4, "tooltip line count")
+equal(scannerMethod, "SetInventoryItem", "equipment scans actual inventory slot")
+equal(item.tooltip.source, "GameTooltip", "rendered tooltip source")
+equal(item.tooltip.method, "SetInventoryItem", "rendered tooltip method")
+equal(item.tooltip.rendered, true, "rendered tooltip marker")
+equal(item.tooltip.complete, true, "full tooltip marker")
+equal(#item.tooltip.lines, #rendered, "full rendered line count")
 equal(item.tooltip.lines[2].left, "Binds when picked up", "tooltip binding line")
+equal(item.tooltip.lines[4].left, "120 Armor", "armor line retained")
+equal(item.tooltip.lines[7].blank, true, "blank section line retained")
+equal(item.tooltip.lines[8].left, "Durability 42 / 50", "durability line retained")
+equal(item.tooltip.lines[10].left, "Equip: Helm Effect", "effect line retained")
 truthy(item.tooltip.lines[1].leftColor, "tooltip color retained")
-truthy(item.tooltip.lines[4].left:find("Player%-REDACTED"), "tooltip guid scrubbed")
-equal(item.tooltip.lines[4].left:find("014B5E8E"), nil, "raw player guid removed")
+truthy(item.tooltip.lines[11].left:find("Player%-REDACTED"), "tooltip guid scrubbed")
+equal(item.tooltip.lines[11].left:find("014B5E8E"), nil, "raw player guid removed")
+equal(addon.ItemTelemetry.IsFullTooltip(item.tooltip), true, "full tooltip recognized")
+
+-- Generic item descriptions also prefer the rendered GameTooltip over the
+-- incomplete structured API.
+scannerMethod = nil
+local generic = addon.ItemTelemetry.Describe(item.itemLink, { details = true })
+equal(scannerMethod, "SetHyperlink", "generic item scans rendered hyperlink")
+equal(generic.tooltip.source, "GameTooltip", "generic rendered source")
+equal(generic.tooltip.lines[4].left, "120 Armor", "generic tooltip remains full")
 
 -- Items the client has not cached yet: GetItemInfo returns nothing, but the
 -- icon still comes from the instant (static) item data.
