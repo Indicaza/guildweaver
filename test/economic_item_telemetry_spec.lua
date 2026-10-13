@@ -43,11 +43,11 @@ end
 local lichenLink = "|cff1eff00|Hitem:249399::::::::30:::::::|h[Frilled Lichen]|h|r"
 local peacebloomLink = "|cffffffff|Hitem:2447::::::::30:::::::|h[Peacebloom]|h|r"
 
-GetNumLootItems = function() return 1 end
-GetLootSlotLink = function(slot)
+rawset(_G, "GetNumLootItems", function() return 1 end)
+rawset(_G, "GetLootSlotLink", function(slot)
     equal(slot, 1, "loot slot lookup")
     return lichenLink
-end
+end)
 
 local addon = {
     version = "test",
