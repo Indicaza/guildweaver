@@ -1,5 +1,7 @@
 local _, GW = ...
 
+local Globals = _G or {}
+
 GW.EconomicItemTelemetry = GW.EconomicItemTelemetry or {}
 
 local completeItems = GW.EconomicItemTelemetry.completeItems or {}
@@ -223,13 +225,13 @@ end
 
 local function currentLootSlots()
     local slots = {}
-    if type(GetNumLootItems) ~= "function" or type(GetLootSlotLink) ~= "function" then
+    if type(Globals.GetNumLootItems) ~= "function" or type(Globals.GetLootSlotLink) ~= "function" then
         return slots
     end
 
-    local count = tonumber(safe(GetNumLootItems)) or 0
+    local count = tonumber(safe(Globals.GetNumLootItems)) or 0
     for slot = 1, count do
-        local link = safe(GetLootSlotLink, slot)
+        local link = safe(Globals.GetLootSlotLink, slot)
         local itemId = itemIdFromLink(link)
         if itemId and not slots[itemId] then
             slots[itemId] = slot
