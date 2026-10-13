@@ -9,7 +9,6 @@ local published = {}
 local requested = {}
 local registered = {}
 local onEvent = nil
-local itemLoaded = false
 local snapshots = 0
 
 GetServerTime = function() return 1791769800 end
@@ -41,20 +40,13 @@ local function fullTooltip(lines, method)
     }
 end
 
-local function completeLichen()
-    return {
-        itemId = 249399,
-        name = "Frilled Lichen",
-        qualityId = 2,
-        iconFileDataId = 134193,
-        sellPrice = 125,
-        itemClass = { id = 7, name = "Trade Goods" },
-        itemSubclass = { id = 9, name = "Herb" },
-        tooltip = fullTooltip({
-            { left = "Frilled Lichen", leftColor = { r = 0.12, g = 1, b = 0 } },
-            { left = "Crafting Reagent" },
-        }),
-    }
+local lichenLink = "|cff1eff00|Hitem:249399::::::::30:::::::|h[Frilled Lichen]|h|r"
+local peacebloomLink = "|cffffffff|Hitem:2447::::::::30:::::::|h[Peacebloom]|h|r"
+
+GetNumLootItems = function() return 1 end
+GetLootSlotLink = function(slot)
+    equal(slot, 1, "loot slot lookup")
+    return lichenLink
 end
 
 local addon = {
@@ -94,16 +86,29 @@ local addon = {
                     }, "SetInventoryItem"),
                 }
             end
-
-            equal(item, "|cff1eff00|Hitem:249399::::::::30:::::::|h[Frilled Lichen]|h|r", "uses exact loot link")
-            if itemLoaded then
-                return completeLichen()
+            if text:find("2447", 1, true) then
+                return {
+                    itemId = 2447,
+                    itemLink = peacebloomLink,
+                    name = "Peacebloom",
+                    qualityId = 1,
+                    iconFileDataId = 134182,
+                    sellPrice = 10,
+                    itemClass = { id = 7, name = "Trade Goods" },
+                    itemSubclass = { id = 9, name = "Herb" },
+                }
             end
+
+            equal(item, lichenLink, "uses exact loot link")
             return {
                 itemId = 249399,
+                itemLink = lichenLink,
                 name = "Frilled Lichen",
                 qualityId = 2,
                 iconFileDataId = 134193,
+                sellPrice = 125,
+                itemClass = { id = 7, name = "Trade Goods" },
+                itemSubclass = { id = 9, name = "Herb" },
                 tooltip = {
                     source = "C_TooltipInfo",
                     rendered = false,
@@ -113,6 +118,25 @@ local addon = {
                     },
                 },
             }
+        end,
+        LootItemTooltip = function(slot, itemLink)
+            equal(slot, 1, "captures live loot slot")
+            equal(itemLink, lichenLink, "loot slot keeps exact link")
+            return fullTooltip({
+                { left = "Frilled Lichen", leftColor = { r = 0.12, g = 1, b = 0 } },
+                { left = "Crafting Reagent" },
+                { left = "Sell Price: 1s 25c" },
+            }, "SetLootItem")
+        end,
+        BagItemTooltip = function(bagId, slot, itemLink)
+            equal(bagId, 0, "captures backpack item")
+            equal(slot, 3, "captures concrete bag slot")
+            equal(itemLink, peacebloomLink, "bag slot keeps exact link")
+            return fullTooltip({
+                { left = "Peacebloom" },
+                { left = "Herb" },
+                { left = "Sell Price: 10c" },
+            }, "SetBagItem")
         end,
     },
     TelemetryEnvelope = {
@@ -144,7 +168,7 @@ local addon = {
                 outputs = {
                     {
                         itemId = 249399,
-                        itemLink = "|cff1eff00|Hitem:249399::::::::30:::::::|h[Frilled Lichen]|h|r",
+                        itemLink = lichenLink,
                         name = "Frilled Lichen",
                         quantity = 1,
                         qualityId = 2,
@@ -154,6 +178,30 @@ local addon = {
             }
         end,
     },
+    InventoryTelemetry = {
+        Refresh = function()
+            return {
+                items = {
+                    {
+                        key = "item:2447",
+                        itemId = 2447,
+                        itemLink = peacebloomLink,
+                        name = "Peacebloom",
+                        qualityId = 1,
+                        iconFileDataId = 134182,
+                    },
+                },
+                containers = {
+                    {
+                        bagId = 0,
+                        slots = {
+                            { slot = 3, itemKey = "item:2447", itemId = 2447, count = 4 },
+                        },
+                    },
+                },
+            }, false
+        end,
+    },
 }
 
 local chunk = assert(loadfile("Data/EconomicItemTelemetry.lua"))
@@ -161,30 +209,37 @@ chunk("Guildweaver", addon)
 
 equal(registered.GET_ITEM_INFO_RECEIVED, true, "registers item-info event")
 equal(registered.ITEM_DATA_LOAD_RESULT, true, "registers item-data event")
+equal(type(onEvent), "function", "load event callback installed")
 
+-- Gathering definitions are captured immediately from the live loot slot. The
+-- generic description may still be provisional; SetLootItem is authoritative.
 local first = addon.GatheringTelemetry.ReadLoot()
 equal(first.outputs[1].quantity, 1, "loot remains unchanged")
-equal(described, 1, "sparse item described")
-equal(#published, 0, "provisional tooltip never enters canonical catalog")
-equal(#requested, 1, "provisional definition requests Blizzard item data")
-equal(requested[1], 249399, "requests the observed item")
-
-equal(type(onEvent), "function", "load event callback installed")
-itemLoaded = true
-onEvent(nil, "GET_ITEM_INFO_RECEIVED", 249399, true)
-equal(described, 2, "loaded item retried once")
-equal(#published, 1, "full rendered definition published after load")
-equal(published[1].streamKey, "item_definition:item:249399", "stable item stream")
+equal(described, 1, "loot metadata described once")
+equal(#requested, 0, "live loot slot needs no item-data retry")
+equal(#published, 1, "live loot tooltip publishes immediately")
+equal(published[1].streamKey, "item_definition:item:249399", "stable loot item stream")
 equal(published[1].envelope.eventType, "item_definition", "event type")
 equal(published[1].envelope.characterId, nil, "item definition is not character scoped")
 equal(published[1].envelope.payload.itemKey, "item:249399", "item key")
-equal(published[1].envelope.payload.item.sellPrice, 125, "loaded metadata retained")
-equal(published[1].envelope.payload.item.tooltip.complete, true, "canonical tooltip is explicitly complete")
-equal(published[1].envelope.payload.item.tooltip.lines[2].left, "Crafting Reagent", "loaded tooltip lines")
+equal(published[1].envelope.payload.item.sellPrice, 125, "metadata retained")
+equal(published[1].envelope.payload.item.tooltip.method, "SetLootItem", "canonical tooltip comes from loot slot")
+equal(published[1].envelope.payload.item.tooltip.lines[2].left, "Crafting Reagent", "full loot tooltip lines")
 
 addon.GatheringTelemetry.ReadLoot()
-equal(described, 2, "complete definition cached for the session")
-equal(#published, 1, "complete definition is not republished on every gather")
+equal(described, 1, "complete loot definition cached for the session")
+equal(#published, 1, "complete loot definition is not republished on every gather")
+
+-- Carried items self-heal old Farming rows on login/bag refresh even if they
+-- were gathered before this capture path existed.
+local inventory, pending = addon.InventoryTelemetry.Refresh("classic beta pve 2:armorytest")
+equal(pending, false, "inventory pending flag preserved")
+equal(inventory.items[1].name, "Peacebloom", "inventory payload preserved")
+equal(described, 2, "bag item metadata described")
+equal(#published, 2, "bag slot publishes missing canonical definition")
+equal(published[2].streamKey, "item_definition:item:2447", "bag uses canonical item stream")
+equal(published[2].envelope.payload.item.tooltip.method, "SetBagItem", "bag definition uses live slot tooltip")
+equal(published[2].envelope.payload.item.tooltip.lines[2].left, "Herb", "bag tooltip lines retained")
 
 local stored = addon.Store.SetCharacterSnapshot("classic beta pve 2:armorytest", {
     equipment = {
@@ -200,10 +255,10 @@ local stored = addon.Store.SetCharacterSnapshot("classic beta pve 2:armorytest",
 equal(stored, "stored", "character snapshot behavior preserved")
 equal(snapshots, 1, "character snapshot stored once")
 equal(described, 3, "equipment feeds the shared item catalog")
-equal(#published, 2, "full equipment item definition published")
-equal(published[2].streamKey, "item_definition:item:11746", "equipment uses canonical item stream")
-equal(published[2].envelope.payload.item.itemLevel, 35, "equipment definition keeps client metadata")
-equal(published[2].envelope.payload.item.tooltip.method, "SetInventoryItem", "equipment keeps slot-rendered tooltip")
-equal(published[2].envelope.payload.item.tooltip.lines[3].left, "120 Armor", "equipment catalog retains full armor line")
+equal(#published, 3, "full equipment item definition published")
+equal(published[3].streamKey, "item_definition:item:11746", "equipment uses canonical item stream")
+equal(published[3].envelope.payload.item.itemLevel, 35, "equipment definition keeps client metadata")
+equal(published[3].envelope.payload.item.tooltip.method, "SetInventoryItem", "equipment keeps slot-rendered tooltip")
+equal(published[3].envelope.payload.item.tooltip.lines[3].left, "120 Armor", "equipment catalog retains full armor line")
 
 print("economic item telemetry spec passed")
