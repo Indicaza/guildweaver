@@ -244,6 +244,19 @@ local function collectBagTooltip(bagId, slot, itemLink)
     return tooltip
 end
 
+-- Loot windows are the richest and most reliable place to describe freshly
+-- gathered materials. Capture the actual slot before auto-loot closes it;
+-- hyperlink scanning afterwards may be incomplete forever on Forever.
+local function collectLootTooltip(slot, itemLink)
+    if tonumber(slot) then
+        local tooltip = collectLegacyTooltip("SetLootItem", tonumber(slot))
+        if tooltip then
+            return tooltip
+        end
+    end
+    return collectTooltip(itemLink)
+end
+
 local function collectStats(itemLink)
     local getItemStats = Globals.GetItemStats
     if type(getItemStats) ~= "function" then
@@ -413,8 +426,15 @@ GW.ItemTelemetry.IsFullTooltip = function(tooltip)
 end
 
 function GW.ItemTelemetry.BagItemTooltip(bagId, slot, itemLink)
-    if not bagId or not slot then
+    if bagId == nil or not slot then
         return nil
     end
     return collectBagTooltip(bagId, slot, itemLink)
+end
+
+function GW.ItemTelemetry.LootItemTooltip(slot, itemLink)
+    if not slot then
+        return nil
+    end
+    return collectLootTooltip(slot, itemLink)
 end
