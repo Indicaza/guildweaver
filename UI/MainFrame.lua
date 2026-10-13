@@ -34,7 +34,32 @@ function GW.MainFrame:Initialize()
     table.insert(UISpecialFrames, frame:GetName())
 
     self.frame = frame
+    local farmButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+    farmButton:SetSize(130, 24)
+    farmButton:SetPoint("TOPLEFT", frame, "TOPLEFT", 14, -34)
+    farmButton:SetScript("OnClick", function()
+        local context = GW.FarmingSessions.Context()
+        if context and context.mode == "manual" then
+            GW.FarmingSessions.Stop()
+            GW.Print("Farming run saved. /gw sync sends it now.")
+        elseif GW.FarmingSessions.Start() then
+            GW.Print("Farming timer started. Travel and waiting count.")
+        else
+            GW.Print("Character data is not ready yet.")
+        end
+        self:RefreshFarmingTimer()
+    end)
+    self.farmButton = farmButton
+    self:RefreshFarmingTimer()
     GW.QuestLog:Initialize(frame)
+end
+
+function GW.MainFrame:RefreshFarmingTimer()
+    if not self.farmButton then
+        return
+    end
+    local context = GW.FarmingSessions.Context()
+    self.farmButton:SetText(context and context.mode == "manual" and "Stop farming" or "Start farming")
 end
 
 function GW.MainFrame:Toggle()

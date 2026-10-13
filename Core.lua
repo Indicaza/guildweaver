@@ -89,6 +89,25 @@ SlashCmdList.GUILDWEAVER = function(message)
         return
     end
 
+    if command == "farm start" then
+        GW.Print(GW.FarmingSessions.Start() and "Farming timer started. /gw farm stop ends the run. Travel and waiting count."
+            or "Timer already running, or character data is not ready.")
+        return
+    end
+
+    if command == "farm stop" then
+        local result = GW.FarmingSessions.Stop()
+        GW.Print(result and "Farming run saved. Use /gw sync to send it now." or "No farming timer is running.")
+        return
+    end
+
+    if command == "farm" then
+        local context = GW.FarmingSessions.Context()
+        GW.Print(context and "Farming run: " .. context.mode .. ". /gw farm stop ends it."
+            or "Automatic farming estimates are enabled. /gw farm start begins a measured run.")
+        return
+    end
+
     if command == "snapshot" then
         local snapshot = GW.Character.Capture("SLASH_COMMAND")
 
@@ -154,6 +173,7 @@ SlashCmdList.GUILDWEAVER = function(message)
     end
 
     if command == "help" then
+        GW.Print("/gw farm start and /gw farm stop measure a farming run. /gw farm shows its status.")
         GW.Print("/gw opens Guildweaver. Telemetry capture is automatic at session start, during play, and logout. /gw capture forces a checkpoint and reload for immediate bridge sync. /gw snapshot captures a diagnostic snapshot. /gw telemetry shows captured telemetry streams. /gw inventory rescans your bags and shows the inventory revision. /gw version shows the addon version. /gw reset resets the window position.")
         return
     end
