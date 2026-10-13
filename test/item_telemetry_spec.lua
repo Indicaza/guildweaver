@@ -77,6 +77,10 @@ local scanner = {
     SetHyperlink = function()
         scannerMethod = "SetHyperlink"
     end,
+    SetLootItem = function(_, slot)
+        equal(slot, 2, "loot tooltip slot")
+        scannerMethod = "SetLootItem"
+    end,
     NumLines = function()
         return #rendered
     end,
@@ -188,6 +192,16 @@ local generic = addon.ItemTelemetry.Describe(item.itemLink, { details = true })
 equal(scannerMethod, "SetHyperlink", "generic item scans rendered hyperlink")
 equal(generic.tooltip.source, "GameTooltip", "generic rendered source")
 equal(generic.tooltip.lines[4].left, "120 Armor", "generic tooltip remains full")
+
+-- Fresh gathering loot must be captured from the actual loot slot while the
+-- window is still open, not reconstructed later from a hyperlink.
+scannerMethod = nil
+local lootTooltip = addon.ItemTelemetry.LootItemTooltip(2, item.itemLink)
+equal(scannerMethod, "SetLootItem", "loot item scans actual loot slot")
+equal(lootTooltip.source, "GameTooltip", "loot rendered source")
+equal(lootTooltip.method, "SetLootItem", "loot rendered method")
+equal(lootTooltip.complete, true, "loot tooltip complete")
+equal(lootTooltip.lines[4].left, "120 Armor", "loot tooltip keeps full lines")
 
 -- Items the client has not cached yet: GetItemInfo returns nothing, but the
 -- icon still comes from the instant (static) item data.
