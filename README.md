@@ -56,3 +56,13 @@ The near-term build order is:
 6. companion bridge and website round trip
 
 The addon UI should feel native to WoW rather than like a web dashboard embedded in the game.
+
+## Farming runs and coordinates
+
+Gathering automatically groups herb, ore, skinning and fishing loot observations into candidate runs. A gap over 10 minutes starts another run. Automatic duration is the first-to-last observed harvest window; it is always an estimate and includes travel and waiting between those observations. Short samples still contribute to yield/drop statistics.
+
+For measured elapsed time, use **Start farming** in `/gw`, or `/gw farm start`, then **Stop farming** or `/gw farm stop`. `/gw farm` shows the mode. Travel, combat and waiting remain in elapsed time; reported AFK time is recorded separately. Missing AFK support remains unknown. Runs end on logout or UI reload so offline time is never added. `/gw sync` flushes a checkpoint via reload and therefore ends a run; stop a measured run first.
+
+`farming_session` is an envelope-v1 event stream with cumulative sequence-numbered checkpoints every minute and a final `complete` record. Gathering events link through `context.farming.sessionId`. The session's material basis is `loot_window`: loot offered, not proof of items acquired. The website suppresses hourly rates until the run is complete, at least 20 minutes/10 harvests, and every declared harvest has synced. All timing is local/client-reported evidence, not authoritative server measurement.
+
+Gathering locations preserve UI `mapId` and normalized `x`/`y` in `[0,1]`, rounded to five decimals, plus zone/subzone. `coordinateSystem=ui_map_normalized` and `positionKind=player_at_cast` explicitly describe the player position observed at cast time; this is approximate evidence of the source's location. Missing or invalid positions are omitted, never replaced by zero. No continuous movement trail is collected.

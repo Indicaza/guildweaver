@@ -38,6 +38,7 @@ Systems/ProfessionCapture.lua
 Data/CaptureIntegrity.lua
 Systems/CharacterStatEvents.lua
 Systems/SessionCapture.lua
+Systems/FarmingSessions.lua
 Systems/InventoryCapture.lua
 Systems/HerbalismCapture.lua
 Systems/SkinningCapture.lua

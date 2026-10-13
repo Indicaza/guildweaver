@@ -118,7 +118,7 @@ function GW.QuestLog:Initialize(parent)
     end
 
     local frame = CreateFrame("Frame", nil, parent)
-    frame:SetPoint("TOPLEFT", 14, -34)
+    frame:SetPoint("TOPLEFT", 14, -66)
     frame:SetPoint("BOTTOMRIGHT", -14, 14)
 
     self.activeTab = "available"

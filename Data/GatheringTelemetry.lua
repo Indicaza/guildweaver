@@ -59,12 +59,14 @@ local function currentLocation()
     local result = {
         zone = cleanString(safe(Globals.GetRealZoneText)),
         subzone = cleanString(safe(Globals.GetSubZoneText)),
+        coordinateSystem = "ui_map_normalized",
+        positionKind = "player_at_cast",
     }
 
     local mapApi = Globals.C_Map
     if type(mapApi) == "table" and type(mapApi.GetBestMapForUnit) == "function" then
-        local mapId = safe(mapApi.GetBestMapForUnit, "player")
-        if tonumber(mapId) then
+        local mapId = tonumber(scalar(safe(mapApi.GetBestMapForUnit, "player")))
+        if mapId and mapId > 0 then
             result.mapId = tonumber(mapId)
             if type(mapApi.GetPlayerMapPosition) == "function" then
                 local point = safe(mapApi.GetPlayerMapPosition, mapId, "player")
@@ -79,7 +81,7 @@ local function currentLocation()
                         x, y = point.x, point.y
                     end
                     x, y = tonumber(scalar(x)), tonumber(scalar(y))
-                    if x and y then
+                    if x and y and x == x and y == y and x >= 0 and x <= 1 and y >= 0 and y <= 1 then
                         result.x = math.floor(x * 100000 + 0.5) / 100000
                         result.y = math.floor(y * 100000 + 0.5) / 100000
                     end
@@ -90,6 +92,8 @@ local function currentLocation()
 
     return result
 end
+
+GW.GatheringTelemetry.CurrentLocation = currentLocation
 
 local function professionMatches(profession, discipline)
     if type(profession) ~= "table" then
@@ -362,6 +366,7 @@ local function contextPayload(pending, discipline)
         profession = context.profession,
         modifiers = context.modifiers,
         location = context.location,
+        farming = GW.FarmingSessions and GW.FarmingSessions.Context and GW.FarmingSessions.Context() or nil,
         trigger = {
             spellId = tonumber(pending.spellId),
             spellName = cleanString(pending.spellName),
@@ -439,6 +444,9 @@ local function publishGathering(pending, discipline, sourceKind, options)
     end
 
     local diagnostics = sourceDiagnostics(pending)
+    if GW.FarmingSessions and GW.FarmingSessions.RecordGather then
+        GW.FarmingSessions.RecordGather(discipline)
+    end
     local payload = {
         schemaVersion = 1,
         activity = cleanString(options.activity) or "harvest",
