@@ -53,6 +53,7 @@ equal(report(creatureA).envelope.payload.context.instance.instanceId, 36, "dunge
 equal(report(creatureA).envelope.locale, "enUS", "locale")
 equal(GW.MobLootCapture.Capture(), 0, "ready/opened duplicate")
 now = 1001
+GW.MobLootCapture.eventFrame = nil
 assert(loadfile("Systems/MobLootCapture.lua"))("Guildweaver", GW)
 equal(GW.MobLootCapture.Capture(), 0, "relogin duplicate")
 sourcePairs = { creatureA, 1 }; quantity = 1
@@ -83,6 +84,58 @@ now = 10000
 itemId = 2589
 sourcePairs = { creatureA, 1 }
 equal(GW.MobLootCapture.Capture(), 1, "bounded seen cache expires")
+local pickGuid = "Creature-0-1-2-3-12345-000099"
+local function seenCount()
+    local count = 0
+    for _ in pairs(GuildweaverDB.meta.mobLootSeen or {}) do count = count + 1 end
+    return count
+end
+sourcePairs = { pickGuid, 1 }; itemId = 1710; quantity = 1
+local beforePick = seenCount()
+frame.onEvent(frame, "UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-Pick", 921)
+frame.onEvent(frame, "LOOT_READY")
+frame.onEvent(frame, "LOOT_OPENED")
+equal(report(pickGuid), nil, "pick-pocket loot is not corpse loot")
+equal(seenCount(), beforePick, "pick-pocket leaves dedupe store untouched")
+frame.onEvent(frame, "LOOT_CLOSED")
+itemId = 2589
+equal(GW.MobLootCapture.Capture(), 1, "later corpse of pick-pocketed creature captured")
+equal(#report(pickGuid).envelope.payload.outputs, 1, "pick-pocket items never merged into corpse report")
+equal(report(pickGuid).envelope.payload.outputs[1].itemId, 2589)
+
+for index, module in ipairs({ "HerbalismCapture", "MiningCapture" }) do
+    local guid = "Creature-0-1-2-3-12345-00009" .. tostring(index)
+    sourcePairs = { guid, 1 }; itemId = 2770
+    GW[module] = { pending = { armedAt = now } }
+    equal(GW.MobLootCapture.Capture(), nil, module .. " pending exclusion")
+    GW[module] = { lootWindowActive = true }
+    equal(GW.MobLootCapture.Capture(), nil, module .. " published-window exclusion")
+    GW[module] = {}
+    equal(GW.MobLootCapture.Capture(), 0, module .. " reopened harvested creature exclusion")
+    equal(report(guid), nil, module .. " never published mob loot")
+end
+
+sourcePairs = { pickGuid, 2 }; itemId = 2589; quantity = 2
+local oldSeen
+for scope, value in pairs(GuildweaverDB.meta.mobLootSeen) do
+    if scope:find(pickGuid, 1, true) then oldSeen = value end
+end
+local originalSetEvent = GW.Store.SetTelemetryEvent
+GW.Store.SetTelemetryEvent = function() return false end
+equal(GW.MobLootCapture.Capture(), 0, "rejected event")
+equal(oldSeen.outputs[2589].quantity, 1, "dedupe state changes only after successful publish")
+GW.Store.SetTelemetryEvent = originalSetEvent
+equal(GW.MobLootCapture.Capture(), 1, "failed event can retry")
+equal(report(pickGuid).envelope.payload.outputs[1].quantity, 2)
+
+frame.onEvent(frame, "UNIT_SPELLCAST_SUCCEEDED", "target", "Cast-Other", 921)
+sourcePairs = { "Creature-0-1-2-3-12345-000088", 2 }
+equal(GW.MobLootCapture.Capture(), 1, "other units cannot arm pick-pocket suppression")
+frame.onEvent(frame, "UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-Pick", 921)
+now = now + 11
+sourcePairs = { "Creature-0-1-2-3-12345-000087", 2 }
+equal(GW.MobLootCapture.Capture(), 1, "unused pick-pocket suppression expires")
+
 _G.GetNumLootItems = function() return 0 end
 equal(GW.MobLootCapture.Capture(), nil, "empty loot not a zero-drop sample")
 print("mob loot attribution and capture tests passed")

@@ -26,4 +26,10 @@ assert(record.envelope.payload.reference == "item:2589")
 assert(record.envelope.characterId == nil)
 assert(record.envelope.locale == "deDE")
 assert(GW.GameItemTelemetry.Publish(2589) == nil)
+local completeRecord = record
+assert(loadfile("Data/GameItemTelemetry.lua"))("Guildweaver", GW)
+record = nil
+assert(GW.GameItemTelemetry.Publish(2589) == true)
+assert(record ~= nil and record.envelope.payload.reference == completeRecord.envelope.payload.reference)
+
 print("base game item telemetry tests passed")

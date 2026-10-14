@@ -147,4 +147,8 @@ for _ in pairs(GuildweaverDB.sync.outbound.telemetry) do
 end
 equal(count, 1, "duplicate loot event suppressed")
 
+equal(GW.MiningCapture.lootWindowActive, true, "gathering window remains active after pending clears")
+eventFrame.onEvent(eventFrame, "LOOT_CLOSED")
+equal(GW.MiningCapture.lootWindowActive, nil, "gathering window clears on close")
+
 print("mining gathering telemetry tests passed")

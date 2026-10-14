@@ -89,4 +89,35 @@ equal(last.durationSeconds, 40)
 equal(last.afkSeconds, nil, "unknown AFK is not zero")
 equal(last.afkAvailable, false)
 
+_G.UnitIsAFK = function() return false end
+GW.FarmingSessions.RecordGather("herbalism")
+advance(60)
+GW.FarmingSessions.Tick()
+local checkpoint = currentPayload().sequence
+local key = "farming_session:char-1:" .. GW.FarmingSessions.Context().sessionId
+local revision = GuildweaverDB.sync.outbound.telemetry[key].revision
+for _ = 1, 4 do advance(60); GW.FarmingSessions.Tick() end
+equal(currentPayload().sequence, checkpoint, "idle automatic checkpoints do not increment sequence")
+equal(GuildweaverDB.sync.outbound.telemetry[key].revision, revision, "idle automatic revisions stay unchanged")
+GW.FarmingSessions.RecordGather("mining")
+GW.FarmingSessions.Tick()
+equal(currentPayload().sequence, checkpoint + 1, "new gather publishes an automatic checkpoint")
+GW.FarmingSessions.Stop()
+assert(GW.FarmingSessions.Start())
+advance(60)
+GW.FarmingSessions.Tick()
+local manualSequence = currentPayload().sequence
+advance(60)
+GW.FarmingSessions.Tick()
+equal(currentPayload().sequence, manualSequence + 1, "manual duration still checkpoints")
+local originalSetEvent = GW.Store.SetTelemetryEvent
+GW.Store.SetTelemetryEvent = function() return false end
+advance(60)
+GW.FarmingSessions.Tick()
+local failedSequence = currentPayload().sequence
+GW.Store.SetTelemetryEvent = originalSetEvent
+GW.FarmingSessions.Tick()
+equal(currentPayload().sequence, failedSequence + 1, "failed publish does not advance sequence")
+GW.FarmingSessions.Stop()
+
 print("farming session timing tests passed")

@@ -57,7 +57,7 @@ local function publish(status, reason, endAtLastGather)
     if not run then
         return nil
     end
-    run.sequence = run.sequence + 1
+    local sequence = run.sequence + 1
     local elapsed = endAtLastGather and run.lastGatherDuration or run.durationSeconds
     local afkSeconds = endAtLastGather and run.lastGatherAfk or run.afkSeconds
     local endedAt = endAtLastGather and run.lastGatherAt or now()
@@ -68,7 +68,7 @@ local function publish(status, reason, endAtLastGather)
     local payload = {
         schemaVersion = 1,
         sessionId = run.sessionId,
-        sequence = run.sequence,
+        sequence = sequence,
         mode = run.mode,
         status = status,
         endReason = status == "complete" and reason or nil,
@@ -93,7 +93,11 @@ local function publish(status, reason, endAtLastGather)
         gameBuild = run.snapshot.gameBuild,
     })
     local key = "farming_session:" .. tostring(run.snapshot.characterId) .. ":" .. run.sessionId
-    GW.Store.SetTelemetryEvent(key, envelope)
+    if not envelope or not GW.Store.SetTelemetryEvent(key, envelope) then return nil end
+    run.sequence = sequence
+    run.publishedGatheringCount = run.gatheringCount
+    run.publishedGatherDuration = run.lastGatherDuration
+    run.publishedGatherAfk = run.lastGatherAfk
     run.lastPublished = clock()
     return payload
 end
@@ -181,7 +185,10 @@ function GW.FarmingSessions.Tick()
     if run.mode == "automatic" and clock() - run.lastGatherClock > GAP_SECONDS then
         finish("gap", true)
     elseif clock() - run.lastPublished >= CHECKPOINT_SECONDS then
-        publish("open", nil, run.mode == "automatic")
+        if run.mode == "manual" or run.gatheringCount ~= run.publishedGatheringCount
+            or run.lastGatherDuration ~= run.publishedGatherDuration or run.lastGatherAfk ~= run.publishedGatherAfk then
+            publish("open", nil, run.mode == "automatic")
+        end
     end
 end
 
