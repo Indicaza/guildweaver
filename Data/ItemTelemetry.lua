@@ -438,3 +438,16 @@ function GW.ItemTelemetry.LootItemTooltip(slot, itemLink)
     end
     return collectLootTooltip(slot, itemLink)
 end
+
+function GW.ItemTelemetry.BaseDefinition(itemId)
+    itemId = tonumber(itemId)
+    if not itemId or itemId <= 0 then return nil end
+    local link = "item:" .. tostring(itemId)
+    local item = { itemId = itemId }
+    enrichMetadata(item, link)
+    item.itemLink = nil
+    item.tooltip = collectTooltip(link)
+    item.stats = collectStats(link)
+    item.spell = collectSpell(link)
+    return item
+end

@@ -282,6 +282,8 @@ local function sourceIdentity(guid)
     return kind, objectId, npcId
 end
 
+GW.GatheringTelemetry.SourceIdentity = sourceIdentity
+
 function GW.GatheringTelemetry.ReadLoot()
     if type(Globals.GetNumLootItems) ~= "function" or type(Globals.GetLootSlotInfo) ~= "function" then
         return nil
@@ -297,33 +299,57 @@ function GW.GatheringTelemetry.ReadLoot()
     local seenGuids = {}
 
     for slot = 1, slotCount do
-        local ok, texture, itemName, quantity, _, quality = pcall(Globals.GetLootSlotInfo, slot)
-        if ok then
-            local itemLink = type(Globals.GetLootSlotLink) == "function" and safe(Globals.GetLootSlotLink, slot) or nil
-            local itemId = itemIdFromLink(itemLink)
-            itemName = cleanString(itemName)
-            if itemId or itemName then
-                table.insert(outputs, {
-                    itemId = itemId,
-                    itemLink = cleanString(itemLink),
-                    name = itemName,
-                    quantity = math.max(tonumber(quantity) or 1, 1),
-                    qualityId = tonumber(quality),
-                    iconFileDataId = tonumber(texture),
-                })
-            end
-        end
-
+        local sources = {}
+        local totalQuantity = 0
+        local mappingComplete = true
         if type(Globals.GetLootSourceInfo) == "function" then
             local results = { pcall(Globals.GetLootSourceInfo, slot) }
             if results[1] then
                 for index = 2, table.maxn(results), 2 do
                     local guid = cleanString(results[index])
+                    local amount = tonumber(scalar(results[index + 1]))
+                    local kind, objectId, npcId = sourceIdentity(guid)
+                    if guid and amount and amount > 0 and amount == math.floor(amount) then
+                        table.insert(sources, { guid = guid, quantity = amount, kind = kind, objectId = objectId, npcId = npcId })
+                        totalQuantity = totalQuantity + amount
+                    else
+                        mappingComplete = false
+                    end
                     if guid and not seenGuids[guid] then
                         seenGuids[guid] = true
                         table.insert(sourceGuids, guid)
                     end
                 end
+            else
+                mappingComplete = false
+            end
+        else
+            mappingComplete = false
+        end
+        local ok, texture, itemName, quantity, currencyId, quality, locked, isQuestItem, questId, isActive, isCoin = pcall(Globals.GetLootSlotInfo, slot)
+        if ok then
+            local itemLink = type(Globals.GetLootSlotLink) == "function" and safe(Globals.GetLootSlotLink, slot) or nil
+            local itemId = itemIdFromLink(cleanString(itemLink))
+            itemName = cleanString(itemName)
+            quantity = tonumber(scalar(quantity))
+            if itemId or itemName then
+                table.insert(outputs, {
+                    itemId = itemId,
+                    itemLink = cleanString(itemLink),
+                    name = itemName,
+                    quantity = math.max(quantity or 1, 1),
+                    qualityId = tonumber(scalar(quality)),
+                    iconFileDataId = tonumber(scalar(texture)),
+                    lootSlot = slot,
+                    sources = sources,
+                    sourceMappingComplete = mappingComplete and #sources > 0 and quantity == totalQuantity,
+                    currencyId = tonumber(scalar(currencyId)),
+                    locked = scalar(locked) == true,
+                    isQuestItem = scalar(isQuestItem) == true,
+                    questId = tonumber(scalar(questId)),
+                    isActive = scalar(isActive) == true,
+                    isCoin = scalar(isCoin) == true,
+                })
             end
         end
     end

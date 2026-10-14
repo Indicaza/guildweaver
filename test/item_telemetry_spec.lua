@@ -193,6 +193,13 @@ equal(scannerMethod, "SetHyperlink", "generic item scans rendered hyperlink")
 equal(generic.tooltip.source, "GameTooltip", "generic rendered source")
 equal(generic.tooltip.lines[4].left, "120 Armor", "generic tooltip remains full")
 
+scannerMethod = nil
+local base = addon.ItemTelemetry.BaseDefinition(item.itemId)
+equal(scannerMethod, "SetHyperlink", "base item uses generic hyperlink")
+equal(base.itemLink, nil, "base definition never retains observed instance link")
+equal(base.itemId, item.itemId, "base item identity")
+equal(addon.ItemTelemetry.BaseDefinition(0), nil, "invalid base id omitted")
+
 -- Fresh gathering loot must be captured from the actual loot slot while the
 -- window is still open, not reconstructed later from a hyperlink.
 scannerMethod = nil

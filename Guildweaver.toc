@@ -24,6 +24,7 @@ Data/CharacterTelemetryEnrichment.lua
 Data/TalentArtTelemetry.lua
 Data/MockData.lua
 Data/TelemetryEnvelope.lua
+Data/GameItemTelemetry.lua
 Data/EconomicItemTelemetry.lua
 Telemetry/Domain.lua
 Telemetry/Domains/Character.lua
@@ -45,6 +46,7 @@ Systems/SkinningCapture.lua
 Systems/MiningCapture.lua
 Systems/FishingPoolProbe.lua
 Systems/FishingCapture.lua
+Systems/MobLootCapture.lua
 Systems/Quests.lua
 Telemetry/Compatibility.lua
 UI/QuestLog.lua
