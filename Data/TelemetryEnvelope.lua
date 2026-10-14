@@ -29,6 +29,7 @@ function GW.TelemetryEnvelope.Build(eventType, payload, snapshot)
         installationId = GW.Store and GW.Store.GetInstallationId and GW.Store.GetInstallationId() or nil,
         realm = optional(snapshot.realm),
         region = optional(snapshot.region),
+        locale = optional(snapshot.locale) or (type(GetLocale) == "function" and GetLocale() or nil),
         gameBuild = optional(snapshot.gameBuild),
         addon = {
             name = "Guildweaver",

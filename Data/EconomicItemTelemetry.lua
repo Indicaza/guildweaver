@@ -154,6 +154,9 @@ local function describeOutput(output, options)
 end
 
 function GW.EconomicItemTelemetry.Publish(output, options)
+    if GW.GameItemTelemetry and GW.GameItemTelemetry.Publish and type(output) == "table" then
+        pcall(GW.GameItemTelemetry.Publish, output.itemId)
+    end
     local item = describeOutput(output, options)
     if not item then
         return nil

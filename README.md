@@ -66,3 +66,15 @@ For measured elapsed time, use **Start farming** in `/gw`, or `/gw farm start`, 
 `farming_session` is an envelope-v1 event stream with cumulative sequence-numbered checkpoints every minute and a final `complete` record. Gathering events link through `context.farming.sessionId`. The session's material basis is `loot_window`: loot offered, not proof of items acquired. The website suppresses hourly rates until the run is complete, at least 20 minutes/10 harvests, and every declared harvest has synced. All timing is local/client-reported evidence, not authoritative server measurement.
 
 Gathering locations preserve UI `mapId` and normalized `x`/`y` in `[0,1]`, rounded to five decimals, plus zone/subzone. `coordinateSystem=ui_map_normalized` and `positionKind=player_at_cast` explicitly describe the player position observed at cast time; this is approximate evidence of the source's location. Missing or invalid positions are omitted, never replaced by zero. No continuous movement trail is collected.
+
+### Corpse loot and public item definitions
+
+`mob_loot` reports one Creature/Vehicle source with only its assigned items from `GetLootSourceInfo` GUID/quantity pairs. Area loot splits the same item stack across sources. Missing or inconsistent assignments, non-item slots, player sources, and object/container loot do not create mob facts. Skinning remains `gathering_loot`; skinned corpses are excluded from later corpse reopens.
+
+Reports retain the source NPC ID, a name only when the exact source GUID was observed as target/mouseover, dungeon instance/difficulty, game build, locale, loot visibility, and map coordinates when available. Coordinates are normalized UI-map **player positions at looting**, not NPC spawn positions. Loot-window quantities describe what was offered, not proof of acquisition. Empty windows and unseen corpses are not zero-drop samples.
+
+A persisted seen cache (1,000 corpses / two hours) prevents duplicate ready/opened events and reopens across reloads. Additional items or larger stacks produce cumulative revisions on the same corpse stream. The collector and website preserve maximum observed quantities rather than adding duplicate party views. No combat-log or chat-log capture is introduced.
+
+`game_item_definition` is a separate envelope-v1 state stream. It scans a bare `item:<id>` reference, without character identity or item-instance links, for public base definitions. Existing rich `item_definition` records remain available to authenticated tools. Both definition streams retry after item-cache load events. Locale is additive envelope metadata; SavedVariables remains schema 4.
+
+Live-client checks after servers return: ordinary corpse; area-loot two NPC types; shared party corpse; reopen/reload; skin a looted corpse; dungeon boss; uncached item; map with unavailable player coordinates. Inspect `/gw telemetry` and sync after a reload/logout.

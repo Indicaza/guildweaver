@@ -100,6 +100,7 @@ local function publishPending()
 
     local result = GW.GatheringTelemetry.PublishSkinning(pending)
     if result then
+        GW.SkinningCapture.lootWindowActive = true
         GW.SkinningCapture.pending = nil
     end
     return result
@@ -159,6 +160,7 @@ function GW.SkinningCapture:Initialize()
         end
 
         if event == "LOOT_CLOSED" then
+            self.lootWindowActive = nil
             self.pending = nil
         end
     end)
