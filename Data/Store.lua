@@ -3,6 +3,8 @@ local _, GW = ...
 GW.Store = GW.Store or {}
 
 local MAX_TELEMETRY_STREAMS = 4096
+local MAX_CATALOG_STREAMS = 1500
+local CATALOG_EVENT_TYPES = { item_definition = true, game_item_definition = true }
 local FINGERPRINT_IGNORED_KEYS = {
     capturedAt = true,
     reason = true,
@@ -117,34 +119,44 @@ local function fingerprint(value)
     return string.format("%08x", hash)
 end
 
--- Keeps the outbound telemetry bounded. One-off events (session
--- checkpoints, a new set every login) go first, oldest first; a character's
--- state streams are only pruned when nothing else is left.
-local function pruneTelemetry(outbound)
-    local count = 0
-    for _ in pairs(outbound) do
-        count = count + 1
+local function telemetryTier(record)
+    if type(record) == "table" and (record.tier == "catalog"
+        or CATALOG_EVENT_TYPES[record.envelope and record.envelope.eventType]) then
+        return 0
     end
+    return type(record) == "table" and record.kind == "event" and 1 or 2
+end
 
-    while count > MAX_TELEMETRY_STREAMS do
-        local oldestKey = nil
-        local oldestRank = math.huge
-
-        for key, record in pairs(outbound) do
-            local timestamp = tonumber(record and record.updatedAt) or 0
-            local rank = (record and record.kind == "event" and 0 or 1e12) + timestamp
-            if rank < oldestRank then
-                oldestRank = rank
-                oldestKey = key
-            end
+local function pruneTelemetry(outbound, protectedKey)
+    local count, catalogCount = 0, 0
+    for _, record in pairs(outbound) do
+        local tier = telemetryTier(record)
+        count = count + 1
+        if tier == 0 then catalogCount = catalogCount + 1 end
+    end
+    if count <= MAX_TELEMETRY_STREAMS and catalogCount <= MAX_CATALOG_STREAMS then return end
+    local candidates = {}
+    for key, record in pairs(outbound) do
+        if key ~= protectedKey then
+            candidates[#candidates + 1] = { key = key, tier = telemetryTier(record), timestamp = tonumber(record and record.updatedAt) or 0 }
         end
-
-        if not oldestKey then
-            return
+    end
+    table.sort(candidates, function(a, b)
+        if a.tier ~= b.tier then return a.tier < b.tier end
+        if a.timestamp ~= b.timestamp then return a.timestamp < b.timestamp end
+        return a.key < b.key
+    end)
+    for _, candidate in ipairs(candidates) do
+        if count <= MAX_TELEMETRY_STREAMS and catalogCount <= MAX_CATALOG_STREAMS then break end
+        local record = outbound[candidate.key]
+        if type(record) == "table" and record.kind == "state" then
+            local revisions = GuildweaverDB.sync.telemetryRevisions or {}
+            GuildweaverDB.sync.telemetryRevisions = revisions
+            revisions[candidate.key] = math.max(tonumber(revisions[candidate.key]) or 0, tonumber(record.revision) or 0)
         end
-
-        outbound[oldestKey] = nil
+        outbound[candidate.key] = nil
         count = count - 1
+        if candidate.tier == 0 then catalogCount = catalogCount - 1 end
     end
 end
 
@@ -282,12 +294,13 @@ function GW.Store.SetTelemetrySnapshot(streamKey, envelope)
     revisions[streamKey] = revision + 1
     outbound[streamKey] = {
         kind = "state",
+        tier = CATALOG_EVENT_TYPES[envelope.eventType] and "catalog" or "character",
         revision = revision + 1,
         updatedAt = envelope.capturedAt,
         fingerprint = nextFingerprint,
         envelope = envelope,
     }
-    pruneTelemetry(outbound)
+    pruneTelemetry(outbound, streamKey)
     return true
 end
 
@@ -308,7 +321,7 @@ function GW.Store.SetTelemetryEvent(streamKey, envelope)
         fingerprint = nextFingerprint,
         envelope = envelope,
     }
-    pruneTelemetry(outbound)
+    pruneTelemetry(outbound, streamKey)
     return true
 end
 

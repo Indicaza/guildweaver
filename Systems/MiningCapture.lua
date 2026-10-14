@@ -106,6 +106,7 @@ local function publishPending()
 
     local result = GW.GatheringTelemetry.PublishMining(pending)
     if result then
+        GW.MiningCapture.lootWindowActive = true
         GW.MiningCapture.pending = nil
     end
     return result
@@ -165,6 +166,7 @@ function GW.MiningCapture:Initialize()
         end
 
         if event == "LOOT_CLOSED" then
+            self.lootWindowActive = nil
             self.pending = nil
         end
     end)

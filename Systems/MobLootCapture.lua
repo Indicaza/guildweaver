@@ -3,6 +3,9 @@ local Globals = _G or {}
 GW.MobLootCapture = GW.MobLootCapture or {}
 local MAX_SEEN = 1000
 local SEEN_SECONDS = 7200
+local PICK_POCKET_SPELL_IDS = { [921] = true }
+local pickPocketUntil = nil
+local pickPocketWindowActive = false
 local names = {}
 local namesCount = 0
 
@@ -69,15 +72,31 @@ local function seenStore(now)
     return seen
 end
 
-local function skinningWindow()
-    local capture = GW.SkinningCapture
-    if not capture then return false end
-    if capture.lootWindowActive then return true end
-    local pending = capture.pending
-    return type(pending) == "table" and elapsed() - (tonumber(pending.armedAt) or 0) <= 10
+local function gatheringWindow()
+    for _, name in ipairs({ "SkinningCapture", "HerbalismCapture", "MiningCapture" }) do
+        local capture = GW[name]
+        if capture then
+            if capture.lootWindowActive then return true end
+            local pending = capture.pending
+            if type(pending) == "table" and elapsed() - (tonumber(pending.armedAt) or 0) <= 10 then return true end
+        end
+    end
+    return false
+end
+
+local function pickPocketWindow()
+    if pickPocketWindowActive then return true end
+    if pickPocketUntil and elapsed() <= pickPocketUntil then
+        pickPocketWindowActive = true
+        pickPocketUntil = nil
+        return true
+    end
+    pickPocketUntil = nil
+    return false
 end
 
 function GW.MobLootCapture.Capture()
+    if pickPocketWindow() then return nil end
     local snapshot = GW.Character and GW.Character.GetCurrentSnapshot and GW.Character.GetCurrentSnapshot()
     if type(snapshot) ~= "table" or not snapshot.characterId then return nil end
     local loot = GW.GatheringTelemetry.ReadLoot()
@@ -89,7 +108,7 @@ function GW.MobLootCapture.Capture()
         local build = type(snapshot.gameBuild) == "table" and (snapshot.gameBuild.build or snapshot.gameBuild.version) or ""
         return table.concat({ tostring(build or ""), tostring(snapshot.region or ""), tostring(snapshot.realm or ""), guid }, ":")
     end
-    if skinningWindow() then
+    if gatheringWindow() then
         for _, guid in ipairs(loot.sourceGuids or {}) do
             seen[scopeKey(guid)] = { at = now, outputs = {}, skinned = true }
         end
@@ -120,7 +139,9 @@ function GW.MobLootCapture.Capture()
     local count = 0
     for guid, source in pairs(sources) do
         local scope = scopeKey(guid)
-        local previous = seen[scope] or { at = now, outputs = {} }
+        local stored = seen[scope]
+        local previous = { at = stored and stored.at or now, outputs = {} }
+        for id, output in pairs(stored and stored.outputs or {}) do previous.outputs[id] = output end
         local changed = false
         for id, output in pairs(source.outputs) do
             if not previous.outputs[id] or output.quantity > previous.outputs[id].quantity then
@@ -155,11 +176,18 @@ end
 function GW.MobLootCapture:Initialize()
     if self.eventFrame or type(Globals.CreateFrame) ~= "function" then return end
     local frame = Globals.CreateFrame("Frame")
-    for _, event in ipairs({ "PLAYER_TARGET_CHANGED", "UPDATE_MOUSEOVER_UNIT", "LOOT_READY", "LOOT_OPENED" }) do
+    for _, event in ipairs({ "PLAYER_TARGET_CHANGED", "UPDATE_MOUSEOVER_UNIT", "LOOT_READY", "LOOT_OPENED", "LOOT_CLOSED", "UNIT_SPELLCAST_SUCCEEDED" }) do
         pcall(frame.RegisterEvent, frame, event)
     end
-    frame:SetScript("OnEvent", function(_, event)
-        if event == "PLAYER_TARGET_CHANGED" then rememberUnit("target")
+    frame:SetScript("OnEvent", function(_, event, unit, _, spellId)
+        if event == "UNIT_SPELLCAST_SUCCEEDED" then
+            if unit == "player" and PICK_POCKET_SPELL_IDS[tonumber(spellId)] then
+                pickPocketUntil = elapsed() + 10
+            end
+        elseif event == "LOOT_CLOSED" then
+            pickPocketUntil = nil
+            pickPocketWindowActive = false
+        elseif event == "PLAYER_TARGET_CHANGED" then rememberUnit("target")
         elseif event == "UPDATE_MOUSEOVER_UNIT" then rememberUnit("mouseover")
         else rememberUnit("target"); rememberUnit("mouseover"); pcall(GW.MobLootCapture.Capture) end
     end)

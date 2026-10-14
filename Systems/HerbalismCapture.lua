@@ -107,6 +107,7 @@ local function publishPending()
 
     local result = GW.GatheringTelemetry.PublishHerbalism(pending)
     if result then
+        GW.HerbalismCapture.lootWindowActive = true
         GW.HerbalismCapture.pending = nil
     end
     return result
@@ -177,6 +178,7 @@ function GW.HerbalismCapture:Initialize()
         end
 
         if event == "LOOT_CLOSED" then
+            self.lootWindowActive = nil
             self.pending = nil
         end
     end)
