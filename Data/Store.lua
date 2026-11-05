@@ -155,8 +155,8 @@ local function captureMeta()
 end
 
 function GW.Store.Initialize()
-    if type(GuildweaverDB) ~= "table" then
-        GuildweaverDB = {}
+    if type(GuildweaverDB) ~= "table" or GuildweaverDB.gameRelease ~= "forever-live" then
+        GuildweaverDB = { gameRelease = "forever-live" }
     end
 
     applyDefaults(defaults, GuildweaverDB)

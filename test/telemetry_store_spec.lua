@@ -10,7 +10,7 @@ local function truthy(value, label)
     end
 end
 
-GuildweaverDB = nil
+GuildweaverDB = { characters = { BetaRook = {} } }
 local now = 1791322510
 GetServerTime = function() return now end
 
@@ -18,6 +18,11 @@ local addon = { version = "test" }
 local chunk = assert(loadfile("Data/Store.lua"))
 chunk("Guildweaver", addon)
 addon.Store.Initialize()
+
+equal(GuildweaverDB.characters.BetaRook, nil, "beta character cleared")
+GuildweaverDB.characters.LiveRook = {}
+addon.Store.Initialize()
+truthy(GuildweaverDB.characters.LiveRook, "live character survives reload")
 
 local Store = addon.Store
 local outbound = GuildweaverDB.sync.outbound.telemetry
