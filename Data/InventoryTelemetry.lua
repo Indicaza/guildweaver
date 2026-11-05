@@ -277,168 +277,301 @@ local function stableTooltip(tooltip)
     return #lines > 0 and { source = tooltip.source, lines = lines } or nil
 end
 
--- What the item is, described once per item string per session through the
--- shared item enrichment (descriptions the client could not fill yet are
--- retried on the next scan). The tooltip is read fresh from the bag slot on
--- every scan, as the player would see it when hovering the item.
-local function describe(itemKey, link, info, bagId, slot)
-    local cached = describedItems[itemKey]
-    local complete = cached ~= nil
-    if not cached then
-        local describeItem = GW.ItemTelemetry and GW.ItemTelemetry.Describe
-        local item = nil
-        if type(describeItem) == "function" then
-            local ok, value = pcall(describeItem, link, { details = true, tooltip = false })
-            item = ok and type(value) == "table" and value or nil
-        end
-        item = item or { itemId = info.itemId }
+-- Incremental scanning ---------------------------------------------------------
+--
+-- Bag tooltips are the expensive part of a scan (each renders a hidden
+-- GameTooltip), so they are cached per item string together with the
+-- instance state that can change the rendered text: the link (enchants, gems,
+-- suffixes), stack count, binding and durability. A cached tooltip is reused
+-- while that signature is unchanged; a changed signature rescans only that
+-- item. Descriptions the client could not complete yet (no name or no
+-- tooltip) are retried a bounded number of times; GET_ITEM_INFO_RECEIVED for
+-- the item grants one more attempt.
+--
+-- Event-driven refreshes read only bags marked dirty by BAG_UPDATE and reuse
+-- the previous container records for the rest. A full read (Collect() with
+-- no options, PLAYER_ENTERING_WORLD, bag swaps, or the periodic
+-- reconciliation in Systems/InventoryCapture.lua) repairs anything an event
+-- missed, still reusing tooltips whose signature matches.
 
-        local modifiers = linkModifiers(itemKey)
-        cached = {
-            key = itemKey,
-            itemId = item.itemId or info.itemId,
-            itemLink = item.itemLink or cleanText(link),
-            name = item.name or cleanText(type(link) == "string" and link:match("%[(.-)%]") or nil),
-            iconFileDataId = item.iconFileDataId or positiveNumber(info.iconFileDataId),
-            qualityId = item.qualityId or info.qualityId,
-            itemLevel = item.itemLevel,
-            requiredLevel = item.requiredLevel,
-            maxStackSize = item.stackCount,
-            sellPrice = item.sellPrice,
-            bindType = item.bindType,
-            equipLocation = cleanText(item.equipLocation),
-            expansionId = item.expansionId,
-            setId = item.setId,
-            isCraftingReagent = item.isCraftingReagent,
-            itemClass = item.itemClass,
-            itemSubclass = item.itemSubclass,
-            enchantId = modifiers.enchantId,
-            gemItemIds = modifiers.gemItemIds,
-            suffixId = modifiers.suffixId,
-            bonusIds = modifiers.bonusIds,
-            stats = item.stats,
-            spell = item.spell,
-        }
-        complete = item.name ~= nil
-        if complete then
-            describedItems[itemKey] = cached
-        end
+local MAX_TOOLTIP_ATTEMPTS = 3
+local MAX_ITEM_INFO_RESETS = 3
+
+local tooltipByKey = {}
+local compositeByKey = {}
+local containerRecords = {}
+local dirtyBags = {}
+local allDirty = true
+local payloadRevision = 0
+local lastFullRead = nil
+local incompleteKeys = 0
+
+local function perfCount(name)
+    local perf = GW.Perf
+    if perf and perf.Count then
+        perf.Count(name)
     end
+end
 
+local function itemIdFromKey(itemKey, fallback)
+    return tonumber(type(itemKey) == "string" and itemKey:match("^item:(%d+)") or nil) or fallback
+end
+
+local function slotSignature(source)
+    local info = source.info
+    local durability, maxDurability = call("GetContainerItemDurability", source.bagId, source.slot)
+    return table.concat({
+        tostring(source.link),
+        tostring(info.count or 1),
+        info.isBound and "1" or "0",
+        tostring(durability or ""),
+        tostring(maxDurability or ""),
+    }, "\031")
+end
+
+local function describeMetadata(itemKey, link, info)
+    local cached = describedItems[itemKey]
+    if cached then
+        return cached, true
+    end
+    local describeItem = GW.ItemTelemetry and GW.ItemTelemetry.Describe
+    local item = nil
+    if type(describeItem) == "function" then
+        local ok, value = pcall(describeItem, link, { details = true, tooltip = false })
+        item = ok and type(value) == "table" and value or nil
+    end
+    item = item or { itemId = info.itemId }
+
+    local modifiers = linkModifiers(itemKey)
+    cached = {
+        key = itemKey,
+        itemId = item.itemId or info.itemId,
+        itemLink = item.itemLink or cleanText(link),
+        name = item.name or cleanText(type(link) == "string" and link:match("%[(.-)%]") or nil),
+        iconFileDataId = item.iconFileDataId or positiveNumber(info.iconFileDataId),
+        qualityId = item.qualityId or info.qualityId,
+        itemLevel = item.itemLevel,
+        requiredLevel = item.requiredLevel,
+        maxStackSize = item.stackCount,
+        sellPrice = item.sellPrice,
+        bindType = item.bindType,
+        equipLocation = cleanText(item.equipLocation),
+        expansionId = item.expansionId,
+        setId = item.setId,
+        isCraftingReagent = item.isCraftingReagent,
+        itemClass = item.itemClass,
+        itemSubclass = item.itemSubclass,
+        enchantId = modifiers.enchantId,
+        gemItemIds = modifiers.gemItemIds,
+        suffixId = modifiers.suffixId,
+        bonusIds = modifiers.bonusIds,
+        stats = item.stats,
+        spell = item.spell,
+    }
+    local complete = item.name ~= nil
+    if complete then
+        describedItems[itemKey] = cached
+    end
+    return cached, complete
+end
+
+local function scanTooltip(source)
+    perfCount("tooltip_bag_scans")
     local bagTooltip = GW.ItemTelemetry and GW.ItemTelemetry.BagItemTooltip
-    local tooltip = type(bagTooltip) == "function" and stableTooltip(bagTooltip(bagId, slot)) or nil
+    local tooltip = type(bagTooltip) == "function" and stableTooltip(bagTooltip(source.bagId, source.slot)) or nil
     if not tooltip and GW.ItemTelemetry and type(GW.ItemTelemetry.Describe) == "function" then
-        local ok, value = pcall(GW.ItemTelemetry.Describe, link)
+        local ok, value = pcall(GW.ItemTelemetry.Describe, source.link)
         tooltip = ok and type(value) == "table" and stableTooltip(value.tooltip) or nil
     end
+    return tooltip
+end
 
-    local description = {}
-    for key, value in pairs(cached) do
-        description[key] = value
+-- What the item is (metadata cached once per item string) plus the tooltip
+-- as the player would see it hovering the first slot holding it. Returns the
+-- description and whether a later scan should retry it.
+local function describe(itemKey, source)
+    local metadata, metadataComplete = describeMetadata(itemKey, source.link, source.info)
+    local signature = slotSignature(source)
+    local entry = tooltipByKey[itemKey]
+    local tooltip
+    if entry and entry.signature == signature and (entry.complete or entry.attempts >= MAX_TOOLTIP_ATTEMPTS) then
+        tooltip = entry.tooltip
+    else
+        tooltip = scanTooltip(source)
+        local attempts = (entry and entry.signature == signature and entry.attempts or 0) + 1
+        entry = {
+            signature = signature,
+            tooltip = tooltip,
+            complete = tooltip ~= nil and metadataComplete,
+            attempts = attempts,
+            resets = entry and entry.resets or 0,
+            itemId = itemIdFromKey(itemKey, source.info.itemId),
+        }
+        tooltipByKey[itemKey] = entry
     end
-    description.tooltip = tooltip
-    -- Names and tooltips load separately; a description missing either is
-    -- reported so the scan is retried.
-    return description, complete and tooltip ~= nil
+    if metadataComplete and tooltip ~= nil and not entry.complete then
+        entry.complete = true
+    end
+
+    local composite = compositeByKey[itemKey]
+    local description
+    if composite and composite.metadata == metadata and composite.tooltip == tooltip then
+        description = composite.value
+    else
+        description = {}
+        for key, value in pairs(metadata) do
+            description[key] = value
+        end
+        description.tooltip = tooltip
+        compositeByKey[itemKey] = { metadata = metadata, tooltip = tooltip, value = description }
+    end
+
+    local retry = not entry.complete and entry.attempts < MAX_TOOLTIP_ATTEMPTS
+    return description, retry
+end
+
+local function readContainer(bagId, slotCount)
+    local freeSlots, bagFamily = call("GetContainerNumFreeSlots", bagId)
+    local container = {
+        bagId = bagId,
+        kind = containerKind(bagId),
+        name = cleanText(call("GetBagName", bagId)),
+        slotCount = slotCount,
+        freeSlots = 0,
+        bagFamily = tonumber(bagFamily),
+        item = containerItem(bagId),
+        slots = {},
+    }
+    if bagId == BACKPACK_ID then
+        container.iconFileDataId = BACKPACK_ICON
+    elseif container.item then
+        container.iconFileDataId = container.item.iconFileDataId
+    end
+
+    local sources = {}
+    for slot = 1, slotCount do
+        local info = slotInfo(bagId, slot)
+        local link = info and info.link
+        local itemKey = cleanText(itemStringFromLink(link))
+        if info and itemKey then
+            local count = math.max(1, tonumber(info.count) or 1)
+            table.insert(container.slots, {
+                slot = slot,
+                itemKey = itemKey,
+                itemId = itemIdFromKey(itemKey, info.itemId),
+                count = count,
+                isBound = info.isBound == true or nil,
+                isReadable = info.isReadable == true or nil,
+                hasLoot = info.hasLoot == true or nil,
+                hasNoValue = info.hasNoValue == true or nil,
+            })
+            table.insert(sources, { bagId = bagId, slot = slot, link = link, info = info })
+        end
+    end
+    container.freeSlots = tonumber(freeSlots) or (slotCount - #container.slots)
+    return { container = container, sources = sources, slotCount = slotCount }
 end
 
 local function itemSort(left, right)
     return tostring(left.key) < tostring(right.key)
 end
 
+local function totalSort(left, right)
+    return left.itemId < right.itemId
+end
+
+local function currentTime()
+    return tonumber(safe(Globals.GetTime)) or nil
+end
+
 -- Reads the carried inventory. Returns nil when bag data is not loaded yet
 -- (the backpack always has slots once it is), so a half-loaded client never
 -- replaces a real inventory with an empty one.
-function GW.InventoryTelemetry.Collect()
+--
+-- options.incremental reads only bags marked dirty since the last read and
+-- reuses the rest; without it every bag is read (tooltips still come from the
+-- signature cache).
+function GW.InventoryTelemetry.Collect(options)
+    local incremental = type(options) == "table" and options.incremental == true
     local backpackSlots = tonumber(call("GetContainerNumSlots", BACKPACK_ID)) or 0
     if backpackSlots <= 0 then
         return nil
     end
 
+    local fullRead = not incremental or allDirty
     local containers = {}
+    local records = {}
+    for _, bagId in ipairs(containerIds()) do
+        local slotCount = math.min(tonumber(call("GetContainerNumSlots", bagId)) or 0, MAX_SLOTS_PER_CONTAINER)
+        if slotCount > 0 then
+            local record = containerRecords[bagId]
+            if fullRead or dirtyBags[bagId] or not record or record.slotCount ~= slotCount then
+                record = readContainer(bagId, slotCount)
+                perfCount("inventory_bag_reads")
+            end
+            records[bagId] = record
+            table.insert(containers, record)
+        end
+    end
+    containerRecords = records
+    dirtyBags = {}
+    allDirty = false
+    if fullRead then
+        lastFullRead = currentTime()
+    end
+
     local itemsByKey = {}
     local totalsById = {}
     local totalSlots = 0
     local totalFree = 0
     local pending = false
+    local payloadContainers = {}
 
-    for _, bagId in ipairs(containerIds()) do
-        local slotCount = math.min(tonumber(call("GetContainerNumSlots", bagId)) or 0, MAX_SLOTS_PER_CONTAINER)
-        if slotCount > 0 then
-            local freeSlots, bagFamily = call("GetContainerNumFreeSlots", bagId)
-            local container = {
-                bagId = bagId,
-                kind = containerKind(bagId),
-                name = cleanText(call("GetBagName", bagId)),
-                slotCount = slotCount,
-                freeSlots = 0,
-                bagFamily = tonumber(bagFamily),
-                item = containerItem(bagId),
-                slots = {},
-            }
-            if bagId == BACKPACK_ID then
-                container.iconFileDataId = BACKPACK_ICON
-            elseif container.item then
-                container.iconFileDataId = container.item.iconFileDataId
+    for _, record in ipairs(containers) do
+        local container = record.container
+        for index, slotRecord in ipairs(container.slots) do
+            local itemKey = slotRecord.itemKey
+            -- Each distinct item is described from the first slot holding it.
+            local item = itemsByKey[itemKey]
+            if not item then
+                local retry
+                item, retry = describe(itemKey, record.sources[index])
+                pending = pending or retry
+                itemsByKey[itemKey] = item
             end
-
-            for slot = 1, slotCount do
-                local info = slotInfo(bagId, slot)
-                local link = info and info.link
-                local itemKey = cleanText(itemStringFromLink(link))
-                if info and itemKey then
-                    -- Each distinct item is described from the first slot holding it.
-                    local item = itemsByKey[itemKey]
-                    if not item then
-                        local complete
-                        item, complete = describe(itemKey, link, info, bagId, slot)
-                        pending = pending or not complete
-                        itemsByKey[itemKey] = item
-                    end
-                    local count = math.max(1, tonumber(info.count) or 1)
-                    table.insert(container.slots, {
-                        slot = slot,
-                        itemKey = itemKey,
-                        itemId = item.itemId,
-                        count = count,
-                        isBound = info.isBound == true or nil,
-                        isReadable = info.isReadable == true or nil,
-                        hasLoot = info.hasLoot == true or nil,
-                        hasNoValue = info.hasNoValue == true or nil,
-                    })
-                    local itemId = item.itemId
-                    if itemId then
-                        local total = totalsById[itemId] or { itemId = itemId, count = 0, stacks = 0 }
-                        total.count = total.count + count
-                        total.stacks = total.stacks + 1
-                        totalsById[itemId] = total
-                    end
-                end
+            local itemId = item.itemId or slotRecord.itemId
+            if itemId then
+                local total = totalsById[itemId] or { itemId = itemId, count = 0, stacks = 0 }
+                total.count = total.count + slotRecord.count
+                total.stacks = total.stacks + 1
+                totalsById[itemId] = total
             end
-
-            container.freeSlots = tonumber(freeSlots) or (slotCount - #container.slots)
-            -- As in game, the keyring does not count toward bag space.
-            if container.kind ~= "keyring" then
-                totalSlots = totalSlots + slotCount
-                totalFree = totalFree + container.freeSlots
-            end
-            table.insert(containers, container)
         end
+        -- As in game, the keyring does not count toward bag space.
+        if container.kind ~= "keyring" then
+            totalSlots = totalSlots + container.slotCount
+            totalFree = totalFree + container.freeSlots
+        end
+        table.insert(payloadContainers, container)
     end
 
     local items = {}
-    for _, item in pairs(itemsByKey) do
+    local incomplete = 0
+    for itemKey, item in pairs(itemsByKey) do
         table.insert(items, item)
+        local entry = tooltipByKey[itemKey]
+        if entry and not entry.complete then
+            incomplete = incomplete + 1
+        end
     end
     table.sort(items, itemSort)
+    incompleteKeys = incomplete
 
     local totals = {}
     for _, total in pairs(totalsById) do
         table.insert(totals, total)
     end
-    table.sort(totals, function(left, right)
-        return left.itemId < right.itemId
-    end)
+    table.sort(totals, totalSort)
 
     return {
         scope = "carried",
@@ -446,7 +579,7 @@ function GW.InventoryTelemetry.Collect()
         money = { copper = math.max(0, math.floor(tonumber(safe(Globals.GetMoney)) or 0)) },
         slotCount = totalSlots,
         freeSlots = totalFree,
-        containers = containers,
+        containers = payloadContainers,
         items = items,
         totals = totals,
     }, pending
@@ -454,12 +587,98 @@ end
 
 -- Scans and caches the inventory for a character. Returns the payload (nil
 -- when bags are not readable) and whether some item info was still loading.
-function GW.InventoryTelemetry.Refresh(characterKey)
-    local payload, pending = GW.InventoryTelemetry.Collect()
+function GW.InventoryTelemetry.Refresh(characterKey, options)
+    local payload, pending = GW.InventoryTelemetry.Collect(options)
     if payload and characterKey then
         latestByCharacter[characterKey] = payload
+        payloadRevision = payloadRevision + 1
     end
     return payload, pending
+end
+
+-- Money changes do not touch the bags: the last payload is reused with the
+-- new amount (no slot reads, no tooltip scans). Returns nil when there is no
+-- earlier scan to update.
+function GW.InventoryTelemetry.RefreshMoney(characterKey)
+    local latest = characterKey and latestByCharacter[characterKey] or nil
+    if not latest then
+        return nil
+    end
+    local payload = {}
+    for key, value in pairs(latest) do
+        payload[key] = value
+    end
+    payload.money = { copper = math.max(0, math.floor(tonumber(safe(Globals.GetMoney)) or 0)) }
+    latestByCharacter[characterKey] = payload
+    payloadRevision = payloadRevision + 1
+    return payload, false
+end
+
+-- Changes whenever a new payload is cached (see the inventory domain).
+function GW.InventoryTelemetry.PayloadRevision(characterKey)
+    if not characterKey or not latestByCharacter[characterKey] then
+        return nil
+    end
+    return payloadRevision
+end
+
+function GW.InventoryTelemetry.MarkBagDirty(bagId)
+    bagId = tonumber(bagId)
+    if bagId then
+        dirtyBags[bagId] = true
+    else
+        allDirty = true
+    end
+end
+
+function GW.InventoryTelemetry.MarkAllDirty()
+    allDirty = true
+end
+
+function GW.InventoryTelemetry.HasDirtyBags()
+    return allDirty or next(dirtyBags) ~= nil
+end
+
+-- Seconds since the last read of every bag, or nil if there was none.
+function GW.InventoryTelemetry.SecondsSinceFullRead()
+    local current = currentTime()
+    if not lastFullRead or not current then
+        return nil
+    end
+    return current - lastFullRead
+end
+
+-- Item data arrived for itemId: allow one more attempt for incomplete
+-- descriptions of that item. Returns whether anything became retryable.
+function GW.InventoryTelemetry.NoteItemInfo(itemId)
+    itemId = tonumber(itemId)
+    if not itemId or incompleteKeys == 0 then
+        return false
+    end
+    local retryable = false
+    for _, entry in pairs(tooltipByKey) do
+        if entry.itemId == itemId and not entry.complete and entry.resets < MAX_ITEM_INFO_RESETS then
+            entry.resets = entry.resets + 1
+            entry.attempts = math.min(entry.attempts, MAX_TOOLTIP_ATTEMPTS - 1)
+            retryable = true
+        end
+    end
+    return retryable
+end
+
+-- Whether any cached description is incomplete and may still be retried.
+function GW.InventoryTelemetry.HasPendingItems()
+    for _, entry in pairs(tooltipByKey) do
+        if not entry.complete and entry.attempts < MAX_TOOLTIP_ATTEMPTS then
+            return true
+        end
+    end
+    return false
+end
+
+-- The last scanned inventory, or nil.
+function GW.InventoryTelemetry.Latest(characterKey)
+    return characterKey and latestByCharacter[characterKey] or nil
 end
 
 -- The last scanned inventory, scanning now if there is none yet.
@@ -473,4 +692,11 @@ end
 function GW.InventoryTelemetry.ResetCache()
     describedItems = {}
     latestByCharacter = {}
+    tooltipByKey = {}
+    compositeByKey = {}
+    containerRecords = {}
+    dirtyBags = {}
+    allDirty = true
+    lastFullRead = nil
+    incompleteKeys = 0
 end

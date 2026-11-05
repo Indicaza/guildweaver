@@ -6,6 +6,8 @@
 ## SavedVariables: GuildweaverDB
 
 Utils/Debug.lua
+Utils/Perf.lua
+Utils/WorkQueue.lua
 Data/BridgeInbox.generated.lua
 Data/Store.lua
 Data/CharacterIdentity.lua

@@ -5,6 +5,16 @@ local MAX_TOOLTIP_LINES = 32
 local MAX_TOOLTIP_TEXT = 420
 local tooltipScanner = nil
 local tooltipScannerInitialized = false
+local MAX_CACHED_SPELLS = 2048
+local resolvedSpells = {}
+local resolvedCount = 0
+
+local function perfCount(name)
+    local perf = GW.Perf
+    if perf and perf.Count then
+        perf.Count(name)
+    end
+end
 
 local function cleanText(value)
     if type(value) ~= "string" then
@@ -142,6 +152,7 @@ local function collectLegacyTooltip(spellId)
         return nil
     end
 
+    perfCount("tooltip_spell_scans")
     if type(frame.SetOwner) == "function" then
         pcall(frame.SetOwner, frame, UIParent, "ANCHOR_NONE")
     end
@@ -241,15 +252,26 @@ local function legacySpellMetadata(spellId)
     return result
 end
 
+-- Spell text is static for a session, so complete results (name, icon,
+-- description and tooltip) are cached; incomplete ones are resolved again
+-- next time, so late-loading text still heals. The
+-- returned table is shared and must be treated as read-only.
 local function resolveSpell(spellId)
     spellId = tonumber(spellId)
     if not spellId or spellId <= 0 then
         return nil
     end
 
+    local cached = resolvedSpells[spellId]
+    if cached then
+        perfCount("spell_resolve_hits")
+        return cached
+    end
+
+    perfCount("spell_resolves")
     local modern = modernSpellMetadata(spellId)
     local legacy = legacySpellMetadata(spellId)
-    return {
+    local result = {
         spellId = spellId,
         name = modern.name or legacy.name,
         iconFileDataId = modern.iconFileDataId or legacy.iconFileDataId,
@@ -257,6 +279,15 @@ local function resolveSpell(spellId)
         spellLink = modern.spellLink or legacy.spellLink,
         tooltip = collectModernTooltip(spellId) or collectLegacyTooltip(spellId),
     }
+    if result.name and result.tooltip and result.description and result.iconFileDataId then
+        if resolvedCount >= MAX_CACHED_SPELLS then
+            resolvedSpells = {}
+            resolvedCount = 0
+        end
+        resolvedSpells[spellId] = result
+        resolvedCount = resolvedCount + 1
+    end
+    return result
 end
 
 GW.SpellTelemetry = GW.SpellTelemetry or {}

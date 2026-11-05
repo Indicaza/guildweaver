@@ -12,12 +12,17 @@ end
 
 local Globals = _G
 local registered = {}
+local unitRegistered = {}
 local handler = nil
 local scheduled = {}
 local frame = {}
 
 frame.RegisterEvent = function(_, event)
     registered[event] = true
+end
+frame.RegisterUnitEvent = function(_, event, unit)
+    unitRegistered[event] = unit
+    return true
 end
 
 frame.SetScript = function(_, script, callback)
@@ -36,9 +41,14 @@ Globals.C_Timer = {
 }
 
 local captures = {}
+local fullCaptures = 0
 local addon = {
     Character = {
-        Capture = function(reason)
+        Capture = function()
+            fullCaptures = fullCaptures + 1
+        end,
+        -- Stat and aura changes take the lightweight stats-only path.
+        CaptureStats = function(reason)
             table.insert(captures, reason)
         end,
     },
@@ -47,8 +57,9 @@ local addon = {
 local chunk = assert(loadfile("Systems/CharacterStatEvents.lua"))
 chunk("Guildweaver", addon)
 
-truthy(registered.UNIT_STATS, "unit stats registered")
-truthy(registered.UNIT_AURA, "unit aura registered")
+equal(unitRegistered.UNIT_STATS, "player", "unit stats registered for the player only")
+equal(unitRegistered.UNIT_AURA, "player", "unit aura registered for the player only")
+equal(registered.UNIT_AURA, nil, "unit aura not registered for every unit")
 truthy(registered.COMBAT_RATING_UPDATE, "combat rating registered")
 truthy(registered.UPDATE_SHAPESHIFT_FORM, "shapeshift registered")
 equal(registered.UNIT_POWER_UPDATE, nil, "power tick spam not registered")
@@ -71,5 +82,17 @@ equal(#scheduled, 2, "next change schedules again")
 scheduled[2]()
 equal(#captures, 2, "second capture emitted")
 equal(captures[2], "COMBAT_RATING_UPDATE", "global stat event captured")
+
+equal(fullCaptures, 0, "stat events never trigger a full character capture")
+
+-- Changes during combat are folded into one refresh when combat ends.
+handler(frame, "PLAYER_REGEN_DISABLED")
+handler(frame, "UNIT_AURA", "player")
+handler(frame, "UNIT_STATS", "player")
+equal(#scheduled, 2, "nothing scheduled in combat")
+handler(frame, "PLAYER_REGEN_ENABLED")
+equal(#scheduled, 3, "one refresh after combat")
+scheduled[3]()
+equal(#captures, 3, "post-combat refresh emitted")
 
 print("character stat events spec passed")

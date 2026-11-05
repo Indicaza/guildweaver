@@ -25,12 +25,28 @@ The first milestone establishes a reliable addon foundation:
 - `/gw version` prints the current addon version
 - `/gw snapshot` captures a diagnostic snapshot; normal synchronization does not require it
 - `/gw inventory` rescans your bags and prints the inventory telemetry revision
+- `/gw sync` (or `/gw capture`) records a checkpoint and reloads the UI so WoW writes it to disk for the bridge now
+- `/gw perf` prints capture counts, timings, worst frames, work-queue state and tooltip-scan counts for this session; `/gw perf reset` clears them
 - `/gw reset` resets the window position
 - `/gw help` prints command help
 
 ## Synchronization
 
-Guildweaver is designed so players do not need to export data manually. The addon continuously updates its in-memory outbound SavedVariables state as character data changes. When WoW writes SavedVariables to disk, including during `/reload` and logout, the Guildweaver Bridge notices the new revision and sends it to the paired Holdfast service automatically.
+Guildweaver is designed so players do not need to export data manually. The addon continuously updates its in-memory outbound SavedVariables state as character data changes. WoW only writes SavedVariables to disk during `/reload` and logout; the Guildweaver Bridge then notices the new revisions and sends them to the paired Holdfast service automatically. Guildweaver never reloads the UI on its own (earlier versions reloaded once after login); use `/gw sync` to write to disk immediately.
+
+## Performance
+
+Capture work is scoped to what changed so it stays out of the way during play:
+
+- Stat, aura and combat-rating events refresh and publish only the stats stream, coalesced to one refresh per burst and deferred until combat ends. Unit events are registered for the player only.
+- Gear, talent and level changes re-read only the affected sections. Equipped-item tooltips are reused until the slot, its durability or weapon enchant changes.
+- Bag events re-read only the bags that changed and rescan tooltips only for items whose link, count, binding or durability changed. Money changes never read bags. All bags are re-read every 15 minutes, on entering the world and on bag swaps, to repair missed events.
+- Recipe books, tooltip enrichment and item-catalog definitions run on one work queue with a 4 ms per-frame budget and a cap of 40 work items per frame, paused in combat and idle when empty. Closing or switching a profession cancels a scan in progress, so only complete books are published. Loot-window tooltips are still read immediately, because the window can close at any moment.
+- Each telemetry payload is fingerprinted once per publish. Profession and inventory payloads are skipped entirely while their cache revision is unchanged, and large payloads are fingerprinted across frames.
+
+`/gw perf` shows what the addon did this session. Timing uses `debugprofilestop` (falling back to `GetTimePreciseSec`), and the client's own AddOn profiler metrics are included when `C_AddOnProfiler` is available and enabled. Nothing from `/gw perf` is saved.
+
+`test/bench/perf_bench.lua` replays common gameplay in the fake client from `test/support/wow_env.lua` against any checkout. Its numbers are synthetic and are not in-game measurements.
 
 ## Local development
 
