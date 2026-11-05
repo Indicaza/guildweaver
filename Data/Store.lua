@@ -154,11 +154,32 @@ local function captureMeta()
     return GuildweaverDB.meta.capture
 end
 
+function GW.Store.ConfirmLiveClient()
+    local realm = type(GetRealmName) == "function" and GetRealmName() or nil
+    local interface = nil
+    if type(GetBuildInfo) == "function" then
+        local _, _, _, value = GetBuildInfo()
+        interface = tonumber(value)
+    end
+    local testClient = type(IsTestBuild) == "function" and IsTestBuild()
+    local testRealm = type(realm) == "string" and (
+        string.lower(realm):match("%f[%a]beta%f[%A]") or string.lower(realm):match("%f[%a]ptr%f[%A]")
+    )
+    if type(realm) ~= "string" or realm == "" or testClient or testRealm
+        or not interface or interface < 16000 or interface >= 17000 then
+        GuildweaverDB.gameRelease = nil
+        return false
+    end
+    GuildweaverDB.gameRelease = "forever-live"
+    return true
+end
+
 function GW.Store.Initialize()
-    if type(GuildweaverDB) ~= "table" then
+    if type(GuildweaverDB) ~= "table" or GuildweaverDB.gameRelease ~= "forever-live" then
         GuildweaverDB = {}
     end
 
+    GW.Store.ConfirmLiveClient()
     applyDefaults(defaults, GuildweaverDB)
     GuildweaverDB.schemaVersion = defaults.schemaVersion
     GuildweaverDB.meta = GuildweaverDB.meta or {}

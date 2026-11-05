@@ -39,7 +39,7 @@ Clone the repository somewhere convenient, then create a Windows directory junct
 Example PowerShell command:
 
 ```powershell
-New-Item -ItemType Junction -Path "C:\Program Files (x86)\World of Warcraft\_classic_beta_\Interface\AddOns\Guildweaver" -Target "C:\Users\Zach\Projects\guildweaver\addon"
+New-Item -ItemType Junction -Path "C:\Program Files (x86)\World of Warcraft\_forever_\Interface\AddOns\Guildweaver" -Target "C:\Users\Zach\Projects\guildweaver"
 ```
 
 After Guildweaver appears in the in-game addon list, use `/reload` while iterating.

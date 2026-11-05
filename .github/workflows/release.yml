@@ -8,6 +8,10 @@ on:
     tags:
       - "v*"
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
@@ -200,3 +204,10 @@ jobs:
             args+=(--prerelease)
           fi
           gh release create "${args[@]}"
+
+      - name: Upgrade existing beta and stable installations for launch
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.meta.outputs.addon_version == '0.5.0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: bash scripts/publishLaunchChannels.sh
