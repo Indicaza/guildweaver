@@ -49,6 +49,7 @@ globals = {
     "GetTradeSkillRecipeLink",
     "GuildweaverDB",
     "ReloadUI",
+    "IsTestBuild",
     "SLASH_GUILDWEAVER1",
     "SLASH_GUILDWEAVER2",
     "SlashCmdList",

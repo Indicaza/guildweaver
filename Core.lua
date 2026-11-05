@@ -69,6 +69,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
     end
 
     if event == "PLAYER_LOGIN" then
+        GW.Store.ConfirmLiveClient()
         GW.Print("v" .. GW.version .. " loaded. Telemetry capture is automatic; /gw opens Guildweaver.")
     end
 end)

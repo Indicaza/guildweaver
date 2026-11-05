@@ -10,6 +10,8 @@ local function truthy(value, label)
     end
 end
 
+GetRealmName = function() return "Live Realm" end
+GetBuildInfo = function() return "1.60.1", "70338", "Nov 2026", 16001 end
 GuildweaverDB = { characters = { BetaRook = {} } }
 local now = 1791322510
 GetServerTime = function() return now end
@@ -62,3 +64,15 @@ equal(GuildweaverDB.sync.outbound.telemetry["character_snapshot:character-rook"]
 truthy(GuildweaverDB.sync.outbound.telemetry["talents:character-rook"], "other streams kept")
 
 print("telemetry_store_spec passed")
+
+GetRealmName = function() return "Classic Beta PvE 2" end
+equal(Store.ConfirmLiveClient(), false, "beta client rejected")
+equal(GuildweaverDB.gameRelease, nil, "beta saves have no live marker")
+GetRealmName = function() return "Live Realm" end
+IsTestBuild = function() return true end
+equal(Store.ConfirmLiveClient(), false, "test build rejected")
+IsTestBuild = nil
+GetBuildInfo = function() return "12.1.5", "1", "Nov 2026", 120105 end
+equal(Store.ConfirmLiveClient(), false, "other game rejected")
+GetBuildInfo = function() return "1.60.1", "70338", "Nov 2026", 16001 end
+equal(Store.ConfirmLiveClient(), true, "live client confirmed")
