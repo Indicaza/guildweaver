@@ -16,11 +16,39 @@ local function guildTelemetryId(snapshot)
     })
 end
 
+-- Recipe books are published in their own profession_snapshot stream and
+-- can be hundreds of recipes per profession; repeating them in every session
+-- checkpoint only grew SavedVariables. Checkpoints keep each profession with
+-- a recipe count instead. (The collector does not read recipes from
+-- checkpoints; they are shown in the telemetry inspector only.)
+local function checkpointProfessions(professions)
+    if type(professions) ~= "table" then
+        return professions
+    end
+    local result = {}
+    for index, profession in ipairs(professions) do
+        if type(profession) == "table" and type(profession.recipes) == "table" then
+            local copy = {}
+            for key, value in pairs(profession) do
+                if key ~= "recipes" then
+                    copy[key] = value
+                end
+            end
+            copy.recipeCount = #profession.recipes
+            result[index] = copy
+        else
+            result[index] = profession
+        end
+    end
+    return result
+end
+
 local function checkpointPayload(snapshot, sessionId, checkpoint, reason)
     local payload = {}
     for key, value in pairs(snapshot) do
         payload[key] = value
     end
+    payload.professions = checkpointProfessions(snapshot.professions)
     payload.sessionId = sessionId
     payload.checkpoint = checkpoint
     payload.checkpointReason = reason
@@ -59,6 +87,9 @@ function GW.SessionCapture.CaptureCheckpoint(checkpoint, reason)
     return snapshot
 end
 
+-- Explicit, user-requested synchronization (/gw sync): WoW only writes
+-- SavedVariables to disk on reload or logout, so the bridge sees new data
+-- after this reload. Never called automatically.
 function GW.SessionCapture.CaptureAndReload(reason)
     local sessionId = GW.Store.GetCaptureSession()
     if not sessionId then
@@ -89,22 +120,21 @@ function GW.SessionCapture:Initialize()
         if event == "PLAYER_LOGIN" then
             local _, resumedAfterReload = GW.Store.BeginCaptureSession()
 
+            -- One full reconciliation per login or reload. The session
+            -- baseline stays in memory and reaches disk the next time WoW
+            -- writes SavedVariables (reload, logout, or /gw sync); there is
+            -- no automatic reload.
+            if self.startupScheduled then
+                return
+            end
+            self.startupScheduled = true
             C_Timer.After(resumedAfterReload and 0.5 or INITIAL_CAPTURE_DELAY_SECONDS, function()
                 if resumedAfterReload then
                     GW.Character.Capture("POST_RELOAD_RECONCILE")
                     return
                 end
 
-                local snapshot = GW.SessionCapture.CaptureCheckpoint("start", "SESSION_START")
-                if not snapshot then
-                    return
-                end
-
-                GW.Store.MarkCaptureReloadPending()
-                GW.Print("Initial telemetry captured. Reloading once so the bridge can sync the session baseline.")
-                C_Timer.After(RELOAD_DELAY_SECONDS, function()
-                    ReloadUI()
-                end)
+                GW.SessionCapture.CaptureCheckpoint("start", "SESSION_START")
             end)
             return
         end

@@ -50,6 +50,26 @@ local function printTelemetryStatus()
     end
 end
 
+local function printPerf()
+    local perf = GW.Perf
+    if not perf or type(perf.Report) ~= "function" then
+        GW.Print("Performance counters unavailable.")
+        return
+    end
+    local extra = {}
+    local queue = GW.WorkQueue
+    if queue and type(queue.Stats) == "function" then
+        local stats = queue.Stats()
+        table.insert(extra, string.format(
+            "work queue: %d queued (max %d), %d done, %d cancelled, %d dropped, %d ms/frame budget, combat paused %s",
+            queue.Size(), stats.maxDepth, stats.completed, stats.cancelled, stats.dropped,
+            queue.FRAME_BUDGET_MS, tostring(queue.InCombat())))
+    end
+    for _, line in ipairs(perf.Report(extra)) do
+        GW.Print(line)
+    end
+end
+
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("PLAYER_LOGIN")
@@ -129,9 +149,22 @@ SlashCmdList.GUILDWEAVER = function(message)
         return
     end
 
+    if command == "perf" then
+        printPerf()
+        return
+    end
+
+    if command == "perf reset" then
+        if GW.Perf and GW.Perf.Reset then
+            GW.Perf.Reset()
+        end
+        GW.Print("Performance counters reset.")
+        return
+    end
+
     if command == "capture" or command == "sync" then
         if GW.SessionCapture.CaptureAndReload("MANUAL_CHECKPOINT") then
-            GW.Print("Telemetry checkpoint captured. Reloading so the bridge can sync it now.")
+            GW.Print("Telemetry checkpoint captured. Reloading so WoW writes it to disk for the bridge now.")
         else
             GW.Print("Telemetry checkpoint unavailable.")
         end
@@ -175,7 +208,7 @@ SlashCmdList.GUILDWEAVER = function(message)
 
     if command == "help" then
         GW.Print("/gw farm start and /gw farm stop measure a farming run. /gw farm shows its status.")
-        GW.Print("/gw opens Guildweaver. Telemetry capture is automatic at session start, during play, and logout. /gw capture forces a checkpoint and reload for immediate bridge sync. /gw snapshot captures a diagnostic snapshot. /gw telemetry shows captured telemetry streams. /gw inventory rescans your bags and shows the inventory revision. /gw version shows the addon version. /gw reset resets the window position.")
+        GW.Print("/gw opens Guildweaver. Telemetry capture is automatic at session start, during play, and logout. WoW writes it to disk on /reload and logout, when the bridge syncs it. /gw sync (or /gw capture) forces a checkpoint and a reload to sync now. /gw snapshot captures a diagnostic snapshot. /gw telemetry shows captured telemetry streams. /gw inventory rescans your bags and shows the inventory revision. /gw perf shows capture timings and counts (/gw perf reset clears them). /gw version shows the addon version. /gw reset resets the window position.")
         return
     end
 

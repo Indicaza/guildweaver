@@ -294,6 +294,38 @@ local function emitDefinitions(snapshot, definitions)
     end
 end
 
+-- Tree definitions only change when the talents are read again (or the
+-- spec, build or locale changes). A scoped capture that reused the last
+-- talents skips re-emitting them, unless the last emission still had
+-- incomplete spell metadata that a later read may heal.
+local emittedDefinitions = {}
+
+local function definitionToken(snapshot)
+    local character = GW.Character
+    local revision = type(character) == "table" and type(character.SectionRevision) == "function"
+        and character.SectionRevision("talents") or nil
+    if not revision then
+        return nil
+    end
+    local specialization = snapshot.specialization
+    return table.concat({
+        tostring(revision),
+        tostring(snapshot.class and (snapshot.class.token or snapshot.class.name) or ""),
+        tostring(specialization and (specialization.id or specialization.name) or ""),
+        tostring(snapshot.gameBuild and snapshot.gameBuild.build or ""),
+        tostring(currentLocale() or ""),
+    }, "|")
+end
+
+local function definitionsComplete(definitions)
+    for _, definition in ipairs(definitions or {}) do
+        if type(definition.metadata) ~= "table" or definition.metadata.status ~= "complete" then
+            return false
+        end
+    end
+    return true
+end
+
 function GW.Store.SetCharacterSnapshot(characterKey, snapshot)
     if type(snapshot) ~= "table" then
         return originalSetCharacterSnapshot(characterKey, snapshot)
@@ -315,7 +347,12 @@ function GW.Store.SetCharacterSnapshot(characterKey, snapshot)
 
         replaceTable(snapshot, normalized)
         local changed = originalSetCharacterSnapshot(characterKey, snapshot)
-        emitDefinitions(snapshot, definitions)
+        local token = definitionToken(snapshot)
+        local emittedKey = tostring(characterKey)
+        if token == nil or emittedDefinitions[emittedKey] ~= token then
+            emitDefinitions(snapshot, definitions)
+            emittedDefinitions[emittedKey] = token and definitionsComplete(definitions) and token or nil
+        end
         return changed
     end
 

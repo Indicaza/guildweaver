@@ -4,6 +4,10 @@ GW.GameItemTelemetry = GW.GameItemTelemetry or {}
 local complete = {}
 local pending = {}
 
+function GW.GameItemTelemetry.IsComplete(itemId)
+    return complete[tonumber(itemId) or 0] == true
+end
+
 function GW.GameItemTelemetry.Publish(itemId)
     itemId = tonumber(itemId)
     if not itemId or itemId <= 0 or complete[itemId] then return nil end
@@ -18,13 +22,17 @@ function GW.GameItemTelemetry.Publish(itemId)
         end
         return nil
     end
-    local snapshot = GW.Character and GW.Character.GetCurrentSnapshot and GW.Character.GetCurrentSnapshot() or {}
+    -- The client build is fixed for the session.
+    if not GW.GameItemTelemetry.gameBuild then
+        local snapshot = GW.Character and GW.Character.GetCurrentSnapshot and GW.Character.GetCurrentSnapshot() or {}
+        GW.GameItemTelemetry.gameBuild = snapshot.gameBuild
+    end
     local envelope = GW.TelemetryEnvelope.Build("game_item_definition", {
         schemaVersion = 1,
         basis = "base_item_id",
         reference = "item:" .. tostring(itemId),
         item = item,
-    }, { gameBuild = snapshot.gameBuild })
+    }, { gameBuild = GW.GameItemTelemetry.gameBuild })
     if not envelope then return nil end
     local changed = GW.Store.SetTelemetrySnapshot("game_item_definition:item:" .. tostring(itemId), envelope)
     complete[itemId] = true

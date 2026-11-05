@@ -14,6 +14,26 @@ if type(professions) == "table"
     and type(spells.Resolve) == "function" then
     local originalCollectOpenRecipeBook = professions.CollectOpenRecipeBook
 
+    -- One recipe's enrichment; the incremental scan in
+    -- Systems/ProfessionCapture.lua calls it once per recipe across frames.
+    local function enrichRecipe(recipe)
+        if type(recipe) == "table" and recipe.known ~= false then
+            local spellId = tonumber(recipe.spellId or recipe.recipeId)
+            if spellId then
+                local ok, spell = pcall(spells.Resolve, spellId)
+                if ok and type(spell) == "table" then
+                    recipe.tooltip = spell.tooltip
+                    recipe.spellLink = recipe.spellLink or spell.spellLink
+                    recipe.description = recipe.description or spell.description
+                    recipe.name = recipe.name or spell.name
+                    recipe.iconFileDataId = recipe.iconFileDataId or spell.iconFileDataId
+                end
+            end
+        end
+    end
+
+    professions.EnrichRecipeTooltip = enrichRecipe
+
     professions.CollectOpenRecipeBook = function(kind)
         local book = originalCollectOpenRecipeBook(kind)
         if type(book) ~= "table" or type(book.recipes) ~= "table" then
@@ -21,19 +41,7 @@ if type(professions) == "table"
         end
 
         for _, recipe in ipairs(book.recipes) do
-            if type(recipe) == "table" and recipe.known ~= false then
-                local spellId = tonumber(recipe.spellId or recipe.recipeId)
-                if spellId then
-                    local ok, spell = pcall(spells.Resolve, spellId)
-                    if ok and type(spell) == "table" then
-                        recipe.tooltip = spell.tooltip
-                        recipe.spellLink = recipe.spellLink or spell.spellLink
-                        recipe.description = recipe.description or spell.description
-                        recipe.name = recipe.name or spell.name
-                        recipe.iconFileDataId = recipe.iconFileDataId or spell.iconFileDataId
-                    end
-                end
-            end
+            enrichRecipe(recipe)
         end
 
         return book

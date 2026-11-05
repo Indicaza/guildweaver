@@ -596,11 +596,55 @@ local function collectGuild()
     }
 end
 
-function GW.Character.Capture(reason, recipeOverride)
+-- Raw (pre-normalization) talents and equipment from the last capture, in
+-- memory only. A scoped capture recollects only the sections whose inputs
+-- changed and reuses these for the rest; the normalizers never modify them.
+local rawSections = {}
+local sectionRevisions = { talents = 0, equipment = 0 }
+
+-- How many times a section was recollected this session. Consumers use it to
+-- skip work that only depends on that section (talent tree definitions).
+function GW.Character.SectionRevision(section)
+    return sectionRevisions[section]
+end
+
+local function invalidateEquipmentEnrichment()
+    local items = GW.ItemTelemetry
+    if type(items) == "table" and type(items.InvalidateEquipmentCache) == "function" then
+        items.InvalidateEquipmentCache()
+    end
+end
+
+-- scope == nil is a full reconciliation: every section is read again and
+-- cached equipment tooltips are discarded. A scope table names the sections
+-- to recollect: { talents = true }, { equipment = true } (durabilityOnly
+-- keeps tooltips whose slot did not change), or {} for identity, guild and
+-- profession levels only. Identity and professions are cheap and always read.
+function GW.Character.Capture(reason, recipeOverride, scope)
     local name, realm, key = currentCharacterIdentity()
     if not key then
         return nil
     end
+
+    local cached = type(scope) == "table" and rawSections[key] or nil
+    local talents
+    if cached and not scope.talents then
+        talents = cached.talents
+    else
+        talents = collectTalents()
+        sectionRevisions.talents = sectionRevisions.talents + 1
+    end
+    if not cached or (scope.equipment and not scope.durabilityOnly) then
+        invalidateEquipmentEnrichment()
+    end
+    local equipment
+    if cached and not scope.equipment then
+        equipment = cached.equipment
+    else
+        equipment = collectEquipment()
+        sectionRevisions.equipment = sectionRevisions.equipment + 1
+    end
+    rawSections[key] = { talents = talents, equipment = equipment }
 
     local raceName, raceFile, raceId = UnitRace("player")
     local className, classFile, classId = UnitClass("player")
@@ -636,9 +680,9 @@ function GW.Character.Capture(reason, recipeOverride)
         },
         guild = guild,
         specialization = collectSpecialization(),
-        talents = collectTalents(),
+        talents = talents,
         professions = collectProfessions(previousSnapshot, recipeOverride),
-        equipment = collectEquipment(),
+        equipment = equipment,
     }
 
     GW.Store.SetCharacterSnapshot(key, snapshot)
@@ -657,11 +701,89 @@ function GW.Character.CaptureProfessionRecipes(reason)
         return nil
     end
 
+    return GW.Character.CompleteProfessionRecipes(book, reason)
+end
+
+-- The raw key earlier versions cached recipe books under (see
+-- GW.ProfessionTelemetry.AdoptAliasCache).
+function GW.Character.ProfessionCacheAlias()
     local _, _, key = currentCharacterIdentity()
-    professions.RememberRecipeBook(key, book)
-    -- Capturing the character publishes every telemetry domain, including
-    -- profession_snapshot; the override keeps the local snapshot's recipes.
-    return GW.Character.Capture(reason or "TRADE_SKILL", professions.ToCharacterRecipeOverride(book))
+    return key
+end
+
+-- The key profession telemetry is cached and published under: the canonical
+-- character key of the current snapshot.
+function GW.Character.ProfessionCacheKey()
+    local snapshot = GW.Character.GetCurrentSnapshot()
+    if type(snapshot) == "table" and snapshot.characterKey then
+        return snapshot.characterKey
+    end
+    local _, _, key = currentCharacterIdentity()
+    return key
+end
+
+-- Refreshes the local snapshot's recipes for a stored book and publishes
+-- every domain. Only professions are re-read; talents and equipment come
+-- from the last capture.
+function GW.Character.PublishProfessionRecipes(book, reason)
+    local professions = GW.ProfessionTelemetry
+    if not professions or type(book) ~= "table" then
+        return nil
+    end
+    -- The override keeps the local snapshot's recipes.
+    return GW.Character.Capture(reason or "TRADE_SKILL", professions.ToCharacterRecipeOverride(book), {})
+end
+
+-- Stores a complete recipe book and publishes it.
+function GW.Character.CompleteProfessionRecipes(book, reason)
+    local professions = GW.ProfessionTelemetry
+    if not professions or type(book) ~= "table" then
+        return nil
+    end
+    professions.RememberRecipeBook(GW.Character.ProfessionCacheKey(), book)
+    return GW.Character.PublishProfessionRecipes(book, reason)
+end
+
+-- The lightweight path for stat and aura changes: refreshes the cached
+-- snapshot's stats and publishes only the stats domain. Equipment, talents,
+-- professions and inventory are untouched. Falls back to a full capture when
+-- there is no snapshot yet.
+function GW.Character.CaptureStats(reason)
+    local snapshot = GW.Character.GetCurrentSnapshot()
+    if type(snapshot) ~= "table" or not snapshot.characterId then
+        return GW.Character.Capture(reason)
+    end
+
+    local stats = GW.CharacterStats
+    if type(stats) ~= "table" or type(stats.Capture) ~= "function" then
+        return snapshot
+    end
+
+    local perf = GW.Perf
+    local started = perf and perf.Begin and perf.Begin() or nil
+    local ok, value = pcall(stats.Capture)
+    if ok and type(value) == "table" then
+        -- Keeps the cached snapshot coherent for existing readers.
+        snapshot.stats = value
+        local domain = GW.TelemetryDomains and GW.TelemetryDomains.Stats
+        if domain and type(domain.Publish) == "function" then
+            pcall(domain.Publish, {
+                capturedAt = GetServerTime(),
+                reason = reason,
+                characterKey = snapshot.characterKey,
+                characterId = snapshot.characterId,
+                realm = snapshot.realm,
+                region = snapshot.region,
+                locale = snapshot.locale,
+                gameBuild = snapshot.gameBuild,
+                stats = value,
+            })
+        end
+    end
+    if perf and perf.End then
+        perf.End("stats_capture", started)
+    end
+    return snapshot
 end
 
 function GW.Character.GetCurrentSnapshot()
@@ -675,8 +797,61 @@ end
 
 local CHARACTER_CAPTURE_DEBOUNCE_SECONDS = 0.5
 
+-- Which sections each event can change (see GW.Character.Capture). Events
+-- not listed here are full reconciliations.
+local EVENT_SCOPES = {
+    PLAYER_EQUIPMENT_CHANGED = { equipment = true },
+    UPDATE_INVENTORY_DURABILITY = { equipment = true, durabilityOnly = true },
+    PLAYER_TALENT_UPDATE = { talents = true },
+    ACTIVE_TALENT_GROUP_CHANGED = { talents = true },
+    TRAIT_CONFIG_UPDATED = { talents = true },
+    PLAYER_SPECIALIZATION_CHANGED = { talents = true },
+    CHARACTER_POINTS_CHANGED = { talents = true },
+    -- Level-ups change talent points and the colour of item requirements.
+    PLAYER_LEVEL_UP = { talents = true, equipment = true },
+    PLAYER_GUILD_UPDATE = {},
+    GUILD_ROSTER_UPDATE = {},
+    SKILL_LINES_CHANGED = {},
+    PLAYER_ENTERING_WORLD = {},
+}
+
+local function mergeScope(current, addition, first)
+    if addition == nil then
+        return nil
+    end
+    if first then
+        local copy = {}
+        for key, value in pairs(addition) do
+            copy[key] = value
+        end
+        return copy
+    end
+    if current == nil then
+        return nil
+    end
+    current.talents = current.talents or addition.talents
+    if addition.equipment then
+        local onlyDurability = (not current.equipment or current.durabilityOnly) and addition.durabilityOnly
+        current.equipment = true
+        current.durabilityOnly = onlyDurability or nil
+    end
+    return current
+end
+
 local function safeRegister(frame, event)
     pcall(frame.RegisterEvent, frame, event)
+end
+
+local function inCombat()
+    local queue = GW.WorkQueue
+    if queue and type(queue.InCombat) == "function" then
+        return queue.InCombat()
+    end
+    if type(InCombatLockdown) == "function" then
+        local ok, value = pcall(InCombatLockdown)
+        return ok and value == true
+    end
+    return false
 end
 
 function GW.Character:Initialize()
@@ -685,8 +860,9 @@ function GW.Character:Initialize()
     end
 
     local frame = CreateFrame("Frame")
+    -- PLAYER_LOGIN and the first PLAYER_ENTERING_WORLD are covered by the
+    -- session's startup capture (Systems/SessionCapture.lua).
     local characterEvents = {
-        "PLAYER_LOGIN",
         "PLAYER_ENTERING_WORLD",
         "PLAYER_LOGOUT",
         "PLAYER_LEVEL_UP",
@@ -694,10 +870,13 @@ function GW.Character:Initialize()
         "GUILD_ROSTER_UPDATE",
         "SKILL_LINES_CHANGED",
         "PLAYER_EQUIPMENT_CHANGED",
+        "UPDATE_INVENTORY_DURABILITY",
         "PLAYER_SPECIALIZATION_CHANGED",
         "PLAYER_TALENT_UPDATE",
+        "CHARACTER_POINTS_CHANGED",
         "ACTIVE_TALENT_GROUP_CHANGED",
         "TRAIT_CONFIG_UPDATED",
+        "PLAYER_REGEN_ENABLED",
     }
     local professionEvents = {
         "TRADE_SKILL_SHOW",
@@ -705,6 +884,8 @@ function GW.Character:Initialize()
         "NEW_RECIPE_LEARNED",
         "CRAFT_SHOW",
         "CRAFT_UPDATE",
+        "TRADE_SKILL_CLOSE",
+        "CRAFT_CLOSE",
     }
 
     for _, event in ipairs(characterEvents) do
@@ -714,26 +895,56 @@ function GW.Character:Initialize()
         safeRegister(frame, event)
     end
 
-    local professionCapturePending = {}
     local characterCapturePending = false
+    local afterCombat = false
     local latestCharacterReason = nil
+    local pendingScope = nil
+    local hasPendingRequest = false
     local lastGuildKey = nil
-    frame:SetScript("OnEvent", function(_, event, unit)
+
+    local function runCapture()
+        characterCapturePending = false
+        if inCombat() then
+            -- Gear and talents cannot change mid-fight; durability can, and
+            -- waits for the end of combat.
+            afterCombat = true
+            return
+        end
+        local reason = latestCharacterReason
+        local scope = pendingScope
+        latestCharacterReason = nil
+        pendingScope = nil
+        hasPendingRequest = false
+        GW.Character.Capture(reason, nil, scope)
+    end
+
+    local function request(reason, scope)
+        pendingScope = mergeScope(pendingScope, scope, not hasPendingRequest)
+        hasPendingRequest = true
+        latestCharacterReason = reason
+        if characterCapturePending then
+            return
+        end
+        if inCombat() then
+            afterCombat = true
+            return
+        end
+        characterCapturePending = true
+        C_Timer.After(CHARACTER_CAPTURE_DEBOUNCE_SECONDS, runCapture)
+    end
+
+    frame:SetScript("OnEvent", function(_, event, unit, reloading)
         if event == "PLAYER_SPECIALIZATION_CHANGED" and unit and unit ~= "player" then
             return
         end
 
         if event == "TRADE_SKILL_SHOW" or event == "TRADE_SKILL_LIST_UPDATE" or event == "NEW_RECIPE_LEARNED"
-            or event == "CRAFT_SHOW" or event == "CRAFT_UPDATE" then
-            -- Debounce bursts of list updates; trade skill and craft windows
-            -- are tracked separately so one cannot swallow the other.
-            local kind = string.find(event, "CRAFT", 1, true) and "craft" or "tradeskill"
-            if not professionCapturePending[kind] then
-                professionCapturePending[kind] = true
-                C_Timer.After(0.5, function()
-                    professionCapturePending[kind] = false
-                    GW.Character.CaptureProfessionRecipes(event)
-                end)
+            or event == "CRAFT_SHOW" or event == "CRAFT_UPDATE" or event == "TRADE_SKILL_CLOSE" or event == "CRAFT_CLOSE" then
+            local capture = GW.ProfessionCapture
+            if capture and type(capture.Request) == "function" then
+                capture:Request(event)
+            elseif event ~= "TRADE_SKILL_CLOSE" and event ~= "CRAFT_CLOSE" then
+                GW.Character.CaptureProfessionRecipes(event)
             end
             return
         end
@@ -741,6 +952,20 @@ function GW.Character:Initialize()
         if event == "PLAYER_LOGOUT" then
             -- Timers never fire during teardown.
             GW.Character.Capture(event)
+            return
+        end
+
+        if event == "PLAYER_REGEN_ENABLED" then
+            if afterCombat and hasPendingRequest then
+                afterCombat = false
+                characterCapturePending = true
+                C_Timer.After(CHARACTER_CAPTURE_DEBOUNCE_SECONDS, runCapture)
+            end
+            return
+        end
+
+        if event == "PLAYER_ENTERING_WORLD" and (unit == true or reloading == true) then
+            -- Login and /reload: the session start capture covers this.
             return
         end
 
@@ -754,24 +979,10 @@ function GW.Character:Initialize()
             lastGuildKey = guildKey
         end
 
-        -- A login, spec swap or gear change fires several of these at once;
-        -- they share one capture.
-        latestCharacterReason = event
-        if characterCapturePending then
-            return
-        end
-        characterCapturePending = true
-        C_Timer.After(CHARACTER_CAPTURE_DEBOUNCE_SECONDS, function()
-            characterCapturePending = false
-            local reason = latestCharacterReason
-            latestCharacterReason = nil
-            GW.Character.Capture(reason)
-        end)
+        -- A spec swap or gear change fires several of these at once; they
+        -- share one capture that reads only the sections they can change.
+        request(event, EVENT_SCOPES[event])
     end)
 
     self.eventFrame = frame
-
-    C_Timer.After(2, function()
-        GW.Character.Capture("INITIAL_DELAY")
-    end)
 end

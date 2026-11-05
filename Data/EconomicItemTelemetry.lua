@@ -20,6 +20,42 @@ local function safe(fn, ...)
     return value
 end
 
+-- Catalog work that does not depend on a transient window runs on the
+-- shared work queue (optional, budgeted per frame, paused in combat). Without
+-- the queue (tests, very old clients) it runs immediately as before.
+local function defer(key, run)
+    local queue = GW.WorkQueue
+    if type(queue) ~= "table" or type(queue.Enqueue) ~= "function" then
+        run()
+        return
+    end
+    queue.Enqueue({
+        key = key,
+        optional = true,
+        category = "item_catalog",
+        step = function()
+            run()
+            return true
+        end,
+    })
+end
+
+local function publishGameItem(itemId)
+    local gameItems = GW.GameItemTelemetry
+    itemId = tonumber(itemId)
+    if not itemId or type(gameItems) ~= "table" or type(gameItems.Publish) ~= "function" then
+        return
+    end
+    if type(gameItems.IsComplete) == "function" and gameItems.IsComplete(itemId) then
+        return
+    end
+    -- The public base definition scans a bare item link, which stays valid
+    -- after the loot window or bag slot is gone.
+    defer("game_item:" .. tostring(itemId), function()
+        pcall(gameItems.Publish, itemId)
+    end)
+end
+
 local function fullTooltip(tooltip)
     local itemTelemetry = GW.ItemTelemetry
     if type(itemTelemetry) == "table" and type(itemTelemetry.IsFullTooltip) == "function" then
@@ -47,13 +83,20 @@ local function descriptionComplete(item)
     return true
 end
 
+-- The client build cannot change during a session; remember it once known
+-- instead of resolving the character snapshot for every definition.
+local knownGameBuild = nil
 local function currentGameBuild()
+    if knownGameBuild then
+        return knownGameBuild
+    end
     local character = GW.Character
     if type(character) ~= "table" or type(character.GetCurrentSnapshot) ~= "function" then
         return nil
     end
     local snapshot = safe(character.GetCurrentSnapshot)
-    return type(snapshot) == "table" and snapshot.gameBuild or nil
+    knownGameBuild = type(snapshot) == "table" and snapshot.gameBuild or nil
+    return knownGameBuild
 end
 
 local function pendingOutput(output)
@@ -124,9 +167,11 @@ local function describeOutput(output, options)
     options = type(options) == "table" and options or {}
     local itemLink = type(output.itemLink) == "string" and output.itemLink ~= "" and output.itemLink or nil
     local hasContext = tonumber(options.lootSlot) ~= nil or (options.bagId ~= nil and tonumber(options.bagSlot) ~= nil)
+    -- A caller-supplied full tooltip (equipment slots) replaces the generic
+    -- one below, so the hyperlink is not rendered just to be discarded.
     local item = safe(itemTelemetry.Describe, itemLink or itemId, {
         details = true,
-        tooltip = not hasContext,
+        tooltip = not hasContext and not fullTooltip(output.tooltip),
     })
     if type(item) ~= "table" then
         return nil
@@ -154,8 +199,8 @@ local function describeOutput(output, options)
 end
 
 function GW.EconomicItemTelemetry.Publish(output, options)
-    if GW.GameItemTelemetry and GW.GameItemTelemetry.Publish and type(output) == "table" then
-        pcall(GW.GameItemTelemetry.Publish, output.itemId)
+    if type(output) == "table" then
+        publishGameItem(output.itemId)
     end
     local item = describeOutput(output, options)
     if not item then
@@ -243,21 +288,94 @@ local function currentLootSlots()
     return slots
 end
 
+-- Several collectors read the same loot window (mob loot plus a gathering
+-- profession, on both LOOT_READY and LOOT_OPENED). Each incomplete item's
+-- definition is attempted at most twice per window (item data can arrive
+-- between the two events); the window resets on LOOT_CLOSED, or after a few
+-- seconds if that event was missed.
+local LOOT_WINDOW_SECONDS = 10
+local MAX_LOOT_ATTEMPTS = 2
+local lootAttempts = {}
+local lootWindowStarted = nil
+
+local function lootClock()
+    return tonumber(safe(Globals.GetTime)) or nil
+end
+
+local function resetLootWindow()
+    lootAttempts = {}
+    lootWindowStarted = nil
+end
+
+local function attemptInLootWindow(itemId)
+    local current = lootClock()
+    if lootWindowStarted and current and current - lootWindowStarted > LOOT_WINDOW_SECONDS then
+        resetLootWindow()
+    end
+    lootWindowStarted = lootWindowStarted or current
+    local attempts = lootAttempts[itemId] or 0
+    if attempts >= MAX_LOOT_ATTEMPTS then
+        return false
+    end
+    lootAttempts[itemId] = attempts + 1
+    return true
+end
+
 local originalReadLoot = type(GW.GatheringTelemetry) == "table" and GW.GatheringTelemetry.ReadLoot or nil
 if type(originalReadLoot) == "function" then
     GW.GatheringTelemetry.ReadLoot = function(...)
         local loot = originalReadLoot(...)
         if type(loot) == "table" and type(loot.outputs) == "table" then
             -- Read the tooltip from the live loot slot before auto-loot closes
-            -- the window. Generic hyperlink scans are only a fallback.
-            local slots = currentLootSlots()
+            -- the window: this part cannot be deferred. Generic hyperlink
+            -- scans are only a fallback.
+            local perf = GW.Perf
+            local started = perf and perf.Begin and perf.Begin() or nil
+            local slots = nil
             for _, output in ipairs(loot.outputs) do
-                local slot = slots[tonumber(output.itemId)]
-                pcall(GW.EconomicItemTelemetry.Publish, output, slot and { lootSlot = slot } or nil)
+                local itemId = tonumber(output.itemId)
+                if itemId and not completeItems[itemId] and attemptInLootWindow(itemId) then
+                    slots = slots or currentLootSlots()
+                    local slot = slots[itemId]
+                    pcall(GW.EconomicItemTelemetry.Publish, output, slot and { lootSlot = slot } or nil)
+                elseif itemId then
+                    publishGameItem(itemId)
+                end
+            end
+            if perf and perf.End then
+                perf.End("loot_capture", started)
             end
         end
         return loot
     end
+end
+
+-- Inventory and equipment definitions are not transient: they are queued,
+-- tried a bounded number of times per session (item-data events still
+-- retry pending ones), and skipped once complete.
+local MAX_CATALOG_ATTEMPTS = 3
+local catalogAttempts = {}
+
+local function catalogCandidate(itemId)
+    if not itemId or completeItems[itemId] then
+        return false
+    end
+    local attempts = catalogAttempts[itemId] or 0
+    if attempts >= MAX_CATALOG_ATTEMPTS then
+        return false
+    end
+    catalogAttempts[itemId] = attempts + 1
+    return true
+end
+
+local function slotHolds(bagId, slot, itemId)
+    local container = Globals.C_Container
+    if type(container) == "table" and type(container.GetContainerItemInfo) == "function" then
+        local info = safe(container.GetContainerItemInfo, bagId, slot)
+        return type(info) == "table" and tonumber(info.itemID) == itemId
+    end
+    local link = safe(Globals.GetContainerItemLink, bagId, slot)
+    return itemIdFromLink(link) == itemId
 end
 
 -- Existing items should self-heal the shared catalog without requiring the
@@ -283,10 +401,20 @@ if type(originalInventoryRefresh) == "function" then
                         local itemId = item and tonumber(item.itemId) or nil
                         if itemId and not seen[itemId] then
                             seen[itemId] = true
-                            pcall(GW.EconomicItemTelemetry.Publish, item, {
-                                bagId = container.bagId,
-                                bagSlot = slot.slot,
-                            })
+                            if catalogCandidate(itemId) then
+                                local bagId, bagSlot = container.bagId, slot.slot
+                                defer("item_definition:bag:" .. tostring(itemId), function()
+                                    -- The item may have moved since the scan.
+                                    if GW.WorkQueue and not slotHolds(bagId, bagSlot, itemId) then
+                                        catalogAttempts[itemId] = (catalogAttempts[itemId] or 1) - 1
+                                        return
+                                    end
+                                    pcall(GW.EconomicItemTelemetry.Publish, item, {
+                                        bagId = bagId,
+                                        bagSlot = bagSlot,
+                                    })
+                                end)
+                            end
                         end
                     end
                 end
@@ -305,7 +433,13 @@ if type(originalSetCharacterSnapshot) == "function" then
         local result = originalSetCharacterSnapshot(characterKey, snapshot)
         if type(snapshot) == "table" and type(snapshot.equipment) == "table" then
             for _, item in ipairs(snapshot.equipment) do
-                pcall(GW.EconomicItemTelemetry.Publish, item)
+                local itemId = type(item) == "table" and tonumber(item.itemId) or nil
+                if catalogCandidate(itemId) then
+                    -- The slot's rendered tooltip travels with the item.
+                    defer("item_definition:equipment:" .. tostring(itemId), function()
+                        pcall(GW.EconomicItemTelemetry.Publish, item)
+                    end)
+                end
             end
         end
         return result
@@ -317,7 +451,12 @@ if type(CreateFrame) == "function" then
     if frame and type(frame.RegisterEvent) == "function" and type(frame.SetScript) == "function" then
         pcall(frame.RegisterEvent, frame, "GET_ITEM_INFO_RECEIVED")
         pcall(frame.RegisterEvent, frame, "ITEM_DATA_LOAD_RESULT")
-        frame:SetScript("OnEvent", function(_, _, itemId, success)
+        pcall(frame.RegisterEvent, frame, "LOOT_CLOSED")
+        frame:SetScript("OnEvent", function(_, event, itemId, success)
+            if event == "LOOT_CLOSED" then
+                resetLootWindow()
+                return
+            end
             if success == false then
                 return
             end

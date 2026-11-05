@@ -6,6 +6,13 @@ local MAX_TOOLTIP_TEXT = 600
 local tooltipScanner = nil
 local tooltipScannerInitialized = false
 
+local function perfCount(name)
+    local perf = GW.Perf
+    if perf and perf.Count then
+        perf.Count(name)
+    end
+end
+
 local function cleanText(value)
     if type(value) ~= "string" then
         return nil
@@ -81,6 +88,7 @@ local function collectModernTooltip(method, ...)
         return nil
     end
 
+    perfCount("tooltip_info_calls")
     local ok, data = pcall(tooltipInfo[method], ...)
     if not ok or type(data) ~= "table" or type(data.lines) ~= "table" then
         return nil
@@ -155,6 +163,7 @@ local function collectLegacyTooltip(method, ...)
         return nil
     end
 
+    perfCount("tooltip_item_scans")
     local parent = Globals.UIParent or UIParent
     if type(frame.SetOwner) == "function" then
         pcall(frame.SetOwner, frame, parent, "ANCHOR_NONE")
@@ -350,6 +359,41 @@ local function enrichMetadata(item, itemLink)
     end
 end
 
+-- Equipped item tooltips are cached per slot while the slot's rendered
+-- inputs are unchanged: the link (item, enchant, gems, suffix), durability and
+-- a weapon's temporary enchant. Everything that can change other text (set
+-- bonuses from other slots, level requirements) is handled by the character
+-- capture invalidating the cache on gear changes, level-ups and full
+-- reconciliations (GW.ItemTelemetry.InvalidateEquipmentCache).
+local equipmentTooltips = {}
+
+local WEAPON_SLOT_OFFSETS = { [16] = 0, [17] = 4 }
+
+local function weaponEnchantState(slotId)
+    local offset = WEAPON_SLOT_OFFSETS[tonumber(slotId) or 0]
+    local getWeaponEnchantInfo = Globals.GetWeaponEnchantInfo
+    if not offset or type(getWeaponEnchantInfo) ~= "function" then
+        return ""
+    end
+    -- hasEnchant, expiration, charges, enchantId per hand; expiration and
+    -- charges tick constantly and are left out of the signature.
+    local values = { pcall(getWeaponEnchantInfo) }
+    if not values[1] then
+        return ""
+    end
+    return tostring(values[2 + offset]) .. ":" .. tostring(values[5 + offset])
+end
+
+local function equipmentSignature(item, itemLink)
+    local durability = item.durability
+    return table.concat({
+        itemLink,
+        tostring(durability and durability.current or ""),
+        tostring(durability and durability.max or ""),
+        weaponEnchantState(item.slotId),
+    }, "\031")
+end
+
 local function enrichEquipmentItem(item)
     if type(item) ~= "table" then
         return
@@ -364,12 +408,72 @@ local function enrichEquipmentItem(item)
     item.stats = collectStats(itemLink) or item.stats
     item.durability = collectDurability(item.slotId) or item.durability
     item.spell = collectSpell(itemLink) or item.spell
-    item.tooltip = collectEquipmentTooltip(item.slotId, itemLink) or item.tooltip
+
+    local slotKey = tostring(item.slotId or itemLink)
+    local signature = equipmentSignature(item, itemLink)
+    local cached = equipmentTooltips[slotKey]
+    if cached and cached.signature == signature then
+        item.tooltip = cached.tooltip or item.tooltip
+        return
+    end
+
+    local tooltip = collectEquipmentTooltip(item.slotId, itemLink)
+    item.tooltip = tooltip or item.tooltip
+    if tooltip then
+        equipmentTooltips[slotKey] = { signature = signature, tooltip = tooltip }
+    else
+        equipmentTooltips[slotKey] = nil
+    end
+end
+
+local function invalidateEquipmentCache()
+    equipmentTooltips = {}
+end
+
+local function copyItem(item)
+    local result = {}
+    for key, value in pairs(item) do
+        result[key] = value
+    end
+    return result
+end
+
+-- Descriptions requested with options.cache (recipe books, whose crafted
+-- items and reagents are static for the session) are kept once complete.
+-- Bounded; callers receive a copy they may modify.
+local MAX_DESCRIPTIONS = 1024
+local descriptions = {}
+local descriptionCount = 0
+
+local describeItem
+
+local function describeCached(itemIdOrLink, options)
+    local key = tostring(itemIdOrLink)
+        .. (options.tooltip == false and "|t0" or "|t1")
+        .. (options.details == true and "|d1" or "|d0")
+    local cached = descriptions[key]
+    if cached then
+        perfCount("item_description_hits")
+        return copyItem(cached)
+    end
+    local item = describeItem(itemIdOrLink, { tooltip = options.tooltip, details = options.details })
+    if type(item) == "table" and item.name and (options.tooltip == false or item.tooltip ~= nil) then
+        if descriptionCount >= MAX_DESCRIPTIONS then
+            descriptions = {}
+            descriptionCount = 0
+        end
+        descriptions[key] = copyItem(item)
+        descriptionCount = descriptionCount + 1
+    end
+    return item
 end
 
 -- Shared item description for recipes, reagents, loot, inventory, etc. A
 -- generic hyperlink scan still comes from the rendered GameTooltip first.
-local function describeItem(itemIdOrLink, options)
+describeItem = function(itemIdOrLink, options)
+    if type(options) == "table" and options.cache == true then
+        return describeCached(itemIdOrLink, options)
+    end
     local itemLink = itemIdOrLink
     local itemId = tonumber(itemIdOrLink)
     if itemId then
@@ -415,7 +519,12 @@ end
 
 GW.ItemTelemetry = GW.ItemTelemetry or {}
 GW.ItemTelemetry.EnrichEquipmentItem = enrichEquipmentItem
+GW.ItemTelemetry.InvalidateEquipmentCache = invalidateEquipmentCache
 GW.ItemTelemetry.Describe = describeItem
+GW.ItemTelemetry.ClearDescriptionCache = function()
+    descriptions = {}
+    descriptionCount = 0
+end
 GW.ItemTelemetry.IsFullTooltip = function(tooltip)
     return type(tooltip) == "table"
         and tooltip.complete == true

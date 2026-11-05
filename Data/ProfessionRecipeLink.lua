@@ -12,7 +12,7 @@ end
 -- base profession instead of creating an orphaned child entry.
 local originalRememberRecipeBook = professions.RememberRecipeBook
 if type(originalRememberRecipeBook) == "function" then
-    function professions.RememberRecipeBook(characterKey, book)
+    function professions.RememberRecipeBook(characterKey, book, ...)
         if characterKey
             and type(professions.CollectProfessions) == "function"
             and type(professions.RememberProfessions) == "function" then
@@ -22,7 +22,7 @@ if type(originalRememberRecipeBook) == "function" then
             end
         end
 
-        return originalRememberRecipeBook(characterKey, book)
+        return originalRememberRecipeBook(characterKey, book, ...)
     end
 end
 

@@ -63,39 +63,70 @@ local function collectCategories(recipes)
     return #categories > 0 and categories or nil
 end
 
+-- The reagents of known recipes, each once, in book order (at most
+-- MAX_ITEMS candidates are described).
+local function bookItemIds(recipes)
+    local seen = {}
+    local ids = {}
+    for _, recipe in ipairs(recipes) do
+        if recipe.known ~= false then
+            for _, reagent in ipairs(type(recipe.reagents) == "table" and recipe.reagents or {}) do
+                local itemId = tonumber(reagent.itemId)
+                if itemId and not seen[itemId] then
+                    seen[itemId] = true
+                    table.insert(ids, itemId)
+                end
+            end
+        end
+    end
+    return ids
+end
+
+local function describeBookItem(itemId)
+    local describe = GW.ItemTelemetry and GW.ItemTelemetry.Describe
+    if type(describe) ~= "function" then
+        return nil
+    end
+    local ok, item = pcall(describe, itemId, { tooltip = true, cache = true })
+    if ok and type(item) == "table" and (item.name or item.tooltip or item.iconFileDataId) then
+        return {
+            itemId = itemId,
+            itemLink = item.itemLink,
+            name = item.name,
+            iconFileDataId = item.iconFileDataId,
+            qualityId = item.qualityId,
+            itemLevel = item.itemLevel,
+            requiredLevel = item.requiredLevel,
+            tooltip = item.tooltip,
+        }
+    end
+    return nil
+end
+
 local function collectItems(recipes)
     local describe = GW.ItemTelemetry and GW.ItemTelemetry.Describe
     if type(describe) ~= "function" then
         return nil
     end
 
-    local seen = {}
     local items = {}
-    for _, recipe in ipairs(recipes) do
-        if recipe.known ~= false then
-            for _, reagent in ipairs(type(recipe.reagents) == "table" and recipe.reagents or {}) do
-                local itemId = tonumber(reagent.itemId)
-                if itemId and not seen[itemId] and #items < MAX_ITEMS then
-                    seen[itemId] = true
-                    local ok, item = pcall(describe, itemId, { tooltip = true })
-                    if ok and type(item) == "table" and (item.name or item.tooltip or item.iconFileDataId) then
-                        table.insert(items, {
-                            itemId = itemId,
-                            itemLink = item.itemLink,
-                            name = item.name,
-                            iconFileDataId = item.iconFileDataId,
-                            qualityId = item.qualityId,
-                            itemLevel = item.itemLevel,
-                            requiredLevel = item.requiredLevel,
-                            tooltip = item.tooltip,
-                        })
-                    end
-                end
-            end
+    for _, itemId in ipairs(bookItemIds(recipes)) do
+        if #items >= MAX_ITEMS then
+            break
+        end
+        local item = describeBookItem(itemId)
+        if item then
+            table.insert(items, item)
         end
     end
     return #items > 0 and items or nil
 end
+
+-- Per-unit pieces for the incremental scan in Systems/ProfessionCapture.lua.
+professions.CollectBookCategories = collectCategories
+professions.BookItemIds = bookItemIds
+professions.DescribeBookItem = describeBookItem
+professions.MAX_BOOK_ITEMS = MAX_ITEMS
 
 local originalCollectOpenRecipeBook = professions.CollectOpenRecipeBook
 

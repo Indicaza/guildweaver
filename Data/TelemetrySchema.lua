@@ -168,6 +168,13 @@ local function normalizeRecipe(recipe)
     }
 end
 
+-- Recipe lists this module produced. Normalizing is idempotent, and a
+-- capture carries the previous snapshot's normalized list forward unchanged
+-- (only a new recipe book replaces it), so those lists are reused instead of
+-- rebuilding hundreds of recipe tables on every capture. Lists are never
+-- modified after they are built. Weak keys: dropped lists are collected.
+local normalizedRecipeLists = setmetatable({}, { __mode = "k" })
+
 local function normalizeProfession(profession)
     if type(profession) ~= "table" then
         return nil
@@ -175,7 +182,9 @@ local function normalizeProfession(profession)
 
     local skillLineId = tonumber(profession.skillLineId or profession.id)
     local recipes = nil
-    if type(profession.recipes) == "table" then
+    if type(profession.recipes) == "table" and normalizedRecipeLists[profession.recipes] then
+        recipes = profession.recipes
+    elseif type(profession.recipes) == "table" then
         recipes = {}
         for _, recipe in ipairs(profession.recipes) do
             local normalized = normalizeRecipe(recipe)
@@ -185,6 +194,8 @@ local function normalizeProfession(profession)
         end
         if #recipes == 0 then
             recipes = nil
+        else
+            normalizedRecipeLists[recipes] = true
         end
     end
 

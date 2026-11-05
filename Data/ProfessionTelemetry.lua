@@ -75,7 +75,7 @@ local function describeItem(itemIdOrLink, includeTooltip)
     end
     local describe = GW.ItemTelemetry and GW.ItemTelemetry.Describe
     if type(describe) == "function" then
-        local ok, item = pcall(describe, itemIdOrLink, { tooltip = includeTooltip == true })
+        local ok, item = pcall(describe, itemIdOrLink, { tooltip = includeTooltip == true, cache = true })
         if ok and type(item) == "table" then
             return item
         end
@@ -251,14 +251,14 @@ end
 -- Some clients (Forever) lack GetAllRecipeIDs. Their GetFilteredRecipeIDs
 -- spans every known profession, so it is narrowed to the open one here.
 -- Never written onto C_TradeSkillUI: other addons and Blizzard's UI share it.
-local function allRecipeIds(api)
+local function recipeIdSource(api)
     if type(api.GetAllRecipeIDs) == "function" then
-        return safe(api.GetAllRecipeIDs)
+        return { ids = safe(api.GetAllRecipeIDs), filtered = true }
     end
 
     local ids = safe(api.GetFilteredRecipeIDs)
     if type(ids) ~= "table" or type(api.IsRecipeInSkillLine) ~= "function" then
-        return ids
+        return { ids = ids, filtered = true }
     end
 
     local skillLines, seen = {}, {}
@@ -270,40 +270,23 @@ local function allRecipeIds(api)
             table.insert(skillLines, skillLineId)
         end
     end
-
-    local filtered = {}
-    for _, recipeId in ipairs(ids) do
-        for _, skillLineId in ipairs(skillLines) do
-            if safe(api.IsRecipeInSkillLine, recipeId, skillLineId) == true then
-                table.insert(filtered, recipeId)
-                break
-            end
-        end
-    end
-    return filtered
+    return { ids = ids, filtered = false, skillLines = skillLines }
 end
 
-local function collectModernBook()
-    local api = Globals.C_TradeSkillUI
-    if type(api) ~= "table" or type(api.GetRecipeInfo) ~= "function" then
-        return nil
+local function recipeInSkillLines(api, recipeId, skillLines)
+    for _, skillLineId in ipairs(skillLines) do
+        if safe(api.IsRecipeInSkillLine, recipeId, skillLineId) == true then
+            return true
+        end
     end
+    return false
+end
 
-    local ids = allRecipeIds(api)
-    if type(ids) ~= "table" or #ids == 0 then
-        return nil
-    end
-
-    local recipeIds = {}
-    for _, recipeId in ipairs(ids) do
-        table.insert(recipeIds, recipeId)
-    end
-    table.sort(recipeIds)
-
+local function modernProfession(api)
     local base = safe(api.GetBaseProfessionInfo)
     local child = safe(api.GetChildProfessionInfo)
     local info = type(child) == "table" and child.professionID and child or (type(base) == "table" and base or {})
-    local profession = {
+    return {
         skillLineId = tonumber(info.professionID),
         parentSkillLineId = type(base) == "table" and tonumber(base.professionID) or nil,
         name = cleanText(info.professionName),
@@ -311,60 +294,52 @@ local function collectModernBook()
         maxSkillLevel = tonumber(info.maxSkillLevel),
         skillModifier = tonumber(info.skillModifier),
     }
+end
 
-    local recipes = {}
-    for _, recipeId in ipairs(recipeIds) do
-        if #recipes >= MAX_RECIPES_PER_BOOK then
-            break
-        end
-
-        local recipe = safe(api.GetRecipeInfo, recipeId)
-        if type(recipe) == "table" then
-            local known = recipe.learned == true
-            local skillLineId = safe(api.GetTradeSkillLineForRecipe, recipeId)
-            local output = safe(api.GetRecipeOutputItemData, recipeId)
-            local schematic = safe(api.GetRecipeSchematic, recipeId, false)
-            local cooldown, isDayCooldown, charges, maxCharges = safe(api.GetRecipeCooldown, recipeId)
-            local outputItemId = type(output) == "table" and output.itemID
-                or type(schematic) == "table" and schematic.outputItemID
-                or nil
-            local outputLink = type(output) == "table" and output.hyperlink or nil
-
-            table.insert(recipes, {
-                recipeId = recipeId,
-                spellId = recipeId,
-                name = cleanText(recipe.name),
-                iconFileDataId = recipe.icon,
-                recipeLink = cleanText(recipe.hyperlink),
-                known = known,
-                craftable = recipe.craftable,
-                disabled = recipe.disabled or nil,
-                categoryId = recipe.categoryID,
-                skillLineAbilityId = recipe.skillLineAbilityID,
-                professionSkillLineId = tonumber(skillLineId) or profession.skillLineId,
-                difficulty = MODERN_DIFFICULTY[recipe.relativeDifficulty],
-                relativeDifficulty = recipe.relativeDifficulty,
-                skillUps = tonumber(recipe.numSkillUps),
-                maxTrivialLevel = tonumber(recipe.maxTrivialLevel),
-                unlockedRecipeLevel = tonumber(recipe.unlockedRecipeLevel),
-                description = cleanText(safe(api.GetRecipeDescription, recipeId)),
-                cooldown = cooldownRecord(cooldown, isDayCooldown, charges, maxCharges),
-                crafted = craftedItem(
-                    outputLink or outputItemId,
-                    type(schematic) == "table" and schematic.quantityMin or nil,
-                    type(schematic) == "table" and schematic.quantityMax or nil,
-                    known
-                ),
-                tools = modernTools(api, recipeId),
-                reagents = modernReagents(schematic),
-            })
-        end
-    end
-
-    if #recipes == 0 then
+local function modernRecipe(api, recipeId, profession)
+    local recipe = safe(api.GetRecipeInfo, recipeId)
+    if type(recipe) ~= "table" then
         return nil
     end
-    return { source = "C_TradeSkillUI", profession = profession, recipes = recipes }
+
+    local known = recipe.learned == true
+    local skillLineId = safe(api.GetTradeSkillLineForRecipe, recipeId)
+    local output = safe(api.GetRecipeOutputItemData, recipeId)
+    local schematic = safe(api.GetRecipeSchematic, recipeId, false)
+    local cooldown, isDayCooldown, charges, maxCharges = safe(api.GetRecipeCooldown, recipeId)
+    local outputItemId = type(output) == "table" and output.itemID
+        or type(schematic) == "table" and schematic.outputItemID
+        or nil
+    local outputLink = type(output) == "table" and output.hyperlink or nil
+
+    return {
+        recipeId = recipeId,
+        spellId = recipeId,
+        name = cleanText(recipe.name),
+        iconFileDataId = recipe.icon,
+        recipeLink = cleanText(recipe.hyperlink),
+        known = known,
+        craftable = recipe.craftable,
+        disabled = recipe.disabled or nil,
+        categoryId = recipe.categoryID,
+        skillLineAbilityId = recipe.skillLineAbilityID,
+        professionSkillLineId = tonumber(skillLineId) or profession.skillLineId,
+        difficulty = MODERN_DIFFICULTY[recipe.relativeDifficulty],
+        relativeDifficulty = recipe.relativeDifficulty,
+        skillUps = tonumber(recipe.numSkillUps),
+        maxTrivialLevel = tonumber(recipe.maxTrivialLevel),
+        unlockedRecipeLevel = tonumber(recipe.unlockedRecipeLevel),
+        description = cleanText(safe(api.GetRecipeDescription, recipeId)),
+        cooldown = cooldownRecord(cooldown, isDayCooldown, charges, maxCharges),
+        crafted = craftedItem(
+            outputLink or outputItemId,
+            type(schematic) == "table" and schematic.quantityMin or nil,
+            type(schematic) == "table" and schematic.quantityMax or nil,
+            known
+        ),
+        tools = modernTools(api, recipeId),
+        reagents = modernReagents(schematic),
+    }
 end
 
 -- The legacy trade-skill and craft (Classic Enchanting) frames expose the
@@ -418,86 +393,213 @@ local function legacyTools(apis, index)
     return #tools > 0 and tools or nil
 end
 
-local function collectLegacyBook(kind)
+local function legacyRecipe(apis, kind, index)
+    local name, secondary, recipeType, _, _, extra1, extra2 = legacyCall(apis, "info", index)
+    -- Trade skills: name, skillType, numAvailable, isExpanded, altVerb, numSkillUps.
+    -- Crafts: name, subSpellName, craftType, numAvailable, isExpanded, trainingPointCost, requiredLevel.
+    local skillType = kind == "craft" and recipeType or secondary
+    if not name or skillType == "header" or skillType == "subheader" then
+        return nil
+    end
+
+    local recipeLink = legacyCall(apis, "recipeLink", index)
+    local itemLink = legacyCall(apis, "itemLink", index)
+    local minMade, maxMade = legacyCall(apis, "numMade", index)
+    local reagents = {}
+    local reagentCount = tonumber(legacyCall(apis, "numReagents", index)) or 0
+    for reagentIndex = 1, math.min(reagentCount, MAX_REAGENTS_PER_RECIPE) do
+        local reagentName, reagentIcon, quantity = legacyCall(apis, "reagentInfo", index, reagentIndex)
+        local reagentLink = legacyCall(apis, "reagentLink", index, reagentIndex)
+        local reagent = reagentRecord(reagentLink, {
+            name = cleanText(reagentName),
+            iconFileDataId = reagentIcon,
+            quantity = tonumber(quantity),
+            required = true,
+            slotIndex = reagentIndex,
+        })
+        if reagent then
+            table.insert(reagents, reagent)
+        end
+    end
+
+    local recipeId = recipeIdFromLink(recipeLink) or recipeIdFromLink(itemLink)
+    return {
+        recipeId = recipeId,
+        spellId = recipeId,
+        name = cleanText(name),
+        subName = kind == "craft" and cleanText(secondary) or nil,
+        iconFileDataId = legacyCall(apis, "icon", index),
+        recipeLink = cleanText(recipeLink),
+        known = true,
+        difficulty = skillType,
+        skillUps = kind == "tradeskill" and tonumber(extra1) or nil,
+        trainingPointCost = kind == "craft" and tonumber(extra1) or nil,
+        requiredLevel = kind == "craft" and tonumber(extra2) or nil,
+        description = cleanText(legacyCall(apis, "description", index)),
+        cooldown = cooldownRecord(legacyCall(apis, "cooldown", index)),
+        tools = legacyTools(apis, index),
+        crafted = itemIdFromLink(itemLink) and craftedItem(itemLink, minMade, maxMade, true) or nil,
+        reagents = #reagents > 0 and reagents or nil,
+    }
+end
+
+-- Incremental recipe book reads ----------------------------------------------
+--
+-- A scan reads one recipe (or a chunk of recipe-id filtering) per Step call,
+-- so Systems/ProfessionCapture.lua can spread a large book across frames.
+-- CollectOpenRecipeBook runs the same scan to completion synchronously, so
+-- both paths produce identical books.
+
+local FILTER_CHUNK = 25
+
+local function beginModernScan()
+    local api = Globals.C_TradeSkillUI
+    if type(api) ~= "table" or type(api.GetRecipeInfo) ~= "function" then
+        return nil
+    end
+    local source = recipeIdSource(api)
+    if type(source.ids) ~= "table" or #source.ids == 0 then
+        return nil
+    end
+    return {
+        mode = "modern",
+        api = api,
+        source = source,
+        filteredIds = source.filtered and source.ids or {},
+        filterIndex = 1,
+        phase = source.filtered and "sort" or "filter",
+        recipes = {},
+        index = 1,
+    }
+end
+
+local function beginLegacyScan(kind)
     local apis = LEGACY_APIS[kind]
     local count = tonumber(legacyCall(apis, "count")) or 0
     if count < 1 then
         return nil
     end
-
     local lineName, skillLevel, maxSkillLevel = legacyCall(apis, "line")
-    local profession = {
-        name = cleanText(lineName),
-        skillLevel = tonumber(skillLevel),
-        maxSkillLevel = tonumber(maxSkillLevel),
+    return {
+        mode = "legacy",
+        kind = kind,
+        apis = apis,
+        count = count,
+        phase = "recipes",
+        profession = {
+            name = cleanText(lineName),
+            skillLevel = tonumber(skillLevel),
+            maxSkillLevel = tonumber(maxSkillLevel),
+        },
+        recipes = {},
+        index = 1,
     }
+end
 
-    local recipes = {}
-    for index = 1, count do
-        if #recipes >= MAX_RECIPES_PER_BOOK then
-            break
-        end
+-- Starts reading the open profession window. Pass "craft" for the Classic
+-- craft frame; anything else reads the trade skill UI. Returns nil when no
+-- recipe book is readable.
+function GW.ProfessionTelemetry.BeginScan(kind)
+    if kind == "craft" then
+        return beginLegacyScan("craft")
+    end
+    return beginModernScan() or beginLegacyScan("tradeskill")
+end
 
-        local name, secondary, recipeType, _, _, extra1, extra2 = legacyCall(apis, "info", index)
-        -- Trade skills: name, skillType, numAvailable, isExpanded, altVerb, numSkillUps.
-        -- Crafts: name, subSpellName, craftType, numAvailable, isExpanded, trainingPointCost, requiredLevel.
-        local skillType = kind == "craft" and recipeType or secondary
-        if name and skillType ~= "header" and skillType ~= "subheader" then
-            local recipeLink = legacyCall(apis, "recipeLink", index)
-            local itemLink = legacyCall(apis, "itemLink", index)
-            local minMade, maxMade = legacyCall(apis, "numMade", index)
-            local reagents = {}
-            local reagentCount = tonumber(legacyCall(apis, "numReagents", index)) or 0
-            for reagentIndex = 1, math.min(reagentCount, MAX_REAGENTS_PER_RECIPE) do
-                local reagentName, reagentIcon, quantity = legacyCall(apis, "reagentInfo", index, reagentIndex)
-                local reagentLink = legacyCall(apis, "reagentLink", index, reagentIndex)
-                local reagent = reagentRecord(reagentLink, {
-                    name = cleanText(reagentName),
-                    iconFileDataId = reagentIcon,
-                    quantity = tonumber(quantity),
-                    required = true,
-                    slotIndex = reagentIndex,
-                })
-                if reagent then
-                    table.insert(reagents, reagent)
-                end
-            end
+function GW.ProfessionTelemetry.BeginLegacyScan(kind)
+    return beginLegacyScan(kind == "craft" and "craft" or "tradeskill")
+end
 
-            local recipeId = recipeIdFromLink(recipeLink) or recipeIdFromLink(itemLink)
-            table.insert(recipes, {
-                recipeId = recipeId,
-                spellId = recipeId,
-                name = cleanText(name),
-                subName = kind == "craft" and cleanText(secondary) or nil,
-                iconFileDataId = legacyCall(apis, "icon", index),
-                recipeLink = cleanText(recipeLink),
-                known = true,
-                difficulty = skillType,
-                skillUps = kind == "tradeskill" and tonumber(extra1) or nil,
-                trainingPointCost = kind == "craft" and tonumber(extra1) or nil,
-                requiredLevel = kind == "craft" and tonumber(extra2) or nil,
-                description = cleanText(legacyCall(apis, "description", index)),
-                cooldown = cooldownRecord(legacyCall(apis, "cooldown", index)),
-                tools = legacyTools(apis, index),
-                crafted = itemIdFromLink(itemLink) and craftedItem(itemLink, minMade, maxMade, true) or nil,
-                reagents = #reagents > 0 and reagents or nil,
-            })
-        end
+-- Reads one unit of the scan. Returns true when the scan is finished.
+function GW.ProfessionTelemetry.StepScan(scan)
+    if type(scan) ~= "table" or scan.phase == "done" then
+        return true
     end
 
-    if #recipes == 0 then
+    if scan.mode == "legacy" then
+        if scan.index > scan.count or #scan.recipes >= MAX_RECIPES_PER_BOOK then
+            scan.phase = "done"
+            return true
+        end
+        local recipe = legacyRecipe(scan.apis, scan.kind, scan.index)
+        scan.index = scan.index + 1
+        if recipe then
+            table.insert(scan.recipes, recipe)
+        end
+        return false
+    end
+
+    local api = scan.api
+    if scan.phase == "filter" then
+        local ids = scan.source.ids
+        local last = math.min(#ids, scan.filterIndex + FILTER_CHUNK - 1)
+        for position = scan.filterIndex, last do
+            local recipeId = ids[position]
+            if recipeInSkillLines(api, recipeId, scan.source.skillLines) then
+                table.insert(scan.filteredIds, recipeId)
+            end
+        end
+        scan.filterIndex = last + 1
+        if scan.filterIndex > #ids then
+            scan.phase = "sort"
+        end
+        return false
+    end
+
+    if scan.phase == "sort" then
+        local recipeIds = {}
+        for _, recipeId in ipairs(scan.filteredIds) do
+            table.insert(recipeIds, recipeId)
+        end
+        table.sort(recipeIds)
+        scan.recipeIds = recipeIds
+        scan.profession = modernProfession(api)
+        scan.phase = "recipes"
+        if #recipeIds == 0 then
+            scan.phase = "done"
+            return true
+        end
+        return false
+    end
+
+    if scan.index > #scan.recipeIds or #scan.recipes >= MAX_RECIPES_PER_BOOK then
+        scan.phase = "done"
+        return true
+    end
+    local recipe = modernRecipe(api, scan.recipeIds[scan.index], scan.profession)
+    scan.index = scan.index + 1
+    if recipe then
+        table.insert(scan.recipes, recipe)
+    end
+    return false
+end
+
+-- The finished book, or nil when it has no recipes.
+function GW.ProfessionTelemetry.ScanResult(scan)
+    if type(scan) ~= "table" or #scan.recipes == 0 then
         return nil
     end
-    return { source = apis.source, profession = profession, recipes = recipes }
+    local source = scan.mode == "legacy" and scan.apis.source or "C_TradeSkillUI"
+    return { source = source, profession = scan.profession, recipes = scan.recipes }
+end
+
+local function collectScan(scan)
+    if not scan then
+        return nil
+    end
+    while not GW.ProfessionTelemetry.StepScan(scan) do
+        -- Read synchronously.
+    end
+    return GW.ProfessionTelemetry.ScanResult(scan)
 end
 
 -- Reads the recipe book from the open profession window. Pass "craft" for the
 -- Classic craft frame (CRAFT_* events); anything else reads the trade skill UI.
 function GW.ProfessionTelemetry.CollectOpenRecipeBook(kind)
     if kind == "craft" then
-        return collectLegacyBook("craft")
+        return collectScan(beginLegacyScan("craft"))
     end
-    return collectModernBook() or collectLegacyBook("tradeskill")
+    return collectScan(beginModernScan()) or collectScan(beginLegacyScan("tradeskill"))
 end
 
 -- Per-character cache -------------------------------------------------------
@@ -523,12 +625,44 @@ local function copyTable(value)
     return result
 end
 
+-- Every change to a character's cached professions or recipe books bumps
+-- cache.revision, which the profession_snapshot domain uses to skip
+-- rebuilding and fingerprinting an unchanged payload.
+local function bumpRevision(cache)
+    cache.revision = (tonumber(cache.revision) or 0) + 1
+end
+
+function GW.ProfessionTelemetry.Revision(characterKey)
+    local cache = cacheFor(characterKey)
+    return cache and (tonumber(cache.revision) or 0) or nil
+end
+
+-- Identifies this cache instance, so a revision number from a cache that
+-- was cleared and rebuilt is never mistaken for an earlier one.
+function GW.ProfessionTelemetry.CacheEpoch(characterKey)
+    local cache = cacheFor(characterKey)
+    if not cache then
+        return nil
+    end
+    if not cache.epoch then
+        cache.epoch = string.format("%x-%x", now(), math.random(0, 2147483647))
+    end
+    return cache.epoch
+end
+
 -- Replaces the known profession list. nil means "unknown right now" and keeps
 -- the cached list; an empty table means the character has no professions.
 function GW.ProfessionTelemetry.RememberProfessions(characterKey, professions)
     local cache = cacheFor(characterKey)
     if not cache or type(professions) ~= "table" then
         return false
+    end
+
+    -- The list is small; comparing it avoids replacing (and re-publishing)
+    -- an identical profession list on every capture.
+    local listFingerprint = GW.Store.Fingerprint(professions)
+    if cache.professionsFingerprint == listFingerprint and type(cache.order) == "table" then
+        return true
     end
 
     cache.professions = {}
@@ -540,6 +674,8 @@ function GW.ProfessionTelemetry.RememberProfessions(characterKey, professions)
             table.insert(cache.order, key)
         end
     end
+    cache.professionsFingerprint = listFingerprint
+    bumpRevision(cache)
     return true
 end
 
@@ -566,7 +702,10 @@ end
 
 -- Stores a recipe book. The capture time only moves when the recipes change,
 -- so reopening an unchanged profession window does not emit a new revision.
-function GW.ProfessionTelemetry.RememberRecipeBook(characterKey, book)
+-- precomputedFingerprint, when given, must be GW.Store.Fingerprint of
+-- { recipes, categories, items } (the incremental scan computes it across
+-- frames).
+function GW.ProfessionTelemetry.RememberRecipeBook(characterKey, book, precomputedFingerprint)
     local cache = cacheFor(characterKey)
     if not cache or type(book) ~= "table" or type(book.recipes) ~= "table" then
         return false
@@ -588,9 +727,13 @@ function GW.ProfessionTelemetry.RememberRecipeBook(characterKey, book)
             skillModifier = profession.skillModifier,
         }
         table.insert(cache.order, key)
+        -- The list now differs from the one RememberProfessions compared.
+        cache.professionsFingerprint = nil
+        bumpRevision(cache)
     end
 
-    local fingerprint = GW.Store.Fingerprint({ recipes = book.recipes, categories = book.categories, items = book.items })
+    local fingerprint = type(precomputedFingerprint) == "string" and precomputedFingerprint
+        or GW.Store.Fingerprint({ recipes = book.recipes, categories = book.categories, items = book.items })
     local existing = cache.recipeBooks[key]
     if existing and existing.fingerprint == fingerprint then
         return false
@@ -604,7 +747,55 @@ function GW.ProfessionTelemetry.RememberRecipeBook(characterKey, book)
         categories = book.categories,
         items = book.items,
     }
+    bumpRevision(cache)
     return true
+end
+
+-- Earlier versions stored recipe books under the raw key built from
+-- UnitFullName, which on Forever holds the surname in the realm position
+-- ("surname:name"), while the profession_snapshot payload is built from the
+-- canonical "realm:full name" key. Those books never reached telemetry. They
+-- are moved to the canonical key once, for professions the character has
+-- (books already there win). The alias key has no realm, so a character
+-- elsewhere with the same name and surname could have written it too; only
+-- the current character's professions are adopted, which limits but cannot
+-- rule out that mix-up.
+function GW.ProfessionTelemetry.AdoptAliasCache(characterKey, aliasKey)
+    local root = type(GuildweaverDB) == "table" and GuildweaverDB.professionTelemetry or nil
+    if type(root) ~= "table" or not characterKey or not aliasKey or characterKey == aliasKey then
+        return false
+    end
+    local alias = root[aliasKey]
+    if type(alias) ~= "table" then
+        return false
+    end
+    local cache = cacheFor(characterKey)
+    if next(cache.professions) == nil then
+        -- The profession list is not known yet; try again later.
+        return false
+    end
+    local adopted = false
+    local remaining = false
+    local books = type(alias.recipeBooks) == "table" and alias.recipeBooks or {}
+    for key, book in pairs(books) do
+        if cache.professions[key] then
+            if cache.recipeBooks[key] == nil then
+                cache.recipeBooks[key] = book
+                adopted = true
+            end
+            books[key] = nil
+        else
+            -- Kept: the profession may simply not be listed yet.
+            remaining = true
+        end
+    end
+    if not remaining then
+        root[aliasKey] = nil
+    end
+    if adopted then
+        bumpRevision(cache)
+    end
+    return adopted
 end
 
 -- Builds the profession_snapshot payload from the cache.

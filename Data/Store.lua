@@ -7,6 +7,14 @@ local FINGERPRINT_IGNORED_KEYS = {
     capturedAt = true,
     reason = true,
 }
+-- The local snapshot's change detection leaves out recipe lists: they are
+-- versioned by the profession_snapshot stream, and serializing hundreds of
+-- recipes on every character capture was a large part of its cost.
+local CHARACTER_FINGERPRINT_IGNORED_KEYS = {
+    capturedAt = true,
+    reason = true,
+    recipes = true,
+}
 
 local defaults = {
     schemaVersion = 4,
@@ -64,87 +72,393 @@ local function generateId(prefix)
     return string.format("%s-%x-%x-%x", prefix, now, randomA, randomB)
 end
 
-local function appendStable(parts, value, ignoredKeys, depth)
+-- Fingerprints serialize a value in a stable key order and hash it (djb2,
+-- mod 2^32). The exact byte sequence and hash are a contract: stored records
+-- and the bridge compare fingerprints across versions, so any change here
+-- would make every stream look changed once. The implementation below is
+-- optimized (no per-scalar table.insert, no tostring inside the sort
+-- comparator, four bytes hashed per modulo) but produces identical output;
+-- test/fingerprint_spec.lua pins it against the original algorithm.
+local parts = {}
+local partCount = 0
+
+local function push(value)
+    partCount = partCount + 1
+    parts[partCount] = value
+end
+
+-- The original comparator: by type name, then by tostring(key).
+local function mixedKeyBefore(left, right)
+    if left.keyType == right.keyType then
+        return left.sortKey < right.sortKey
+    end
+    return left.keyType < right.keyType
+end
+
+-- Key arrays are reused per nesting depth (a parent finishes iterating its
+-- keys only after its children, which use the next depth).
+local keyPool = {}
+local keyPoolSizes = {}
+
+local function keyArray(depth, size)
+    local keys = keyPool[depth]
+    if not keys then
+        keys = {}
+        keyPool[depth] = keys
+    end
+    for index = size + 1, keyPoolSizes[depth] or 0 do
+        keys[index] = nil
+    end
+    keyPoolSizes[depth] = size
+    return keys
+end
+
+local appendStable
+
+local function appendScalar(valueType, value)
+    push(valueType)
+    push(":")
+    push(tostring(value))
+    push(";")
+end
+
+local function isInteger(value)
+    -- tostring uses "%.14g": integers below 1e14 round-trip exactly.
+    return value == math.floor(value) and value > -1e14 and value < 1e14
+end
+
+appendStable = function(value, ignoredKeys, depth)
     local valueType = type(value)
 
     if depth > 24 then
-        table.insert(parts, "<depth>")
+        push("<depth>")
         return
     end
 
     if valueType ~= "table" then
-        table.insert(parts, valueType)
-        table.insert(parts, ":")
-        table.insert(parts, tostring(value))
-        table.insert(parts, ";")
+        appendScalar(valueType, value)
         return
     end
 
-    local keys = {}
+    -- Classify the keys: all strings and all integers have fast paths that
+    -- sort plain strings with the default comparator; anything else uses
+    -- the general (allocating) path.
+    local keyCount = 0
+    local allStrings = true
+    local allIntegers = true
     for key in pairs(value) do
         if not ignoredKeys or not ignoredKeys[key] then
-            table.insert(keys, key)
+            keyCount = keyCount + 1
+            local keyType = type(key)
+            if keyType ~= "string" then
+                allStrings = false
+            end
+            if keyType ~= "number" or not isInteger(key) then
+                allIntegers = false
+            end
         end
     end
 
-    table.sort(keys, function(left, right)
-        local leftType = type(left)
-        local rightType = type(right)
-        if leftType == rightType then
-            return tostring(left) < tostring(right)
-        end
-        return leftType < rightType
-    end)
-
-    table.insert(parts, "{")
-    for _, key in ipairs(keys) do
-        appendStable(parts, key, nil, depth + 1)
-        appendStable(parts, value[key], ignoredKeys, depth + 1)
+    push("{")
+    if keyCount == 0 then
+        push("}")
+        return
     end
-    table.insert(parts, "}")
+
+    if allStrings or allIntegers then
+        local keys = keyArray(depth, keyCount)
+        local index = 0
+        for key in pairs(value) do
+            if not ignoredKeys or not ignoredKeys[key] then
+                index = index + 1
+                keys[index] = allStrings and key or tostring(key)
+            end
+        end
+        if keyCount > 1 then
+            table.sort(keys)
+        end
+        local keyType = allStrings and "string" or "number"
+        -- Keys are serialized one level deeper, so they hit the depth limit
+        -- too, exactly as in the original.
+        local keyTooDeep = depth + 1 > 24
+        for position = 1, keyCount do
+            local sortKey = keys[position]
+            local key = allStrings and sortKey or tonumber(sortKey)
+            if keyTooDeep then
+                push("<depth>")
+            else
+                push(keyType)
+                push(":")
+                push(sortKey)
+                push(";")
+            end
+            appendStable(value[key], ignoredKeys, depth + 1)
+        end
+        push("}")
+        return
+    end
+
+    local entries = {}
+    local count = 0
+    for key in pairs(value) do
+        if not ignoredKeys or not ignoredKeys[key] then
+            count = count + 1
+            entries[count] = { key = key, keyType = type(key), sortKey = tostring(key) }
+        end
+    end
+    table.sort(entries, mixedKeyBefore)
+    for index = 1, count do
+        local entry = entries[index]
+        appendStable(entry.key, nil, depth + 1)
+        appendStable(value[entry.key], ignoredKeys, depth + 1)
+    end
+    push("}")
 end
 
-local function fingerprint(value)
-    local parts = {}
-    appendStable(parts, value, FINGERPRINT_IGNORED_KEYS, 0)
-    local serialized = table.concat(parts)
+local byte = string.byte
+local MODULUS = 4294967296
+
+-- djb2 over the serialized bytes. Four steps fit in a double exactly
+-- (2^32 * 33^4 + 255 * 33^3 ... < 2^53), so the modulo is applied every
+-- four bytes instead of every byte.
+local function hashString(serialized)
     local hash = 5381
-
-    for index = 1, #serialized do
-        hash = (hash * 33 + string.byte(serialized, index)) % 4294967296
+    local length = #serialized
+    local index = 1
+    while index + 7 <= length do
+        local a, b, c, d, e, f, g, h = byte(serialized, index, index + 7)
+        hash = ((((hash * 33 + a) * 33 + b) * 33 + c) * 33 + d) % MODULUS
+        hash = ((((hash * 33 + e) * 33 + f) * 33 + g) * 33 + h) % MODULUS
+        index = index + 8
     end
+    while index <= length do
+        hash = (hash * 33 + byte(serialized, index)) % MODULUS
+        index = index + 1
+    end
+    return hash
+end
 
-    return string.format("%08x", hash)
+local function fingerprint(value, ignoredKeys)
+    local perf = GW.Perf
+    local started = perf and perf.Begin and perf.Begin() or nil
+    partCount = 0
+    appendStable(value, ignoredKeys or FINGERPRINT_IGNORED_KEYS, 0)
+    local serialized = table.concat(parts, "", 1, partCount)
+    -- Release references from a large serialization instead of keeping them
+    -- alive until the next call.
+    if partCount > 4096 then
+        parts = {}
+    end
+    partCount = 0
+    local result = string.format("%08x", hashString(serialized))
+    if perf and perf.End then
+        perf.End("fingerprint", started)
+        perf.Count("fingerprint_bytes", #serialized)
+    end
+    return result
+end
+
+-- Resumable fingerprints ---------------------------------------------------------
+--
+-- The same serialization and hash as fingerprint(), computed by an explicit
+-- traversal that can stop after any number of pieces and resume later, so a
+-- large payload (a full recipe book) can be fingerprinted across frames. djb2
+-- is sequential, so hashing piece by piece equals hashing the concatenation.
+
+local function hashAppend(hash, piece)
+    local length = #piece
+    local index = 1
+    while index + 7 <= length do
+        local a, b, c, d, e, f, g, h = byte(piece, index, index + 7)
+        hash = ((((hash * 33 + a) * 33 + b) * 33 + c) * 33 + d) % MODULUS
+        hash = ((((hash * 33 + e) * 33 + f) * 33 + g) * 33 + h) % MODULUS
+        index = index + 8
+    end
+    while index <= length do
+        hash = (hash * 33 + byte(piece, index)) % MODULUS
+        index = index + 1
+    end
+    return hash
+end
+
+local function sortedKeys(value, ignoredKeys)
+    local keys = {}
+    local count = 0
+    local allStrings = true
+    local allIntegers = true
+    for key in pairs(value) do
+        if not ignoredKeys or not ignoredKeys[key] then
+            count = count + 1
+            keys[count] = key
+            local keyType = type(key)
+            if keyType ~= "string" then
+                allStrings = false
+            end
+            if keyType ~= "number" or not isInteger(key) then
+                allIntegers = false
+            end
+        end
+    end
+    if allStrings then
+        table.sort(keys)
+        return keys, count
+    end
+    local entries = {}
+    for index = 1, count do
+        local key = keys[index]
+        entries[index] = { key = key, keyType = type(key), sortKey = tostring(key) }
+    end
+    table.sort(entries, allIntegers and function(left, right)
+        return left.sortKey < right.sortKey
+    end or mixedKeyBefore)
+    for index = 1, count do
+        keys[index] = entries[index].key
+    end
+    return keys, count
+end
+
+local function resumableEmit(state, piece)
+    state.hash = hashAppend(state.hash, piece)
+    state.bytes = state.bytes + #piece
+    state.pieces = state.pieces + 1
+end
+
+local function resumableVisit(state, value, ignoredKeys, depth)
+    if depth > 24 then
+        resumableEmit(state, "<depth>")
+        return
+    end
+    local valueType = type(value)
+    if valueType ~= "table" then
+        resumableEmit(state, valueType)
+        resumableEmit(state, ":")
+        resumableEmit(state, tostring(value))
+        resumableEmit(state, ";")
+        return
+    end
+    resumableEmit(state, "{")
+    local keys, count = sortedKeys(value, ignoredKeys)
+    local stack = state.stack
+    stack[#stack + 1] = { value = value, keys = keys, count = count, index = 1, ignoredKeys = ignoredKeys, depth = depth }
+end
+
+-- Starts a fingerprint of value; see StepFingerprint.
+function GW.Store.BeginFingerprint(value)
+    local state = { hash = 5381, bytes = 0, pieces = 0, stack = {}, done = false }
+    resumableVisit(state, value, FINGERPRINT_IGNORED_KEYS, 0)
+    if #state.stack == 0 then
+        state.done = true
+    end
+    return state
+end
+
+-- Serializes and hashes about maxPieces more pieces. Returns true and the
+-- fingerprint (identical to GW.Store.Fingerprint) once finished.
+function GW.Store.StepFingerprint(state, maxPieces)
+    if state.done then
+        return true, state.result or string.format("%08x", state.hash)
+    end
+    local limit = state.pieces + (tonumber(maxPieces) or 512)
+    local stack = state.stack
+    while #stack > 0 and state.pieces < limit do
+        local frame = stack[#stack]
+        if frame.index > frame.count then
+            resumableEmit(state, "}")
+            stack[#stack] = nil
+        else
+            local key = frame.keys[frame.index]
+            frame.index = frame.index + 1
+            resumableVisit(state, key, nil, frame.depth + 1)
+            resumableVisit(state, frame.value[key], frame.ignoredKeys, frame.depth + 1)
+        end
+    end
+    if #stack == 0 then
+        state.done = true
+        state.result = string.format("%08x", state.hash)
+        local perf = GW.Perf
+        if perf and perf.Count then
+            perf.Count("fingerprint_resumable")
+            perf.Count("fingerprint_bytes", state.bytes)
+        end
+        return true, state.result
+    end
+    return false
 end
 
 -- Keeps the outbound telemetry bounded. One-off events (session
 -- checkpoints, a new set every login) go first, oldest first; a character's
 -- state streams are only pruned when nothing else is left.
-local function pruneTelemetry(outbound)
+--
+-- The stream count is tracked incrementally and recounted exactly only when
+-- it appears to exceed the limit. Eviction order is computed once into a
+-- sorted queue and reused across inserts; the queue is discarded whenever a
+-- record older than its newest entry is written, so the order stays exact.
+local streamCount = nil
+local evictionQueue = nil
+local evictionHead = 1
+
+local function recordRank(record)
+    local timestamp = tonumber(record and record.updatedAt) or 0
+    return (record and record.kind == "event" and 0 or 1e12) + timestamp
+end
+
+local function countStreams(outbound)
     local count = 0
     for _ in pairs(outbound) do
         count = count + 1
     end
+    return count
+end
 
-    while count > MAX_TELEMETRY_STREAMS do
-        local oldestKey = nil
-        local oldestRank = math.huge
+local function evictionBefore(left, right)
+    if left.rank ~= right.rank then
+        return left.rank < right.rank
+    end
+    return left.sortKey < right.sortKey
+end
 
-        for key, record in pairs(outbound) do
-            local timestamp = tonumber(record and record.updatedAt) or 0
-            local rank = (record and record.kind == "event" and 0 or 1e12) + timestamp
-            if rank < oldestRank then
-                oldestRank = rank
-                oldestKey = key
+local function buildEvictionQueue(outbound)
+    local queue = {}
+    for key, record in pairs(outbound) do
+        queue[#queue + 1] = { key = key, record = record, rank = recordRank(record), sortKey = tostring(key) }
+    end
+    table.sort(queue, evictionBefore)
+    return queue
+end
+
+local function noteWrite(outbound, isNew, record)
+    if streamCount == nil then
+        streamCount = countStreams(outbound)
+    elseif isNew then
+        streamCount = streamCount + 1
+    end
+    if evictionQueue then
+        local newest = evictionQueue[#evictionQueue]
+        if newest and recordRank(record) < newest.rank then
+            evictionQueue = nil
+        end
+    end
+end
+
+local function pruneTelemetry(outbound)
+    if (streamCount or 0) <= MAX_TELEMETRY_STREAMS then
+        return
+    end
+    streamCount = countStreams(outbound)
+    while streamCount > MAX_TELEMETRY_STREAMS do
+        if not evictionQueue or evictionHead > #evictionQueue then
+            evictionQueue = buildEvictionQueue(outbound)
+            evictionHead = 1
+            if #evictionQueue == 0 then
+                return
             end
         end
-
-        if not oldestKey then
-            return
+        local candidate = evictionQueue[evictionHead]
+        evictionHead = evictionHead + 1
+        if outbound[candidate.key] == candidate.record then
+            outbound[candidate.key] = nil
+            streamCount = streamCount - 1
         end
-
-        outbound[oldestKey] = nil
-        count = count - 1
     end
 end
 
@@ -175,6 +489,9 @@ function GW.Store.ConfirmLiveClient()
 end
 
 function GW.Store.Initialize()
+    streamCount = nil
+    evictionQueue = nil
+    evictionHead = 1
     if type(GuildweaverDB) ~= "table" or GuildweaverDB.gameRelease ~= "forever-live" then
         GuildweaverDB = {}
     end
@@ -273,7 +590,7 @@ function GW.Store.SetCharacterSnapshot(characterKey, snapshot)
     GuildweaverDB.characters[characterKey] = snapshot
 
     local fingerprints = GuildweaverDB.meta.characterFingerprints
-    local nextFingerprint = fingerprint(snapshot)
+    local nextFingerprint = fingerprint(snapshot, CHARACTER_FINGERPRINT_IGNORED_KEYS)
     if fingerprints[characterKey] == nextFingerprint then
         return false
     end
@@ -289,10 +606,14 @@ local function telemetryRevisions()
     return GuildweaverDB.sync.telemetryRevisions
 end
 
-function GW.Store.SetTelemetrySnapshot(streamKey, envelope)
+-- precomputedFingerprint, when given, must be GW.Store.Fingerprint of
+-- envelope.payload; callers that already computed it pass it on so the
+-- payload is serialized and hashed only once.
+function GW.Store.SetTelemetrySnapshot(streamKey, envelope, precomputedFingerprint)
     local outbound = GuildweaverDB.sync.outbound.telemetry
     local existing = outbound[streamKey]
-    local nextFingerprint = fingerprint(envelope.payload)
+    local nextFingerprint = type(precomputedFingerprint) == "string" and precomputedFingerprint
+        or fingerprint(envelope.payload)
 
     if existing and existing.fingerprint == nextFingerprint then
         return false
@@ -301,34 +622,47 @@ function GW.Store.SetTelemetrySnapshot(streamKey, envelope)
     local revisions = telemetryRevisions()
     local revision = math.max(existing and tonumber(existing.revision) or 0, tonumber(revisions[streamKey]) or 0)
     revisions[streamKey] = revision + 1
-    outbound[streamKey] = {
+    local record = {
         kind = "state",
         revision = revision + 1,
         updatedAt = envelope.capturedAt,
         fingerprint = nextFingerprint,
         envelope = envelope,
     }
+    outbound[streamKey] = record
+    noteWrite(outbound, existing == nil, record)
     pruneTelemetry(outbound)
     return true
 end
 
-function GW.Store.SetTelemetryEvent(streamKey, envelope)
+-- The stored outbound record of a stream, if any.
+function GW.Store.GetTelemetryRecord(streamKey)
+    local database = GuildweaverDB
+    local outbound = type(database) == "table" and database.sync and database.sync.outbound
+        and database.sync.outbound.telemetry or nil
+    return outbound and outbound[streamKey] or nil
+end
+
+function GW.Store.SetTelemetryEvent(streamKey, envelope, precomputedFingerprint)
     local outbound = GuildweaverDB.sync.outbound.telemetry
     local existing = outbound[streamKey]
-    local nextFingerprint = fingerprint(envelope.payload)
+    local nextFingerprint = type(precomputedFingerprint) == "string" and precomputedFingerprint
+        or fingerprint(envelope.payload)
 
     if existing and existing.fingerprint == nextFingerprint then
         return false
     end
 
     local revision = existing and tonumber(existing.revision) or 0
-    outbound[streamKey] = {
+    local record = {
         kind = "event",
         revision = revision + 1,
         updatedAt = envelope.capturedAt,
         fingerprint = nextFingerprint,
         envelope = envelope,
     }
+    outbound[streamKey] = record
+    noteWrite(outbound, existing == nil, record)
     pruneTelemetry(outbound)
     return true
 end

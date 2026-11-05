@@ -112,7 +112,16 @@ local function publishPending()
     return result
 end
 
+-- Spellcast events fire for every unit in range; where the client supports
+-- it they are registered for the player only. The handler still checks the
+-- unit for clients without RegisterUnitEvent.
 local function safeRegister(frame, event)
+    if string.find(event, "UNIT_", 1, true) == 1 and type(frame.RegisterUnitEvent) == "function" then
+        local ok, registered = pcall(frame.RegisterUnitEvent, frame, event, "player")
+        if ok and registered ~= false then
+            return true
+        end
+    end
     return pcall(frame.RegisterEvent, frame, event)
 end
 
