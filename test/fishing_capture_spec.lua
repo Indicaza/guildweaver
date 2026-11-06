@@ -299,4 +299,136 @@ records = recordsByType()
 truthy(recordForCast(records, "gathering_attempt", "Cast-Fish-4"), "accepted cast counted before unrelated loot")
 equal(recordForCast(records, "gathering_loot", "Cast-Fish-4"), nil, "non-fishing loot is not misclassified")
 
+local function catchesWhere(predicate)
+    local found = {}
+    for _, record in ipairs(recordsByType().gathering_loot or {}) do
+        local payload = record.envelope.payload
+        if predicate(payload) then
+            table.insert(found, payload)
+        end
+    end
+    return found
+end
+
+local function lootCount()
+    return #(recordsByType().gathering_loot or {})
+end
+
+-- The accepted cast above expires; a later fishing loot window with no cast
+-- seen (the cast started before a /reload) is still recorded once.
+local statsBefore = GW.FishingCapture.Stats()
+local catchesBefore = statsBefore.catches
+fishingLoot = true
+elapsed = 300
+now = 6300
+eventFrame.onEvent(eventFrame, "LOOT_CLOSED")
+local before = lootCount()
+eventFrame.onEvent(eventFrame, "LOOT_READY")
+eventFrame.onEvent(eventFrame, "LOOT_OPENED")
+equal(lootCount(), before + 1, "catch without a seen cast is recorded once per loot window")
+local unseen = catchesWhere(function(payload) return payload.capture.castObserved == false end)
+equal(#unseen, 1, "catch without a seen cast is marked")
+equal(unseen[1].source.kind, "fishing_water", "unseen-cast catch defaults to open water")
+equal(unseen[1].context.location.mapId, 1429, "unseen-cast catch keeps map")
+equal(unseen[1].context.location.x, 0.43, "unseen-cast catch keeps coordinates")
+equal(unseen[1].context.profession.skillLineId, 356, "unseen-cast catch keeps fishing skill")
+equal(unseen[1].context.trigger.spellName, "Fishing", "unseen-cast catch names the activity")
+equal(GW.FishingCapture.Stats().catches, catchesBefore + 1, "catch counted")
+equal(GW.FishingCapture.Stats().catchesWithoutCast, 1, "unseen-cast catch counted")
+
+-- Without a cast, a loot window the client does not call fishing loot is ignored.
+fishingLoot = false
+eventFrame.onEvent(eventFrame, "LOOT_CLOSED")
+before = lootCount()
+eventFrame.onEvent(eventFrame, "LOOT_OPENED")
+equal(lootCount(), before, "non-fishing loot without a cast is ignored")
+
+-- Without IsFishingLoot, only an accepted cast makes loot a catch.
+local isFishingLoot = _G.IsFishingLoot
+_G.IsFishingLoot = nil
+eventFrame.onEvent(eventFrame, "LOOT_CLOSED")
+eventFrame.onEvent(eventFrame, "LOOT_OPENED")
+equal(lootCount(), before, "unknown loot without a cast is ignored")
+_G.IsFishingLoot = isFishingLoot
+fishingLoot = true
+
+-- The channel can end before the loot window opens.
+elapsed = 320
+now = 6320
+eventFrame.onEvent(eventFrame, "UNIT_SPELLCAST_SENT", "player", nil, "Cast-Interrupted-1", 7620)
+eventFrame.onEvent(eventFrame, "UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-Interrupted-1", 7620)
+eventFrame.onEvent(eventFrame, "UNIT_SPELLCAST_INTERRUPTED", "player", "Cast-Interrupted-1", 7620)
+before = lootCount()
+eventFrame.onEvent(eventFrame, "LOOT_OPENED")
+equal(lootCount(), before + 1, "catch after the channel ended is still recorded")
+
+-- Higher Fishing ranks are recognized by id, whatever the spell name lookup says.
+elapsed = 330
+now = 6330
+eventFrame.onEvent(eventFrame, "LOOT_CLOSED")
+eventFrame.onEvent(eventFrame, "UNIT_SPELLCAST_SENT", "player", nil, "Cast-Artisan-1", 18248)
+eventFrame.onEvent(eventFrame, "UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-Artisan-1", 18248)
+truthy(recordForCast(recordsByType(), "gathering_attempt", "Cast-Artisan-1"), "artisan fishing rank recognized")
+
+-- Loot from a game object other than the bobber came from a pool, even when
+-- no tooltip named it.
+_G.GetLootSourceInfo = function()
+    return "GameObject-0-1-2-3-180712-000009", 1
+end
+elapsed = 335
+now = 6335
+eventFrame.onEvent(eventFrame, "LOOT_OPENED")
+local confirmed = recordForCast(recordsByType(), "gathering_loot", "Cast-Artisan-1")
+equal(confirmed.source.kind, "fishing_pool", "loot source game object makes a pool")
+equal(confirmed.source.objectId, 180712, "pool object id from loot source")
+equal(confirmed.source.name, "Fishing Pool", "unnamed pool gets a safe name")
+equal(confirmed.capture.sourceDetection, "loot_source", "pool detected from loot source")
+equal(confirmed.capture.sourceConfidence, "confirmed", "loot source confidence")
+equal(confirmed.capture.rawSourceObjectId, 180712, "raw loot source kept")
+
+-- A pool name seen on any earlier tooltip names later catches from it.
+currentCursorData = { type = 4, guid = "GameObject-0-1-2-3-180712-000010" }
+currentTooltipText = "Stonescale Eel Swarm"
+elapsed = 340
+_G.GameTooltip.scripts.OnShow(_G.GameTooltip)
+currentCursorData = nil
+currentTooltipText = nil
+elapsed = 400
+now = 6400
+eventFrame.onEvent(eventFrame, "LOOT_CLOSED")
+eventFrame.onEvent(eventFrame, "UNIT_SPELLCAST_SENT", "player", nil, "Cast-Swarm-1", 7620)
+eventFrame.onEvent(eventFrame, "UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-Swarm-1", 7620)
+local swarmAttempt = recordForCast(recordsByType(), "gathering_attempt", "Cast-Swarm-1")
+equal(swarmAttempt.source.kind, "fishing_water", "stale tooltip does not label the cast")
+eventFrame.onEvent(eventFrame, "LOOT_OPENED")
+local swarm = recordForCast(recordsByType(), "gathering_loot", "Cast-Swarm-1")
+equal(swarm.source.name, "Stonescale Eel Swarm", "learned pool name used for loot-source pool")
+equal(swarm.source.objectId, 180712, "learned pool keeps object id")
+
+-- A bobber loot source never demotes a pool the tooltip probe found.
+_G.GetLootSourceInfo = function()
+    return "GameObject-0-1-2-3-35591-000011", 1
+end
+currentCursorData = { type = 4, guid = "GameObject-0-1-2-3-180682-000012" }
+currentTooltipText = "Oily Blackmouth School"
+elapsed = 410
+now = 6410
+eventFrame.onEvent(eventFrame, "LOOT_CLOSED")
+eventFrame.onEvent(eventFrame, "UNIT_SPELLCAST_SENT", "player", nil, "Cast-Probe-2", 7620)
+eventFrame.onEvent(eventFrame, "UNIT_SPELLCAST_SUCCEEDED", "player", "Cast-Probe-2", 7620)
+eventFrame.onEvent(eventFrame, "LOOT_OPENED")
+local probed = recordForCast(recordsByType(), "gathering_loot", "Cast-Probe-2")
+equal(probed.source.kind, "fishing_pool", "probe pool kept with bobber loot source")
+equal(probed.source.name, "Oily Blackmouth School", "probe pool name kept")
+equal(probed.capture.sourceDetection, "world_cursor_tooltip", "probe detection kept")
+currentCursorData = nil
+currentTooltipText = nil
+
+local counters = GW.FishingCapture.Stats()
+truthy(counters.casts >= 10, "casts counted")
+equal(counters.poolCatches >= 3, true, "pool catches counted")
+equal(counters.last.sourceName, "Oily Blackmouth School", "last catch source")
+equal(counters.last.zone, "Elwynn Forest", "last catch zone")
+equal(counters.last.items, 2, "last catch item count")
+
 print("fishing pool telemetry stress tests passed")

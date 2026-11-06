@@ -12,6 +12,7 @@ local ACTIVE_CAST_SECONDS = 35
 local POOL_WORDS = {
     "school",
     "pool",
+    "swarm",
     "wreckage",
     "oil spill",
     "pure water",
@@ -166,6 +167,10 @@ function Probe:ObserveTooltip(tooltip)
 
     if poolName then
         self.lastPool = probe
+        if objectId then
+            self.poolNames = self.poolNames or {}
+            self.poolNames[objectId] = name
+        end
         return copyProbe(probe)
     end
 
@@ -221,6 +226,13 @@ function Probe:GetLastProbe(maxAge)
         return nil
     end
     return copyProbe(probe)
+end
+
+-- The readable name last seen on a pool tooltip for this game object id,
+-- this session. Pools of one kind share an object id.
+function Probe:PoolName(objectId)
+    objectId = tonumber(objectId)
+    return objectId and self.poolNames and self.poolNames[objectId] or nil
 end
 
 function Probe:Reset()

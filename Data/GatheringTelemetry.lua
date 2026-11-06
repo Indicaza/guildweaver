@@ -470,6 +470,9 @@ local function publishGathering(pending, discipline, sourceKind, options)
     end
 
     local diagnostics = sourceDiagnostics(pending)
+    if type(options.resolveSource) == "function" then
+        options.resolveSource(source, loot, pending, diagnostics)
+    end
     if GW.FarmingSessions and GW.FarmingSessions.RecordGather then
         GW.FarmingSessions.RecordGather(discipline)
     end
@@ -492,6 +495,10 @@ local function publishGathering(pending, discipline, sourceKind, options)
             worldCursor = diagnostics.worldCursor,
         },
     }
+    -- Only present when the loot was recorded without seeing its cast.
+    if pending.castObserved == false then
+        payload.capture.castObserved = false
+    end
 
     return publishEvent("gathering_loot", snapshot, payload, serverTime())
 end
@@ -541,10 +548,44 @@ function GW.GatheringTelemetry.PublishFishingAttempt(pending)
     return publishAttempt(pending, "fishing", sourceKind, "cast")
 end
 
+-- Open-water catches are looted from the player's own bobber. Loot from any
+-- other game object came from that object: a fishing pool (the server loots
+-- the pool when the bobber lands in it). That identity is used even when no
+-- tooltip named the pool; a bobber source never demotes a pool the tooltip
+-- probe found.
+local FISHING_BOBBER_OBJECT_ID = 35591
+
+local function fishingPoolName(objectId, pending)
+    if pending.sourceKind == "fishing_pool" and tonumber(pending.sourceObjectId) == objectId then
+        local name = cleanString(pending.sourceName)
+        if name then
+            return name
+        end
+    end
+    local probe = GW.FishingPoolProbe
+    local learned = type(probe) == "table" and type(probe.PoolName) == "function" and probe:PoolName(objectId) or nil
+    return cleanString(learned) or "Fishing Pool"
+end
+
+local function resolveFishingSource(source, loot, pending, diagnostics)
+    local objectId = tonumber(loot.sourceObjectId)
+    if loot.sourceKind ~= "GameObject" or not objectId or objectId == FISHING_BOBBER_OBJECT_ID then
+        return
+    end
+    source.kind = "fishing_pool"
+    source.name = fishingPoolName(objectId, pending)
+    source.objectId = objectId
+    source.guid = cleanString(loot.sourceGuid)
+    source.guidKind = "GameObject"
+    diagnostics.sourceDetection = "loot_source"
+    diagnostics.sourceConfidence = "confirmed"
+end
+
 function GW.GatheringTelemetry.PublishFishing(pending)
     local sourceKind = type(pending) == "table" and pending.sourceKind or "fishing_water"
     return publishGathering(pending, "fishing", sourceKind, {
         activity = "catch",
         useLootSource = false,
+        resolveSource = resolveFishingSource,
     })
 end
