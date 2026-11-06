@@ -26,6 +26,7 @@ The first milestone establishes a reliable addon foundation:
 - `/gw snapshot` captures a diagnostic snapshot; normal synchronization does not require it
 - `/gw inventory` rescans your bags and prints the inventory telemetry revision
 - `/gw sync` (or `/gw capture`) records a checkpoint and reloads the UI so WoW writes it to disk for the bridge now
+- `/gw fishing` prints the fishing casts and catches recorded this session and where the last catch came from
 - `/gw perf` prints capture counts, timings, worst frames, work-queue state and tooltip-scan counts for this session; `/gw perf reset` clears them
 - `/gw reset` resets the window position
 - `/gw help` prints command help
@@ -82,6 +83,12 @@ For measured elapsed time, use **Start farming** in `/gw`, or `/gw farm start`, 
 `farming_session` is an envelope-v1 event stream with cumulative sequence-numbered checkpoints every minute and a final `complete` record. Gathering events link through `context.farming.sessionId`. The session's material basis is `loot_window`: loot offered, not proof of items acquired. The website suppresses hourly rates until the run is complete, at least 20 minutes/10 harvests, and every declared harvest has synced. All timing is local/client-reported evidence, not authoritative server measurement.
 
 Gathering locations preserve UI `mapId` and normalized `x`/`y` in `[0,1]`, rounded to five decimals, plus zone/subzone. `coordinateSystem=ui_map_normalized` and `positionKind=player_at_cast` explicitly describe the player position observed at cast time; this is approximate evidence of the source's location. Missing or invalid positions are omitted, never replaced by zero. No continuous movement trail is collected.
+
+### Fishing
+
+Each accepted Fishing cast is a `gathering_attempt` (`activity=cast`) and each fishing loot window a `gathering_loot` (`activity=catch`). Casts are recognized by the Classic-era rank spell ids (7620, 7731, 7732, 18248), the modern spell (131474), or the spell name. A catch is recorded once per loot window. When the client reports fishing loot (`IsFishingLoot`) but the cast was not seen, because the channel ended first or the cast started before a reload, the catch is still recorded with context read at loot time and `capture.castObserved=false`.
+
+The source is open water unless a pool is identified. A pool tooltip under the cursor shortly before or during the cast names it (`sourceDetection=world_cursor_tooltip`). Loot from a game object other than the player's bobber (object 35591) came from a pool, so that object id identifies the pool even when no tooltip was seen (`sourceDetection=loot_source`, `sourceConfidence=confirmed`); its name comes from a pool tooltip seen earlier in the session, or is `Fishing Pool`. A bobber loot source never replaces a pool found by tooltip. The website keeps open water per map and pools per name (or object id) and map.
 
 ### Corpse loot and public item definitions
 

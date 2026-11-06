@@ -94,6 +94,29 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
     end
 end)
 
+local function printFishing()
+    local stats = GW.FishingCapture and GW.FishingCapture.Stats and GW.FishingCapture.Stats() or nil
+    if not stats or (stats.casts == 0 and stats.catches == 0) then
+        GW.Print("No fishing recorded this session. Casts are recorded when they start, catches when the loot window opens.")
+        return
+    end
+    GW.Print(string.format("Fishing this session: %d casts, %d catches (%d from pools, %d without a seen cast).",
+        stats.casts, stats.catches, stats.poolCatches, stats.catchesWithoutCast))
+    local last = stats.last
+    if last then
+        local place = tostring(last.zone or "unknown zone")
+        if last.subzone then
+            place = place .. " - " .. tostring(last.subzone)
+        end
+        if last.x and last.y then
+            place = place .. string.format(" (%.1f, %.1f)", last.x * 100, last.y * 100)
+        end
+        GW.Print(string.format("Last catch: %s, %s, %d item(s), detected by %s.",
+            tostring(last.sourceName or "unknown source"), place, last.items or 0, tostring(last.detection or "unknown")))
+    end
+    GW.Print("Recorded catches reach the website after /reload or logout. /gw sync sends them now.")
+end
+
 SLASH_GUILDWEAVER1 = "/guildweaver"
 SLASH_GUILDWEAVER2 = "/gw"
 
@@ -146,6 +169,11 @@ SlashCmdList.GUILDWEAVER = function(message)
                 .. " - "
                 .. professionSummary(snapshot)
         )
+        return
+    end
+
+    if command == "fishing" or command == "fish" then
+        printFishing()
         return
     end
 
@@ -208,7 +236,7 @@ SlashCmdList.GUILDWEAVER = function(message)
 
     if command == "help" then
         GW.Print("/gw farm start and /gw farm stop measure a farming run. /gw farm shows its status.")
-        GW.Print("/gw opens Guildweaver. Telemetry capture is automatic at session start, during play, and logout. WoW writes it to disk on /reload and logout, when the bridge syncs it. /gw sync (or /gw capture) forces a checkpoint and a reload to sync now. /gw snapshot captures a diagnostic snapshot. /gw telemetry shows captured telemetry streams. /gw inventory rescans your bags and shows the inventory revision. /gw perf shows capture timings and counts (/gw perf reset clears them). /gw version shows the addon version. /gw reset resets the window position.")
+        GW.Print("/gw opens Guildweaver. Telemetry capture is automatic at session start, during play, and logout. WoW writes it to disk on /reload and logout, when the bridge syncs it. /gw sync (or /gw capture) forces a checkpoint and a reload to sync now. /gw snapshot captures a diagnostic snapshot. /gw telemetry shows captured telemetry streams. /gw inventory rescans your bags and shows the inventory revision. /gw fishing shows the casts and catches recorded this session. /gw perf shows capture timings and counts (/gw perf reset clears them). /gw version shows the addon version. /gw reset resets the window position.")
         return
     end
 

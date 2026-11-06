@@ -4,8 +4,13 @@ GW.FishingCapture = GW.FishingCapture or {}
 
 local Globals = _G or {}
 local PENDING_TIMEOUT_SECONDS = 45
+-- Fishing ranks on Classic-era clients (Apprentice to Artisan) and the
+-- modern single spell. Other locales fall back to the spell name.
 local FISHING_SPELL_IDS = {
     [7620] = true,
+    [7731] = true,
+    [7732] = true,
+    [18248] = true,
     [131474] = true,
 }
 
@@ -68,6 +73,17 @@ local function pendingExpired(pending)
     return armedAt and elapsed() - armedAt > PENDING_TIMEOUT_SECONDS or false
 end
 
+-- Session counters for /gw fishing. In memory only.
+local function stats()
+    local capture = GW.FishingCapture
+    capture.stats = capture.stats or { casts = 0, catches = 0, catchesWithoutCast = 0, poolCatches = 0 }
+    return capture.stats
+end
+
+function GW.FishingCapture.Stats()
+    return stats()
+end
+
 local function applyPoolCandidate(pending, probeNow)
     if type(pending) ~= "table" then
         return
@@ -112,25 +128,31 @@ local function resetProbe()
     end
 end
 
-local function arm(castGuid, spellId)
-    if not isFishingSpell(spellId) then
-        return false
-    end
-
-    local pending = {
+local function newPending(castGuid, spellId)
+    return {
         sourceName = "Open Water",
         sourceKind = "fishing_water",
         sourceDetection = "open_water_fallback",
         sourceConfidence = "fallback",
         castGuid = safeText(castGuid),
         spellId = tonumber(spellId),
-        spellName = spellName(spellId) or "Fishing",
+        spellName = spellId and spellName(spellId) or "Fishing",
         armedAt = elapsed(),
         context = GW.GatheringTelemetry and GW.GatheringTelemetry.CaptureContext
             and GW.GatheringTelemetry.CaptureContext("fishing") or nil,
         attemptPublished = false,
     }
+end
+
+local function arm(castGuid, spellId)
+    if not isFishingSpell(spellId) then
+        return false
+    end
+
+    local pending = newPending(castGuid, spellId)
     GW.FishingCapture.pending = pending
+    -- A new cast leads to a new loot window.
+    GW.FishingCapture.catchPublished = false
     applyPoolCandidate(pending, true)
     return true
 end
@@ -170,34 +192,88 @@ local function publishAttempt()
     if result then
         pending.attemptPublished = true
         pending.attemptObservationId = result.observationId
+        stats().casts = stats().casts + 1
     end
     return result
 end
 
-local function fishingLootWindow()
+-- true or false when the client can tell, nil when it cannot.
+local function fishingLootState()
     if type(Globals.IsFishingLoot) ~= "function" then
-        return true
+        return nil
     end
     return safe(Globals.IsFishingLoot) == true
 end
 
+local function rememberCatch(result, pending)
+    local counters = stats()
+    counters.catches = counters.catches + 1
+    if pending.castObserved == false then
+        counters.catchesWithoutCast = counters.catchesWithoutCast + 1
+    end
+    local payload = result and result.envelope and result.envelope.payload or nil
+    local source = payload and payload.source or {}
+    if source.kind == "fishing_pool" then
+        counters.poolCatches = counters.poolCatches + 1
+    end
+    local location = payload and payload.context and payload.context.location or {}
+    local items = 0
+    for _, output in ipairs(payload and payload.outputs or {}) do
+        items = items + (tonumber(output.quantity) or 1)
+    end
+    counters.last = {
+        sourceName = source.name,
+        sourceKind = source.kind,
+        detection = payload and payload.capture and payload.capture.sourceDetection or nil,
+        zone = location.zone,
+        subzone = location.subzone,
+        mapId = location.mapId,
+        x = location.x,
+        y = location.y,
+        items = items,
+    }
+end
+
+-- A catch is published when a fishing loot window opens. The cast that led
+-- to it is normally known, but the channel can end or be interrupted before
+-- the loot window, and a cast can start before a /reload. When the client
+-- confirms fishing loot, the catch is still recorded, with the context read
+-- at loot time. One catch is published per loot window.
 local function publishCatch()
-    local pending = GW.FishingCapture.pending
-    if pendingExpired(pending) then
-        GW.FishingCapture.pending = nil
-        resetProbe()
+    local capture = GW.FishingCapture
+    if capture.catchPublished then
         return nil
     end
-    if type(pending) ~= "table" or not pending.attemptPublished or not fishingLootWindow()
-        or type(GW.GatheringTelemetry) ~= "table"
-        or type(GW.GatheringTelemetry.PublishFishing) ~= "function" then
+    if type(GW.GatheringTelemetry) ~= "table" or type(GW.GatheringTelemetry.PublishFishing) ~= "function" then
         return nil
+    end
+
+    local pending = capture.pending
+    if pendingExpired(pending) then
+        capture.pending = nil
+        pending = nil
+    end
+
+    local fishingLoot = fishingLootState()
+    if fishingLoot == false then
+        return nil
+    end
+    if not (pending and pending.attemptPublished) and fishingLoot ~= true then
+        -- Without an accepted cast, only the client can confirm a catch.
+        return nil
+    end
+
+    if not pending then
+        pending = newPending(nil, nil)
+        pending.castObserved = false
     end
 
     applyPoolCandidate(pending, false)
     local result = GW.GatheringTelemetry.PublishFishing(pending)
     if result then
-        GW.FishingCapture.pending = nil
+        capture.pending = nil
+        capture.catchPublished = true
+        rememberCatch(result, pending)
         resetProbe()
     end
     return result
@@ -229,6 +305,7 @@ function GW.FishingCapture:Initialize()
         "UNIT_SPELLCAST_INTERRUPTED",
         "LOOT_READY",
         "LOOT_OPENED",
+        "LOOT_CLOSED",
     }
     for _, event in ipairs(events) do
         safeRegister(frame, event)
@@ -263,6 +340,11 @@ function GW.FishingCapture:Initialize()
 
         if event == "LOOT_READY" or event == "LOOT_OPENED" then
             publishCatch()
+            return
+        end
+
+        if event == "LOOT_CLOSED" then
+            self.catchPublished = false
         end
     end)
 
