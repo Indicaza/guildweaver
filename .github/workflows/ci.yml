@@ -51,6 +51,7 @@ jobs:
             [[ "$line" == '##'* ]] && continue
             [[ "$line" == '#'* ]] && continue
             [[ "$line" == 'Data/BridgeInbox.generated.lua' ]] && continue
+            [[ "$line" == 'Data/BridgeAcks.generated.lua' ]] && continue
 
             if [[ ! -f "$line" ]]; then
               echo "Guildweaver.toc references missing file: $line"

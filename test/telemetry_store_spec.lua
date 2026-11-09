@@ -49,7 +49,8 @@ truthy(outbound["equipment:character-rook"], "every state stream is kept")
 truthy(not outbound["character_session:character-rook:1:start"], "the oldest events were pruned")
 local count = 0
 for _ in pairs(outbound) do count = count + 1 end
-equal(count, telemetryLimit, "bounded")
+truthy(count <= telemetryLimit, "bounded")
+truthy(count > telemetryLimit - 1024, "pruned in one batch, not emptied")
 
 outbound["talents:character-rook"] = nil
 state("talents:character-rook", 3)
@@ -76,3 +77,33 @@ GetBuildInfo = function() return "12.1.5", "1", "Nov 2026", 120105 end
 equal(Store.ConfirmLiveClient(), false, "other game rejected")
 GetBuildInfo = function() return "1.60.1", "70338", "Nov 2026", 16001 end
 equal(Store.ConfirmLiveClient(), true, "live client confirmed")
+
+-- Records the bridge acknowledged are dropped at the next login; identical
+-- state is not queued again, changed state is, and its revision continues.
+do
+    outbound = GuildweaverDB.sync.outbound.telemetry
+    Store.SetTelemetrySnapshot("stats:character-ack", { capturedAt = now, payload = { value = 1 } })
+    Store.SetTelemetryEvent("mob_loot:character-ack:corpse-1", { capturedAt = now, payload = { value = 1 } })
+    Store.SetTelemetrySnapshot("stats:character-pending", { capturedAt = now, payload = { value = 1 } })
+    local stats = outbound["stats:character-ack"]
+    local loot = outbound["mob_loot:character-ack:corpse-1"]
+    local pending = outbound["stats:character-pending"]
+    addon.BridgeAcks = { schemaVersion = 1, telemetry = {
+        ["stats:character-ack"] = stats.fingerprint,
+        ["mob_loot:character-ack:corpse-1"] = loot.fingerprint,
+        ["stats:character-pending"] = "stale-fingerprint",
+    } }
+    Store.Initialize()
+    equal(outbound["stats:character-ack"], nil, "delivered state dropped")
+    equal(outbound["mob_loot:character-ack:corpse-1"], nil, "delivered event dropped")
+    equal(outbound["stats:character-pending"], pending, "a record with other content is kept")
+
+    equal(Store.SetTelemetrySnapshot("stats:character-ack", { capturedAt = now, payload = { value = 1 } }), false,
+        "identical delivered state is not queued again")
+    equal(outbound["stats:character-ack"], nil, "still not queued")
+    equal(Store.SetTelemetrySnapshot("stats:character-ack", { capturedAt = now, payload = { value = 2 } }), true,
+        "changed state is queued")
+    equal(outbound["stats:character-ack"].revision, stats.revision + 1, "its revision continues")
+    addon.BridgeAcks = nil
+    print("telemetry acknowledgement spec passed")
+end

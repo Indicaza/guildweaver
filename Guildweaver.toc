@@ -9,6 +9,7 @@ Utils/Debug.lua
 Utils/Perf.lua
 Utils/WorkQueue.lua
 Data/BridgeInbox.generated.lua
+Data/BridgeAcks.generated.lua
 Data/Store.lua
 Data/CharacterIdentity.lua
 Data/ItemTelemetry.lua
