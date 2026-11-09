@@ -386,16 +386,16 @@ function GW.Store.StepFingerprint(state, maxPieces)
 end
 
 -- Keeps the outbound telemetry bounded. One-off events (session
--- checkpoints, a new set every login) go first, oldest first; a character's
--- state streams are only pruned when nothing else is left.
+-- checkpoints, corpse loot) go first, oldest first; a character's state
+-- streams are only pruned when nothing else is left.
 --
--- The stream count is tracked incrementally and recounted exactly only when
--- it appears to exceed the limit. Eviction order is computed once into a
--- sorted queue and reused across inserts; the queue is discarded whenever a
--- record older than its newest entry is written, so the order stays exact.
+-- Pruning runs in batches: once the queue passes its limit, it is sorted
+-- once and cut back to PRUNE_TARGET, leaving room for PRUNE_BATCH more
+-- writes before the next sort. Pruning one record per write instead re-sorted
+-- every record on every write once the queue was full, a hitch on every loot.
+local PRUNE_BATCH = 512
+local PRUNE_TARGET = MAX_TELEMETRY_STREAMS - PRUNE_BATCH
 local streamCount = nil
-local evictionQueue = nil
-local evictionHead = 1
 
 local function recordRank(record)
     local timestamp = tonumber(record and record.updatedAt) or 0
@@ -417,26 +417,11 @@ local function evictionBefore(left, right)
     return left.sortKey < right.sortKey
 end
 
-local function buildEvictionQueue(outbound)
-    local queue = {}
-    for key, record in pairs(outbound) do
-        queue[#queue + 1] = { key = key, record = record, rank = recordRank(record), sortKey = tostring(key) }
-    end
-    table.sort(queue, evictionBefore)
-    return queue
-end
-
-local function noteWrite(outbound, isNew, record)
+local function noteWrite(outbound, isNew)
     if streamCount == nil then
         streamCount = countStreams(outbound)
     elseif isNew then
         streamCount = streamCount + 1
-    end
-    if evictionQueue then
-        local newest = evictionQueue[#evictionQueue]
-        if newest and recordRank(record) < newest.rank then
-            evictionQueue = nil
-        end
     end
 end
 
@@ -445,20 +430,75 @@ local function pruneTelemetry(outbound)
         return
     end
     streamCount = countStreams(outbound)
-    while streamCount > MAX_TELEMETRY_STREAMS do
-        if not evictionQueue or evictionHead > #evictionQueue then
-            evictionQueue = buildEvictionQueue(outbound)
-            evictionHead = 1
-            if #evictionQueue == 0 then
-                return
+    if streamCount <= MAX_TELEMETRY_STREAMS then
+        return
+    end
+    local queue = {}
+    for key, record in pairs(outbound) do
+        queue[#queue + 1] = { key = key, rank = recordRank(record), sortKey = tostring(key) }
+    end
+    table.sort(queue, evictionBefore)
+    local index = 1
+    while streamCount > PRUNE_TARGET and index <= #queue do
+        outbound[queue[index].key] = nil
+        streamCount = streamCount - 1
+        index = index + 1
+    end
+    local perf = GW.Perf
+    if perf and perf.Count then
+        perf.Count("telemetry_pruned", index - 1)
+    end
+end
+
+-- Fingerprints of state records the bridge confirmed delivered and the
+-- addon then dropped. A later capture with the same content is not queued
+-- again. Bounded: past MAX_DELIVERED it starts over, which only costs a
+-- re-send of unchanged state.
+local MAX_DELIVERED = 8192
+
+local function deliveredTelemetry()
+    GuildweaverDB.sync.deliveredTelemetry = GuildweaverDB.sync.deliveredTelemetry or {}
+    return GuildweaverDB.sync.deliveredTelemetry
+end
+
+-- Drops outbound records the bridge has delivered. The bridge writes
+-- Data/BridgeAcks.generated.lua (stream key -> fingerprint) after reading a
+-- save; it loads with the addon, so this runs once per login or reload.
+-- Without it every record stayed in memory and in every save until the
+-- queue's cap pushed it out.
+local function dropAcknowledgedTelemetry()
+    local acks = GW.BridgeAcks and GW.BridgeAcks.telemetry
+    if type(acks) ~= "table" then
+        return
+    end
+    local outbound = GuildweaverDB.sync.outbound.telemetry
+    local delivered = deliveredTelemetry()
+    local deliveredCount = 0
+    for _ in pairs(delivered) do
+        deliveredCount = deliveredCount + 1
+    end
+    local dropped = 0
+    for streamKey, acknowledged in pairs(acks) do
+        local record = outbound[streamKey]
+        if type(record) == "table" and type(acknowledged) == "string" and record.fingerprint == acknowledged then
+            outbound[streamKey] = nil
+            dropped = dropped + 1
+            if record.kind ~= "event" then
+                if deliveredCount >= MAX_DELIVERED then
+                    delivered = {}
+                    GuildweaverDB.sync.deliveredTelemetry = delivered
+                    deliveredCount = 0
+                end
+                if delivered[streamKey] == nil then
+                    deliveredCount = deliveredCount + 1
+                end
+                delivered[streamKey] = acknowledged
             end
         end
-        local candidate = evictionQueue[evictionHead]
-        evictionHead = evictionHead + 1
-        if outbound[candidate.key] == candidate.record then
-            outbound[candidate.key] = nil
-            streamCount = streamCount - 1
-        end
+    end
+    local perf = GW.Perf
+    if perf and perf.Count then
+        perf.Count("telemetry_acknowledged_dropped", dropped)
     end
 end
 
@@ -490,8 +530,6 @@ end
 
 function GW.Store.Initialize()
     streamCount = nil
-    evictionQueue = nil
-    evictionHead = 1
     if type(GuildweaverDB) ~= "table" or GuildweaverDB.gameRelease ~= "forever-live" then
         GuildweaverDB = {}
     end
@@ -513,6 +551,8 @@ function GW.Store.Initialize()
             GuildweaverDB.sync.outbound.telemetry[streamKey] = nil
         end
     end
+
+    dropAcknowledgedTelemetry()
 end
 
 function GW.Store.GetDatabase()
@@ -618,6 +658,14 @@ function GW.Store.SetTelemetrySnapshot(streamKey, envelope, precomputedFingerpri
     if existing and existing.fingerprint == nextFingerprint then
         return false
     end
+    local delivered = GuildweaverDB.sync.deliveredTelemetry
+    if not existing and delivered and delivered[streamKey] == nextFingerprint then
+        -- The server already has exactly this.
+        return false
+    end
+    if delivered then
+        delivered[streamKey] = nil
+    end
 
     local revisions = telemetryRevisions()
     local revision = math.max(existing and tonumber(existing.revision) or 0, tonumber(revisions[streamKey]) or 0)
@@ -630,7 +678,7 @@ function GW.Store.SetTelemetrySnapshot(streamKey, envelope, precomputedFingerpri
         envelope = envelope,
     }
     outbound[streamKey] = record
-    noteWrite(outbound, existing == nil, record)
+    noteWrite(outbound, existing == nil)
     pruneTelemetry(outbound)
     return true
 end
@@ -662,7 +710,7 @@ function GW.Store.SetTelemetryEvent(streamKey, envelope, precomputedFingerprint)
         envelope = envelope,
     }
     outbound[streamKey] = record
-    noteWrite(outbound, existing == nil, record)
+    noteWrite(outbound, existing == nil)
     pruneTelemetry(outbound)
     return true
 end

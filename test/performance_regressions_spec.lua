@@ -356,6 +356,10 @@ do
     equal(revision(env, "profession_snapshot:"), professionRevision + 1, "unchanged rescan deduped")
     equal(env:callCount("tooltip:GetSpellByID"), 0, "recipe spell tooltips cached")
     equal(env:callCount("tooltip:SetHyperlink"), 0, "crafted and reagent tooltips cached")
+    -- Crafting fires a list update per craft; with the same skill and recipe
+    -- count the book is not rescanned at all.
+    equal(env:callCount("GetRecipeInfo"), 0, "unchanged list update skips the rescan")
+    truthy((addon.Perf.Counter("recipe_scans_skipped_unchanged") or 0) >= 1, "skip is counted")
 
     -- Closing the window mid-scan publishes nothing and keeps the book.
     env.recipeCount = 300

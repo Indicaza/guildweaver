@@ -43,6 +43,8 @@ Capture work is scoped to what changed so it stays out of the way during play:
 - Gear, talent and level changes re-read only the affected sections. Equipped-item tooltips are reused until the slot, its durability or weapon enchant changes.
 - Bag events re-read only the bags that changed and rescan tooltips only for items whose link, count, binding or durability changed. Money changes never read bags. All bags are re-read every 15 minutes, on entering the world and on bag swaps, to repair missed events.
 - Recipe books, tooltip enrichment and item-catalog definitions run on one work queue with a 4 ms per-frame budget and a cap of 40 work items per frame, paused in combat and idle when empty. Closing or switching a profession cancels a scan in progress, so only complete books are published. Loot-window tooltips are still read immediately, because the window can close at any moment.
+- Profession list updates (one per craft) skip the rescan while the profession, skill rank and recipe count are unchanged.
+- The outbound queue drops what the bridge has delivered on the next login (`Data/BridgeAcks.generated.lua`), so SavedVariables hold only undelivered data. At its cap it is pruned in batches, not one record per write.
 - Each telemetry payload is fingerprinted once per publish. Profession and inventory payloads are skipped entirely while their cache revision is unchanged, and large payloads are fingerprinted across frames.
 
 `/gw perf` shows what the addon did this session. Timing uses `debugprofilestop` (falling back to `GetTimePreciseSec`), and the client's own AddOn profiler metrics are included when `C_AddOnProfiler` is available and enabled. Nothing from `/gw perf` is saved.

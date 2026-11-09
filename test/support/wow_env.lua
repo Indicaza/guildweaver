@@ -692,7 +692,8 @@ function Env:load()
     local toc = assert(io.open(self.root .. "/Guildweaver.toc", "r"))
     for line in toc:lines() do
         line = line:gsub("\r$", "")
-        if line ~= "" and not line:find("^#") and line ~= "Data/BridgeInbox.generated.lua" then
+        if line ~= "" and not line:find("^#") and line ~= "Data/BridgeInbox.generated.lua"
+            and line ~= "Data/BridgeAcks.generated.lua" then
             local chunk = assert(loadfile(self.root .. "/" .. line))
             chunk("Guildweaver", addon)
         end

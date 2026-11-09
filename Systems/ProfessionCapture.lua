@@ -75,6 +75,50 @@ local function sourceIdentity(kind)
     return "unknown"
 end
 
+-- A cheap summary of the open book: its profession, skill rank and recipe
+-- count. List updates fire after every craft; while this is unchanged the
+-- book is too (bar reagent counts), so they skip the full rescan.
+local function bookSignature(kind)
+    if kind ~= "craft" then
+        local api = Globals.C_TradeSkillUI
+        if type(api) == "table" and type(api.GetBaseProfessionInfo) == "function" then
+            local parts = {}
+            for _, fn in ipairs({ api.GetBaseProfessionInfo, api.GetChildProfessionInfo or false }) do
+                local ok, info = false, nil
+                if type(fn) == "function" then
+                    ok, info = pcall(fn)
+                end
+                if ok and type(info) == "table" then
+                    parts[#parts + 1] = tostring(info.professionID) .. "@" .. tostring(info.skillLevel)
+                        .. "/" .. tostring(info.maxSkillLevel)
+                end
+            end
+            local listFunction = api.GetAllRecipeIDs or api.GetFilteredRecipeIDs
+            local ok, ids = false, nil
+            if type(listFunction) == "function" then
+                ok, ids = pcall(listFunction)
+            end
+            parts[#parts + 1] = "#" .. tostring(ok and type(ids) == "table" and #ids or "?")
+            return table.concat(parts, ";")
+        end
+    end
+    local lineFunction = kind == "craft" and Globals.GetCraftDisplaySkillLine or Globals.GetTradeSkillLine
+    local countFunction = kind == "craft" and Globals.GetNumCrafts or Globals.GetNumTradeSkills
+    if type(lineFunction) ~= "function" or type(countFunction) ~= "function" then
+        return nil
+    end
+    local ok, name, rank, maxRank = pcall(lineFunction)
+    local counted, count = pcall(countFunction)
+    if not ok or not counted then
+        return nil
+    end
+    return table.concat({ tostring(name), tostring(rank), tostring(maxRank), tostring(count) }, ";")
+end
+
+local function isListUpdate(reason)
+    return reason == "TRADE_SKILL_LIST_UPDATE" or reason == "CRAFT_UPDATE"
+end
+
 local function dataSourceChanging()
     local api = Globals.C_TradeSkillUI
     if type(api) ~= "table" or type(api.IsDataSourceChanging) ~= "function" then
@@ -207,6 +251,8 @@ local function stepJob(job)
     end
 
     if job.phase == "remember" then
+        GW.ProfessionCapture.scanned = GW.ProfessionCapture.scanned or {}
+        GW.ProfessionCapture.scanned[job.kind] = job.signature
         local character = GW.Character
         local key = type(character.ProfessionCacheKey) == "function" and character.ProfessionCacheKey() or nil
         -- From here on the book is complete; later phases only publish it.
@@ -303,6 +349,7 @@ function GW.ProfessionCapture:Enqueue(reason, kind)
         reason = reason,
         generation = self:Generation(kind),
         identity = sourceIdentity(kind),
+        signature = bookSignature(kind),
         phase = "begin",
         step = stepJob,
         isStale = function(current)
@@ -340,6 +387,14 @@ function GW.ProfessionCapture:Schedule(reason, kind, initialDelay)
             end
 
             if kind == "craft" or tradeSkillReady() then
+                local scanned = self.scanned and self.scanned[kind]
+                if isListUpdate(reason) and scanned ~= nil and scanned == bookSignature(kind) then
+                    local perf = GW.Perf
+                    if perf and perf.Count then
+                        perf.Count("recipe_scans_skipped_unchanged")
+                    end
+                    return
+                end
                 self:Enqueue(reason, kind)
                 return
             end
