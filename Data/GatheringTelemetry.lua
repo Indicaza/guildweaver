@@ -284,7 +284,7 @@ end
 
 GW.GatheringTelemetry.SourceIdentity = sourceIdentity
 
-function GW.GatheringTelemetry.ReadLoot()
+local function readLootWindow()
     if type(Globals.GetNumLootItems) ~= "function" or type(Globals.GetLootSlotInfo) ~= "function" then
         return nil
     end
@@ -369,6 +369,42 @@ function GW.GatheringTelemetry.ReadLoot()
         sourceObjectId = sourceObjectId,
         sourceNpcId = sourceNpcId,
     }
+end
+
+-- Several collectors read the open loot window for the same event (mob
+-- loot, plus a gathering profession when one was cast). They share one read
+-- until the next loot event or rendered frame; callers must not modify it.
+local lootCache = nil
+local lootCacheFrame = nil
+
+function GW.GatheringTelemetry.InvalidateLoot()
+    lootCache = nil
+    lootCacheFrame = nil
+end
+
+function GW.GatheringTelemetry.ReadLoot()
+    local frame = tonumber(safe(Globals.GetTime))
+    if lootCache and frame and frame == lootCacheFrame then
+        local perf = GW.Perf
+        if perf and perf.Count then
+            perf.Count("loot_reads_shared")
+        end
+        return lootCache
+    end
+    local loot = readLootWindow()
+    lootCache = loot
+    lootCacheFrame = loot and frame or nil
+    return loot
+end
+
+if type(Globals.CreateFrame) == "function" then
+    -- Created before every collector's frame, so it sees each loot event
+    -- first and the collectors read the window as it is now.
+    local frame = Globals.CreateFrame("Frame")
+    for _, event in ipairs({ "LOOT_READY", "LOOT_OPENED", "LOOT_SLOT_CLEARED", "LOOT_SLOT_CHANGED", "LOOT_CLOSED" }) do
+        pcall(frame.RegisterEvent, frame, event)
+    end
+    frame:SetScript("OnEvent", GW.GatheringTelemetry.InvalidateLoot)
 end
 
 local function observationId(snapshot, payload, capturedAt)

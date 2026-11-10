@@ -23,6 +23,12 @@ local MAX_CAPTURE_ATTEMPTS = 20
 local FINGERPRINT_PIECES = 256
 -- List updates fire after every craft; a crafting session settles first.
 local LIST_UPDATE_SETTLE_SECONDS = 2.0
+-- Opening a window waits briefly, so the window's own first frames are not
+-- shared with the scan and a quick open/close starts nothing.
+local SHOW_SETTLE_SECONDS = 0.75
+-- An unchanged book (same profession, skill and recipe count) scanned within
+-- this long, in this session or a saved one, is not scanned again.
+local SCAN_FRESH_SECONDS = 6 * 3600
 
 local function tradeSkillReady()
     local api = C_TradeSkillUI
@@ -255,6 +261,9 @@ local function stepJob(job)
         GW.ProfessionCapture.scanned[job.kind] = job.signature
         local character = GW.Character
         local key = type(character.ProfessionCacheKey) == "function" and character.ProfessionCacheKey() or nil
+        if key and job.signature and type(professions.NoteScan) == "function" then
+            professions.NoteScan(key, job.signature)
+        end
         -- From here on the book is complete; later phases only publish it.
         job.remembered = true
         if not key or not professions.RememberRecipeBook(key, book, job.bookFingerprint) then
@@ -302,11 +311,50 @@ local function stepJob(job)
     end
 
     if job.phase == "publish" then
-        -- profession_snapshot is already stored; this refreshes the local
-        -- snapshot's recipes (the profession domain is reused by revision).
+        -- profession_snapshot is already stored; what is left is the local
+        -- snapshot's copy of the recipes, converted a few at a time.
+        local schema = GW.TelemetrySchema
+        if type(professions.ToCharacterRecipe) == "function" and type(schema) == "table"
+            and type(schema.NormalizeRecipe) == "function" and type(GW.Character.ApplyProfessionRecipes) == "function" then
+            job.characterRecipes = {}
+            job.index = 1
+            job.phase = "convert"
+            return false
+        end
+        job.phase = "recapture"
+        return false
+    end
+
+    if job.phase == "convert" then
+        local schema = GW.TelemetrySchema
+        while job.index <= #book.recipes do
+            local recipe = schema.NormalizeRecipe(professions.ToCharacterRecipe(book.recipes[job.index]))
+            if recipe then
+                job.characterRecipes[#job.characterRecipes + 1] = recipe
+            end
+            job.index = job.index + 1
+            if shouldYield() then
+                return false
+            end
+        end
+        local profession = book.profession or {}
+        local recipes = #job.characterRecipes > 0 and schema.MarkNormalizedRecipes(job.characterRecipes) or nil
+        local now = type(GetServerTime) == "function" and GetServerTime() or nil
+        if GW.Character.ApplyProfessionRecipes(profession.skillLineId, profession.name, recipes, now, book.source) then
+            job.phase = "done"
+        else
+            job.phase = "recapture"
+        end
+        return false
+    end
+
+    if job.phase == "recapture" or job.phase == "done" then
         local started = perfNow()
-        GW.Character.PublishProfessionRecipes(book, job.reason)
-        perfRecord("recipe_publish", perfNow() - started)
+        if job.phase == "recapture" then
+            -- No matching profession on the snapshot yet: a full refresh.
+            GW.Character.PublishProfessionRecipes(book, job.reason)
+            perfRecord("recipe_publish", perfNow() - started)
+        end
         perfRecord("recipe_scan_elapsed", perfNow() - (job.startedAt or started))
         local perf = GW.Perf
         if perf and perf.Count then
@@ -388,11 +436,22 @@ function GW.ProfessionCapture:Schedule(reason, kind, initialDelay)
 
             if kind == "craft" or tradeSkillReady() then
                 local scanned = self.scanned and self.scanned[kind]
-                if isListUpdate(reason) and scanned ~= nil and scanned == bookSignature(kind) then
+                local signature = bookSignature(kind)
+                local unchanged = isListUpdate(reason) and scanned ~= nil and scanned == signature
+                if not unchanged and signature and reason ~= "NEW_RECIPE_LEARNED" then
+                    local professions = GW.ProfessionTelemetry
+                    local key = GW.Character and type(GW.Character.ProfessionCacheKey) == "function"
+                        and GW.Character.ProfessionCacheKey() or nil
+                    unchanged = key ~= nil and type(professions) == "table" and type(professions.ScanIsFresh) == "function"
+                        and professions.ScanIsFresh(key, signature, SCAN_FRESH_SECONDS)
+                end
+                if unchanged then
                     local perf = GW.Perf
                     if perf and perf.Count then
                         perf.Count("recipe_scans_skipped_unchanged")
                     end
+                    self.scanned = self.scanned or {}
+                    self.scanned[kind] = signature
                     return
                 end
                 self:Enqueue(reason, kind)
@@ -422,11 +481,26 @@ function GW.ProfessionCapture:Request(event)
     if event == "TRADE_SKILL_SHOW" or event == "CRAFT_SHOW" or event == "TRADE_SKILL_DATA_SOURCE_CHANGED" then
         self.closed[kind] = false
     end
-    if event == "NEW_RECIPE_LEARNED" and GW.ItemTelemetry and GW.ItemTelemetry.ClearDescriptionCache then
-        -- "Already known" and similar text may have changed.
-        GW.ItemTelemetry.ClearDescriptionCache()
+    if event == "NEW_RECIPE_LEARNED" then
+        if GW.ItemTelemetry and GW.ItemTelemetry.ClearDescriptionCache then
+            -- "Already known" and similar text may have changed.
+            GW.ItemTelemetry.ClearDescriptionCache()
+        end
+        local professions = GW.ProfessionTelemetry
+        local key = GW.Character and type(GW.Character.ProfessionCacheKey) == "function" and GW.Character.ProfessionCacheKey() or nil
+        if key and type(professions) == "table" and type(professions.ForgetScans) == "function" then
+            professions.ForgetScans(key)
+        end
+        if self.scanned then
+            self.scanned[kind] = nil
+        end
     end
-    local settle = (event == "TRADE_SKILL_LIST_UPDATE" or event == "CRAFT_UPDATE") and LIST_UPDATE_SETTLE_SECONDS or nil
+    local settle = nil
+    if event == "TRADE_SKILL_LIST_UPDATE" or event == "CRAFT_UPDATE" then
+        settle = LIST_UPDATE_SETTLE_SECONDS
+    elseif event == "TRADE_SKILL_SHOW" or event == "CRAFT_SHOW" then
+        settle = SHOW_SETTLE_SECONDS
+    end
     self:Schedule(event, kind, settle)
 end
 

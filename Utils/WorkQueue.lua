@@ -14,15 +14,23 @@ local _, GW = ...
 -- same data). The queue is bounded; when full, the oldest optional job is
 -- dropped. A job's isStale() is checked before every step so closing or
 -- switching a profession cancels it instead of publishing stale data.
+--
+-- Sustained work backs off: after BUSY_FRAMES consecutive busy frames the
+-- queue runs every BACKOFF_SECONDS instead of every frame, so a long scan
+-- or a farming session's enrichment never costs a slice of every frame
+-- indefinitely. A single step is still one unit of work; the budget is
+-- checked between units, never inside one.
 
 local Globals = _G or {}
 
 GW.WorkQueue = GW.WorkQueue or {}
 local Queue = GW.WorkQueue
 
-Queue.FRAME_BUDGET_MS = 4
-Queue.MAX_ITEMS_PER_FRAME = 40
+Queue.FRAME_BUDGET_MS = 2
+Queue.MAX_ITEMS_PER_FRAME = 24
 Queue.MAX_JOBS = 64
+Queue.BUSY_FRAMES = 30
+Queue.BACKOFF_SECONDS = 0.05
 
 local jobs = {}
 local byKey = {}
@@ -30,7 +38,13 @@ local scheduled = false
 local inCombat = false
 local tickStarted = 0
 local tickItems = 0
-local stats = { ticks = 0, dropped = 0, cancelled = 0, completed = 0, maxDepth = 0, overBudget = 0 }
+local busyFrames = 0
+
+local function newStats()
+    return { ticks = 0, dropped = 0, cancelled = 0, completed = 0, maxDepth = 0, overBudget = 0,
+        worstTick = 0, totalMs = 0, backoffs = 0, combatWaits = 0, worstStep = 0, worstStepCategory = nil }
+end
+local stats = newStats()
 
 local function now()
     local perf = GW.Perf
@@ -110,6 +124,12 @@ local function schedule()
         return
     end
     scheduled = true
+    if busyFrames >= Queue.BUSY_FRAMES then
+        busyFrames = 0
+        stats.backoffs = stats.backoffs + 1
+        timer.After(Queue.BACKOFF_SECONDS, tick)
+        return
+    end
     timer.After(0, tick)
 end
 
@@ -133,15 +153,21 @@ function Queue.RunFrame()
     while index <= #jobs do
         local job = jobs[index]
         if job.optional and combat then
+            stats.combatWaits = stats.combatWaits + 1
             index = index + 1
         elseif type(job.isStale) == "function" and job:isStale() then
             stats.cancelled = stats.cancelled + 1
             finish(job, "stale")
         else
-            local started = perf and perf.Begin and perf.Begin() or nil
+            local started = now()
             local ok, result = pcall(job.step, job)
-            if perf and perf.End and job.category then
-                perf.End(job.category, started)
+            local stepMs = now() - started
+            if perf and perf.Record and job.category then
+                perf.Record(job.category, stepMs, true)
+            end
+            if stepMs > stats.worstStep then
+                stats.worstStep = stepMs
+                stats.worstStepCategory = job.category or tostring(job.key)
             end
             if not ok then
                 stats.cancelled = stats.cancelled + 1
@@ -163,6 +189,10 @@ function Queue.RunFrame()
     if elapsed > Queue.FRAME_BUDGET_MS * 2 then
         stats.overBudget = stats.overBudget + 1
     end
+    if elapsed > stats.worstTick then
+        stats.worstTick = elapsed
+    end
+    stats.totalMs = stats.totalMs + elapsed
     stats.ticks = stats.ticks + 1
     return elapsed
 end
@@ -170,11 +200,11 @@ end
 tick = function()
     scheduled = false
     local perf = GW.Perf
-    local started = perf and perf.Begin and perf.Begin() or nil
-    Queue.RunFrame()
-    if perf and perf.End then
-        perf.End("queue_tick", started)
+    local elapsed = Queue.RunFrame()
+    if perf and perf.Record then
+        perf.Record("queue_tick", elapsed)
     end
+    busyFrames = #jobs > 0 and busyFrames + 1 or 0
     schedule()
 end
 
@@ -242,6 +272,21 @@ function Queue.Stats()
     return stats
 end
 
+function Queue.ResetStats()
+    stats = newStats()
+    stats.maxDepth = #jobs
+end
+
+-- Queued jobs per category, for /gw perf.
+function Queue.Depths()
+    local depths = {}
+    for index = 1, #jobs do
+        local name = jobs[index].category or "other"
+        depths[name] = (depths[name] or 0) + 1
+    end
+    return depths
+end
+
 -- Combat state comes from PLAYER_REGEN_* so a resume is scheduled the moment
 -- combat ends; InCombatLockdown is also consulted for reloads mid-combat.
 function Queue.SetCombat(value)
@@ -256,7 +301,8 @@ function Queue.Reset()
     byKey = {}
     scheduled = false
     inCombat = false
-    stats = { ticks = 0, dropped = 0, cancelled = 0, completed = 0, maxDepth = 0, overBudget = 0 }
+    busyFrames = 0
+    stats = newStats()
 end
 
 function Queue.Initialize()

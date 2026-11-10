@@ -608,10 +608,10 @@ function GW.Character.SectionRevision(section)
     return sectionRevisions[section]
 end
 
-local function invalidateEquipmentEnrichment()
+local function invalidateEquipmentEnrichment(setPiecesOnly)
     local items = GW.ItemTelemetry
     if type(items) == "table" and type(items.InvalidateEquipmentCache) == "function" then
-        items.InvalidateEquipmentCache()
+        items.InvalidateEquipmentCache(setPiecesOnly)
     end
 end
 
@@ -634,8 +634,13 @@ function GW.Character.Capture(reason, recipeOverride, scope)
         talents = collectTalents()
         sectionRevisions.talents = sectionRevisions.talents + 1
     end
-    if not cached or (scope.equipment and not scope.durabilityOnly) then
+    if not cached then
         invalidateEquipmentEnrichment()
+    elseif scope.equipment and not scope.durabilityOnly then
+        -- A gear swap re-renders the changed slots (their signature differs)
+        -- and set pieces; a level-up (which also rereads talents) changes
+        -- requirement colours on every item.
+        invalidateEquipmentEnrichment(not scope.talents)
     end
     local equipment
     if cached and not scope.equipment then
@@ -732,6 +737,30 @@ function GW.Character.PublishProfessionRecipes(book, reason)
     end
     -- The override keeps the local snapshot's recipes.
     return GW.Character.Capture(reason or "TRADE_SKILL", professions.ToCharacterRecipeOverride(book), {})
+end
+
+-- Puts already normalized recipes on the cached snapshot's matching
+-- profession, without recapturing the character: recipes are left out of
+-- the snapshot's change detection and published by profession_snapshot.
+-- Returns false when the snapshot has no such profession (the caller then
+-- falls back to PublishProfessionRecipes).
+function GW.Character.ApplyProfessionRecipes(professionId, professionName, recipes, capturedAt, source)
+    local snapshot = GW.Character.GetCurrentSnapshot()
+    if type(snapshot) ~= "table" or type(snapshot.professions) ~= "table" then
+        return false
+    end
+    local lowerName = type(professionName) == "string" and string.lower(professionName) or nil
+    for _, profession in ipairs(snapshot.professions) do
+        local id = tonumber(profession.skillLineId or profession.id)
+        local name = type(profession.name) == "string" and string.lower(profession.name) or nil
+        if (professionId and id == tonumber(professionId)) or (lowerName and name == lowerName) then
+            profession.recipes = recipes
+            profession.recipeSnapshotAt = capturedAt
+            profession.recipeSource = source
+            return true
+        end
+    end
+    return false
 end
 
 -- Stores a complete recipe book and publishes it.

@@ -61,9 +61,21 @@ local function printPerf()
     if queue and type(queue.Stats) == "function" then
         local stats = queue.Stats()
         table.insert(extra, string.format(
-            "work queue: %d queued (max %d), %d done, %d cancelled, %d dropped, %d ms/frame budget, combat paused %s",
+            "work queue: %d queued (max %d), %d done, %d cancelled, %d dropped, %s ms/frame budget, in combat %s",
             queue.Size(), stats.maxDepth, stats.completed, stats.cancelled, stats.dropped,
-            queue.FRAME_BUDGET_MS, tostring(queue.InCombat())))
+            tostring(queue.FRAME_BUDGET_MS), tostring(queue.InCombat())))
+        table.insert(extra, string.format(
+            "work queue time: %d frames, %.1f ms total, worst frame %.2f ms, worst step %.2f ms (%s), %d over 2x budget, %d backoffs, %d combat waits",
+            stats.ticks or 0, stats.totalMs or 0, stats.worstTick or 0, stats.worstStep or 0,
+            tostring(stats.worstStepCategory or "-"), stats.overBudget or 0, stats.backoffs or 0, stats.combatWaits or 0))
+        if type(queue.Depths) == "function" and queue.Size() > 0 then
+            local parts = {}
+            for name, depth in pairs(queue.Depths()) do
+                table.insert(parts, name .. "=" .. depth)
+            end
+            table.sort(parts)
+            table.insert(extra, "queued now: " .. table.concat(parts, ", "))
+        end
     end
     for _, line in ipairs(perf.Report(extra)) do
         GW.Print(line)
@@ -185,6 +197,9 @@ SlashCmdList.GUILDWEAVER = function(message)
     if command == "perf reset" then
         if GW.Perf and GW.Perf.Reset then
             GW.Perf.Reset()
+        end
+        if GW.WorkQueue and GW.WorkQueue.ResetStats then
+            GW.WorkQueue.ResetStats()
         end
         GW.Print("Performance counters reset.")
         return

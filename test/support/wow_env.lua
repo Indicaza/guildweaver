@@ -414,7 +414,9 @@ end
 function Env:nextFrame()
     self.frameCount = self.frameCount + 1
     self.time = self.time + FRAME_SECONDS
-    self.frameStartCpu = self.cpu
+    -- With eventsInFrames, work done by events dispatched since the last
+    -- frame counts toward this frame, as it would in the client.
+    self.frameStartCpu = self.eventsInFrames and self.lastFrameEndCpu or self.cpu
     local due = {}
     local remaining = {}
     for _, timer in ipairs(self.timers) do
@@ -435,6 +437,7 @@ function Env:nextFrame()
         timer.callback()
     end
     local frameCpu = self.cpu - self.frameStartCpu
+    self.lastFrameEndCpu = self.cpu
     self.worstFrameCpu = math.max(self.worstFrameCpu or 0, frameCpu)
     return frameCpu
 end
