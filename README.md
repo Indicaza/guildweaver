@@ -95,6 +95,10 @@ A run continues through a /reload, a disconnect or a run back from the graveyard
 
 `dungeon_run` is an envelope-v1 event stream, one stream key per run. It is written when the game saves (/reload, logout) as an open checkpoint and once more when the run ends; each write has a higher `sequence`, and the website ignores anything after a finished run. The timeline keeps at most 60 events, and the add-on keeps the last 10 runs for the window. Corpse loot and gathering inside a run carry `context.dungeonRun.runId`.
 
+### Auction House
+
+While the auction house is open, Guildweaver records what the client already shows: commodity and item searches (every listing of that item: unit price, quantity), browse rows (the lowest price and total per item) and full scans another addon or the player ran (read a slice per frame through the work queue). It never searches, scans, buys, bids, posts or cancels, needs no other addon, and never reads seller or bidder names. Results are written as `auction_scan` events (at most 1,000 items each) a few seconds after the last search or when the auction house closes; unchanged results are not re-sent for 10 minutes. Each item says whether every listing was visible (`complete`). The market is the realm plus the house: neutral in Booty Bay, Gadgetzan and Everlook, otherwise the player's faction. If the faction cannot be read, nothing is recorded. Prices reach the website after /reload or logout, like all telemetry.
+
 ### Fishing
 
 Each accepted Fishing cast is a `gathering_attempt` (`activity=cast`) and each fishing loot window a `gathering_loot` (`activity=catch`). Casts are recognized by the Classic-era rank spell ids (7620, 7731, 7732, 18248), the modern spell (131474), or the spell name. A catch is recorded once per loot window. When the client reports fishing loot (`IsFishingLoot`) but the cast was not seen, because the channel ended first or the cast started before a reload, the catch is still recorded with context read at loot time and `capture.castObserved=false`.

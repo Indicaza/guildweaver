@@ -51,6 +51,7 @@ Systems/MiningCapture.lua
 Systems/FishingPoolProbe.lua
 Systems/FishingCapture.lua
 Systems/MobLootCapture.lua
+Systems/AuctionCapture.lua
 Systems/Quests.lua
 Telemetry/Compatibility.lua
 UI/QuestLog.lua
