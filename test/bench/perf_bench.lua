@@ -17,15 +17,26 @@ options.root = root
 options.realClock = true
 
 local env = Env.new(options)
+env.eventsInFrames = true
 local GW = env:load()
 
--- Real interpreter time per rendered frame (all addon work in that frame).
+-- Real interpreter time per rendered frame: event handlers dispatched since
+-- the previous frame plus the timers that run in this one.
 local worstLuaFrame = 0
+local eventLua = 0
+local dispatch = env.dispatch
+function env.dispatch(self, ...)
+    local started = os.clock()
+    local delivered = dispatch(self, ...)
+    eventLua = eventLua + (os.clock() - started) * 1000
+    return delivered
+end
 local nextFrame = env.nextFrame
 function env.nextFrame(self)
     local started = os.clock()
     local cpu = nextFrame(self)
-    worstLuaFrame = math.max(worstLuaFrame, (os.clock() - started) * 1000)
+    worstLuaFrame = math.max(worstLuaFrame, (os.clock() - started) * 1000 + eventLua)
+    eventLua = 0
     return cpu
 end
 
@@ -43,7 +54,9 @@ end
 local function scenario(name, run)
     env:resetCalls()
     env.worstFrameCpu = 0
+    env.lastFrameEndCpu = env.cpu
     worstLuaFrame = 0
+    eventLua = 0
     local cpuBefore = env.cpu
     local memoryBefore = collectgarbage("count")
     local clockBefore = os.clock()
@@ -124,25 +137,63 @@ scenario("equipment change", function()
     env:advance(2)
 end)
 
--- Looting corpses: what a leveling or farming session does all day.
+local function countStreams(prefix)
+    local total = 0
+    for key in pairs(Env.telemetry()) do
+        if key:find(prefix, 1, true) == 1 then
+            total = total + 1
+        end
+    end
+    return total
+end
+
+-- Looting corpses: what a leveling or farming session does all day. Each
+-- corpse drops a common item and one of 120 different reagents, so new
+-- items keep appearing as they do in play. The window closes in the same
+-- frame (fast auto-loot), the worst case for reading the live loot slot.
 local corpse = 0
-local function lootCorpses(count)
+local function corpseGuid()
+    corpse = corpse + 1
+    return string.format("Creature-0-1-2-3-%d-%06d", 1000 + corpse % 7, corpse)
+end
+local function lootWindow(entries, framesBetween)
+    env.loot = entries
+    env:dispatch("LOOT_READY", true)
+    env:dispatch("LOOT_OPENED", true)
+    env.loot = nil
+    env:dispatch("LOOT_CLOSED")
+    env:advance((framesBetween or 60) / 60)
+end
+local function lootCorpses(count, framesBetween)
     for _ = 1, count do
-        corpse = corpse + 1
-        env.loot = {
-            { link = Env.itemLink(2589, "Linen Cloth", 1), quantity = 2, source = string.format("Creature-0-1-2-3-%d-%06d", 1000 + corpse % 7, corpse) },
-            { link = Env.itemLink(4865, "Ruined Pelt", 1), quantity = 1, source = string.format("Creature-0-1-2-3-%d-%06d", 1000 + corpse % 7, corpse) },
-        }
-        env:dispatch("LOOT_READY", false)
-        env:dispatch("LOOT_OPENED", false)
-        env.loot = nil
-        env:dispatch("LOOT_CLOSED")
-        env:advance(1)
+        local guid = corpseGuid()
+        local reagent = 30000 + corpse % 120
+        lootWindow({
+            { link = Env.itemLink(2589, "Linen Cloth", 1), quantity = 2, source = guid },
+            { link = Env.itemLink(reagent, "Reagent " .. (reagent - 30000), 1), quantity = 1, source = guid },
+        }, framesBetween)
     end
 end
 
 scenario("20 corpses looted", function()
     lootCorpses(20)
+end)
+
+scenario("60 corpses looted rapidly (6 frames apart)", function()
+    lootCorpses(60, 6)
+    env:advance(3)
+end)
+
+scenario("area loot: 8 corpses, 16 slots in one window", function()
+    local entries = {}
+    for _ = 1, 8 do
+        local guid = corpseGuid()
+        local reagent = 30000 + corpse % 120
+        table.insert(entries, { link = Env.itemLink(reagent, "Reagent " .. (reagent - 30000), 1), quantity = 1, source = guid })
+        table.insert(entries, { link = Env.itemLink(20000 + corpse % 700, "Crafted Item " .. (corpse % 700), 2), quantity = 1, source = guid })
+    end
+    lootWindow(entries)
+    env:advance(3)
 end)
 
 -- The outbound queue is only emptied by a newer SavedVariables write after
@@ -165,7 +216,75 @@ scenario("20 corpses looted, outbound queue full", function()
     lootCorpses(20)
 end)
 
-print(string.format("root=%s size=%s reloads=%d", root, size, env.reloads))
+-- A long session: the corpse cache saved across reloads is full.
+scenario("20 corpses looted, 1000 remembered corpses", function()
+    local db = GW.Store.GetDatabase()
+    db.meta.mobLootSeen = db.meta.mobLootSeen or {}
+    local now = env.serverTime
+    for index = 1, 1000 do
+        db.meta.mobLootSeen["::Live Realm:Creature-0-1-2-3-9-" .. index] = { at = now - 3000 + index, outputs = {} }
+    end
+    lootCorpses(20)
+end)
+
+scenario("reopen profession window (unchanged)", function()
+    env.tradeSkillOpen = false
+    env:dispatch("TRADE_SKILL_CLOSE")
+    env:advance(1)
+    env.tradeSkillOpen = true
+    env:dispatch("TRADE_SKILL_SHOW")
+    env:advance(15)
+end)
+
+scenario("craft 15 times with the window open", function()
+    for index = 1, 15 do
+        env.bags[2].slots[1].stackCount = 20 - index
+        env:dispatch("BAG_UPDATE", 2)
+        env:dispatch("TRADE_SKILL_LIST_UPDATE")
+        env:dispatch("BAG_UPDATE_DELAYED")
+        env:advance(2.5)
+    end
+    env:advance(5)
+end)
+
+scenario("open and close professions 10 times quickly", function()
+    for index = 1, 10 do
+        env.openProfession = index % 2 == 0 and 164 or 186
+        env.tradeSkillOpen = true
+        env:dispatch("TRADE_SKILL_SHOW")
+        env:advance(0.3)
+        env.tradeSkillOpen = false
+        env:dispatch("TRADE_SKILL_CLOSE")
+        env:advance(0.2)
+    end
+    env.openProfession = 164
+    env:advance(10)
+end)
+
+scenario("dungeon pull: combat, loot, gear and bags", function()
+    for pull = 1, 5 do
+        env.inCombat = true
+        env:dispatch("PLAYER_REGEN_DISABLED")
+        for _ = 1, 20 do
+            env:dispatch("UNIT_AURA", "player")
+            env:advance(0.25)
+        end
+        env.inCombat = false
+        env:dispatch("PLAYER_REGEN_ENABLED")
+        lootCorpses(4, 20)
+        env.bags[1].slots[1].stackCount = 5 + pull
+        env:dispatch("BAG_UPDATE", 1)
+        env:dispatch("BAG_UPDATE_DELAYED")
+        env.equipment[6] = Env.itemLink(10006 + pull % 2 * 10, "Gear Piece " .. (6 + pull % 2 * 10), 2)
+        env:dispatch("PLAYER_EQUIPMENT_CHANGED", 6, true)
+        env:dispatch("UPDATE_INVENTORY_DURABILITY")
+        env:advance(2)
+    end
+    env:advance(10)
+end)
+
+print(string.format("root=%s size=%s reloads=%d mob_loot=%d item_definitions=%d gathering=%d", root, size, env.reloads,
+    countStreams("mob_loot:"), countStreams("item_definition:"), countStreams("gathering_loot:")))
 print("| Scenario | Tooltip renders | API calls | Simulated client ms | Worst simulated frame ms | Lua CPU ms | Worst Lua frame ms | Lua KB allocated |")
 print("|---|---:|---:|---:|---:|---:|---:|---:|")
 for _, row in ipairs(rows) do

@@ -4,8 +4,21 @@ GW.GameItemTelemetry = GW.GameItemTelemetry or {}
 local complete = {}
 local pending = {}
 
+-- Complete this session, or stored by an earlier one (waiting to sync or
+-- acknowledged by the bridge): either way the base definition is not
+-- rendered again.
 function GW.GameItemTelemetry.IsComplete(itemId)
-    return complete[tonumber(itemId) or 0] == true
+    itemId = tonumber(itemId) or 0
+    if complete[itemId] then
+        return true
+    end
+    local store = GW.Store
+    if type(store) == "table" and type(store.HasTelemetry) == "function"
+        and store.HasTelemetry("game_item_definition:item:" .. tostring(itemId)) then
+        complete[itemId] = true
+        return true
+    end
+    return false
 end
 
 function GW.GameItemTelemetry.Publish(itemId)
@@ -47,7 +60,16 @@ if type(Globals.CreateFrame) == "function" then
     frame:SetScript("OnEvent", function(_, _, itemId, success)
         itemId = tonumber(itemId)
         if success ~= false and itemId and pending[itemId] then
-            pcall(GW.GameItemTelemetry.Publish, itemId)
+            local queue = GW.WorkQueue
+            if type(queue) == "table" and type(queue.Enqueue) == "function" then
+                queue.Enqueue({ key = "game_item:" .. tostring(itemId), optional = true, category = "item_catalog",
+                    step = function()
+                        pcall(GW.GameItemTelemetry.Publish, itemId)
+                        return true
+                    end })
+            else
+                pcall(GW.GameItemTelemetry.Publish, itemId)
+            end
         end
     end)
 end

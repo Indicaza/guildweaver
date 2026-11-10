@@ -349,6 +349,22 @@ do
     same, why = Env.deepEqual(book.items, sync.items)
     truthy(same, "reagent items equal: " .. tostring(why))
 
+    -- The local snapshot's recipes, converted across frames, equal what a
+    -- full character recapture would have stored.
+    local expected = addon.TelemetrySchema.NormalizeCharacterSnapshot({
+        professions = { { skillLineId = 164, name = "Blacksmithing",
+            recipes = addon.ProfessionTelemetry.ToCharacterRecipeOverride(book).recipes } },
+    }).professions[1].recipes
+    local local164 = nil
+    for _, profession in ipairs(addon.Character.GetCurrentSnapshot().professions) do
+        if profession.skillLineId == 164 then
+            local164 = profession.recipes
+        end
+    end
+    same, why = Env.deepEqual(local164, expected)
+    truthy(same, "snapshot recipes equal a full recapture: " .. tostring(why))
+    equal(addon.Perf.Category("recipe_publish"), nil, "no full character recapture after a scan")
+
     -- A rescan with unchanged recipes reuses tooltips and publishes nothing.
     env:resetCalls()
     env:dispatch("TRADE_SKILL_LIST_UPDATE")
@@ -375,11 +391,22 @@ do
     equal(revision(env, "profession_snapshot:"), professionRevision + 1, "closed window publishes nothing")
     equal(#professionBook(env, 164).recipes, 600, "complete book kept after an interrupted scan")
 
-    -- Switching profession mid-scan cancels the stale job.
+    -- Reopening the unchanged book does not scan it again.
     env.tradeSkillOpen = true
     env.recipeCount = 600
+    env:resetCalls()
     env:dispatch("TRADE_SKILL_SHOW")
-    env:advance(0.28)
+    env:advance(3)
+    equal(env:callCount("GetRecipeInfo"), 0, "reopening an unchanged book skips the scan")
+    env.tradeSkillOpen = false
+    env:dispatch("TRADE_SKILL_CLOSE")
+    env:advance(1)
+
+    -- Switching profession mid-scan cancels the stale job.
+    env.tradeSkillOpen = true
+    env.recipeCount = 601
+    env:dispatch("TRADE_SKILL_SHOW")
+    env:advance(1.0)
     truthy(addon.WorkQueue.Get("profession:tradeskill"), "scan in progress before the switch")
     env.openProfession = 186
     env.recipeCount = 50
@@ -451,16 +478,46 @@ do
     local gathering = env:stream("gathering_loot:")
     truthy(gathering, "gathering loot recorded immediately")
     equal(gathering.envelope.payload.outputs[1].itemId, 785, "loot output retained")
+    -- Looting itself renders nothing; definitions are built afterwards.
+    equal(env:itemTooltipScans(), 0, "no tooltip rendered during the loot events")
+    equal(env:stream("item_definition:item:785"), nil, "item definition deferred")
+    equal(env:stream("game_item_definition:item:785"), nil, "public base definition deferred")
+    atMost(env:callCount("GetLootSourceInfo"), 2, "collectors share one read of the window per event")
+
+    -- While the window is still open, the exact loot slot is rendered.
+    env:nextFrame()
     local definition = env:stream("item_definition:item:785")
     truthy(definition, "item definition captured from the live loot slot")
     equal(definition.envelope.payload.item.tooltip.method, "SetLootItem", "authoritative loot slot tooltip")
-    atMost(env:callCount("tooltip:SetLootItem"), 1, "loot slot scanned once across collectors")
-    equal(env:stream("game_item_definition:item:785"), nil, "public base definition deferred")
+    equal(env:callCount("tooltip:SetLootItem"), 1, "loot slot scanned once across collectors")
 
     env.loot = nil
     env:dispatch("LOOT_CLOSED")
     env:advance(1)
     truthy(env:stream("game_item_definition:item:785"), "deferred definition completes after the window")
+
+    -- Fast auto-loot: the window is gone before the next frame, so the item
+    -- link is rendered instead.
+    env.items[2453] = { itemId = 2453, name = "Bruiseweed", quality = 1, class = "Trade Goods", equipLocation = "", icon = 3 }
+    env.loot = { { link = Env.itemLink(2453, "Bruiseweed", 1), quantity = 1, source = "Creature-0-1-2-3-99-000777" } }
+    env:dispatch("LOOT_READY")
+    env:dispatch("LOOT_OPENED")
+    env.loot = nil
+    env:dispatch("LOOT_CLOSED")
+    env:advance(1)
+    local fast = env:stream("item_definition:item:2453")
+    truthy(fast, "definition still captured after a fast auto-loot")
+    equal(fast.envelope.payload.item.tooltip.method, "SetHyperlink", "falls back to the item link")
+
+    -- Known items cost nothing on later loots, even after a reload.
+    env:resetCalls()
+    env.loot = { { link = herb, quantity = 1, source = "Creature-0-1-2-3-99-000778" } }
+    env:dispatch("LOOT_READY")
+    env:dispatch("LOOT_OPENED")
+    env.loot = nil
+    env:dispatch("LOOT_CLOSED")
+    env:advance(1)
+    equal(env:itemTooltipScans(), 0, "an already defined item is never rendered again")
     addon.Perf.Reset()
 end
 
@@ -496,12 +553,18 @@ do
     local reloaded = Env.new({ recipes = 120 })
     reloaded:load()
     GuildweaverDB = saved
+    local professionCaptures = 0
+    local professionDomain = reloaded.addon.TelemetryDomains.Professions
+    local captureProfessions = professionDomain.Capture
+    professionDomain.Capture = function(...)
+        professionCaptures = professionCaptures + 1
+        return captureProfessions(...)
+    end
     reloaded:login()
     reloaded:advance(5)
     equal(reloaded.reloads, 0, "no reload after reloading")
     equal(revision(reloaded, "profession_snapshot:"), professionRevision, "recipes survive reload unchanged")
-    equal(reloaded.addon.Perf.Counter("fingerprint_resumable"), 0, "unchanged recipe payload not rebuilt after reload")
-    equal(reloaded.addon.Perf.Category("domain_publish"), nil, "no deferred profession publish after reload")
+    equal(professionCaptures, 0, "unchanged recipe payload not rebuilt after reload")
     truthy(#reloaded.addon.Character.GetCurrentSnapshot().professions[1].recipes > 0, "snapshot recipes retained")
 end
 
@@ -570,6 +633,130 @@ do
     truthy(queue.Stats().dropped >= 10, "oldest optional jobs dropped")
     local same = queue.Enqueue({ key = "test:dup", optional = true, step = function() return true end })
     equal(queue.Enqueue({ key = "test:dup", optional = true, step = function() return true end }), same, "duplicate jobs coalesce")
+end
+
+-- Sustained work backs off instead of taking a slice of every frame.
+do
+    local env, addon = start()
+    local queue = addon.WorkQueue
+    local steps = 0
+    queue.Enqueue({ key = "test:long", optional = true, step = function()
+        steps = steps + 1
+        return steps >= 200
+    end })
+    local busyFrames = 0
+    for _ = 1, 120 do
+        local before = steps
+        env:nextFrame()
+        if steps > before then
+            busyFrames = busyFrames + 1
+        end
+    end
+    truthy(queue.Stats().backoffs >= 1, "long-running work backs off")
+    truthy(busyFrames < 120, "the queue skips frames under sustained load (" .. busyFrames .. "/120)")
+    env:advance(10)
+    equal(steps, 200, "backed-off work still finishes")
+end
+
+-- Area loot: many new items in one window render nothing in the loot frame
+-- and are defined over the following frames within the budget.
+do
+    local env, addon = start()
+    env.eventsInFrames = true
+    local entries = {}
+    for index = 1, 12 do
+        local itemId = 30000 + index
+        table.insert(entries, { link = Env.itemLink(itemId, "Reagent " .. index, 1), quantity = 1,
+            source = string.format("Creature-0-1-2-3-55-%06d", index) })
+    end
+    env.loot = entries
+    env:resetCalls()
+    env:dispatch("LOOT_READY", true)
+    env:dispatch("LOOT_OPENED", true)
+    equal(env:itemTooltipScans(), 0, "area loot renders no tooltip during the events")
+    local corpses = 0
+    for key in pairs(env:telemetry()) do
+        if key:find("mob_loot:", 1, true) == 1 then
+            corpses = corpses + 1
+        end
+    end
+    equal(corpses, 12, "every corpse recorded immediately")
+    local worst = 0
+    for _ = 1, 120 do
+        worst = math.max(worst, env:nextFrame())
+    end
+    env.loot = nil
+    env:dispatch("LOOT_CLOSED")
+    env:advance(2)
+    for index = 1, 12 do
+        truthy(env:stream("item_definition:item:" .. (30000 + index)), "item " .. index .. " defined afterwards")
+    end
+    atMost(worst, addon.WorkQueue.FRAME_BUDGET_MS + 1, "enrichment frames stay within budget")
+
+    -- After a reload the stored definitions are not built again.
+    local saved = GuildweaverDB
+    local reloaded = Env.new()
+    reloaded:load()
+    GuildweaverDB = saved
+    reloaded:login()
+    reloaded:advance(3)
+    reloaded.loot = entries
+    reloaded:resetCalls()
+    reloaded:dispatch("LOOT_READY", true)
+    reloaded.loot = nil
+    reloaded:dispatch("LOOT_CLOSED")
+    reloaded:advance(2)
+    equal(reloaded:itemTooltipScans(), 0, "items defined in an earlier session are not rendered again")
+end
+
+-- The saved corpse cache stays bounded and is not walked on every loot.
+do
+    local env, addon = start()
+    local db = addon.Store.GetDatabase()
+    db.meta.mobLootSeen = {}
+    for index = 1, 1200 do
+        db.meta.mobLootSeen["x:" .. index] = { at = env.serverTime - 100 + index % 50, outputs = {} }
+    end
+    addon.MobLootCapture.ResetSeenCache()
+    local function loot(guid)
+        env.loot = { { link = Env.itemLink(2589, "Linen Cloth", 1), quantity = 1, source = guid } }
+        env:dispatch("LOOT_READY", true)
+        env.loot = nil
+        env:dispatch("LOOT_CLOSED")
+        env:advance(0.5)
+    end
+    loot("Creature-0-1-2-3-77-000001")
+    local remembered = 0
+    for _ in pairs(db.meta.mobLootSeen) do
+        remembered = remembered + 1
+    end
+    atMost(remembered, 1000, "corpse cache cut back below its limit")
+    local revisionBefore = revision(env, "mob_loot:")
+    loot("Creature-0-1-2-3-77-000001")
+    equal(revision(env, "mob_loot:"), revisionBefore, "the same corpse is still not counted twice")
+end
+
+-- Quickly opening and closing professions starts no scan; a gear swap
+-- renders only the changed slot.
+do
+    local env = start({ recipes = 300 })
+    env:resetCalls()
+    for _ = 1, 8 do
+        env.tradeSkillOpen = true
+        env:dispatch("TRADE_SKILL_SHOW")
+        env:advance(0.3)
+        env.tradeSkillOpen = false
+        env:dispatch("TRADE_SKILL_CLOSE")
+        env:advance(0.2)
+    end
+    env:advance(5)
+    equal(env:callCount("GetRecipeInfo"), 0, "open/close spam never starts a scan")
+
+    env:resetCalls()
+    env.equipment[5] = Env.itemLink(10018, "Gear Piece 18", 2)
+    env:dispatch("PLAYER_EQUIPMENT_CHANGED", 5, true)
+    env:advance(2)
+    equal(env:callCount("tooltip:SetInventoryItem"), 1, "only the changed slot is rendered again")
 end
 
 print("performance regressions spec passed")

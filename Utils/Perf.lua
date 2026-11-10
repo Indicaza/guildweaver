@@ -167,6 +167,9 @@ local NESTED = {
     fingerprint = true,
     recipe_step = true,
     item_catalog = true,
+    loot_enrich = true,
+    loot_capture = true,
+    domain_publish = true,
 }
 
 -- Usage: local started = Perf.Begin(); ...; Perf.End("category", started)
@@ -207,7 +210,26 @@ function Perf.Category(name)
     return categories[name]
 end
 
+local memoryBaseline = nil
+
+-- This addon's memory (KB), only when asked: UpdateAddOnMemoryUsage walks
+-- every addon, so it is never called during play.
+local function addonMemory()
+    local update = Globals.UpdateAddOnMemoryUsage
+    local get = Globals.GetAddOnMemoryUsage
+    if type(update) ~= "function" or type(get) ~= "function" then
+        return nil
+    end
+    local ok = pcall(update)
+    if not ok then
+        return nil
+    end
+    local okGet, value = pcall(get, GW.name or "Guildweaver")
+    return okGet and tonumber(value) or nil
+end
+
 function Perf.Reset()
+    memoryBaseline = nil
     categories = {}
     counters = {}
     worstFrames = {}
@@ -224,14 +246,17 @@ function Perf.WorstFrames()
 end
 
 local REPORT_ORDER = {
+    "loot_event",
+    "loot_capture",
+    "loot_enrich",
+    "item_catalog",
     "stats_capture",
     "character_capture",
     "inventory_scan",
     "inventory_money",
     "recipe_step",
     "recipe_scan_elapsed",
-    "item_catalog",
-    "loot_capture",
+    "domain_publish",
     "fingerprint",
     "queue_tick",
 }
@@ -329,6 +354,16 @@ function Perf.Report(extra)
             table.insert(parts, format(frame.ms) .. " ms (" .. tostring(frame.label or "?") .. ")")
         end
         table.insert(lines, "  worst frames: " .. table.concat(parts, ", "))
+    end
+
+    local memory = addonMemory()
+    if memory then
+        if memoryBaseline then
+            table.insert(lines, string.format("  addon memory: %.0f KB (%+.0f KB since the previous /gw perf)", memory, memory - memoryBaseline))
+        else
+            table.insert(lines, string.format("  addon memory: %.0f KB", memory))
+        end
+        memoryBaseline = memory
     end
 
     for _, value in ipairs(profilerLines(GW.name or "Guildweaver") or {}) do

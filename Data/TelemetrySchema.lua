@@ -503,3 +503,11 @@ function GW.Store.SetCharacterSnapshot(characterKey, snapshot)
 end
 
 GW.TelemetrySchema.NormalizeCharacterSnapshot = normalizeCharacterSnapshot
+GW.TelemetrySchema.NormalizeRecipe = normalizeRecipe
+-- A list built from NormalizeRecipe results, reused as is by later captures.
+GW.TelemetrySchema.MarkNormalizedRecipes = function(list)
+    if type(list) == "table" and #list > 0 then
+        normalizedRecipeLists[list] = true
+    end
+    return list
+end

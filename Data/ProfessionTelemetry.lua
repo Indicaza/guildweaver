@@ -614,6 +614,46 @@ local function cacheFor(characterKey)
     return root[characterKey]
 end
 
+-- Signatures (profession, skill, recipe count) of books fully scanned, with
+-- when, so reopening an unchanged profession does not rescan it. Saved with
+-- the cache; bounded.
+local MAX_SCAN_SIGNATURES = 32
+
+function GW.ProfessionTelemetry.ScanIsFresh(characterKey, signature, maxAgeSeconds)
+    local cache = signature and cacheFor(characterKey) or nil
+    local scannedAt = cache and type(cache.scanSignatures) == "table" and tonumber(cache.scanSignatures[signature]) or nil
+    if not scannedAt then
+        return false
+    end
+    local age = now() - scannedAt
+    return age >= 0 and age < (tonumber(maxAgeSeconds) or 0)
+end
+
+function GW.ProfessionTelemetry.NoteScan(characterKey, signature)
+    local cache = signature and cacheFor(characterKey) or nil
+    if not cache then
+        return
+    end
+    local signatures = type(cache.scanSignatures) == "table" and cache.scanSignatures or {}
+    local count = 0
+    for _ in pairs(signatures) do
+        count = count + 1
+    end
+    if count >= MAX_SCAN_SIGNATURES then
+        signatures = {}
+    end
+    signatures[signature] = now()
+    cache.scanSignatures = signatures
+end
+
+-- A newly learned recipe does not change the recipe count on every client.
+function GW.ProfessionTelemetry.ForgetScans(characterKey)
+    local cache = cacheFor(characterKey)
+    if cache then
+        cache.scanSignatures = nil
+    end
+end
+
 local function copyTable(value)
     if type(value) ~= "table" then
         return value
@@ -831,12 +871,7 @@ end
 
 -- Shape accepted by the local character snapshot's profession recipes, so a
 -- capture without the profession window open keeps the last known recipes.
-function GW.ProfessionTelemetry.ToCharacterRecipeOverride(book)
-    if type(book) ~= "table" then
-        return nil
-    end
-    local recipes = {}
-    for _, recipe in ipairs(book.recipes or {}) do
+local function toCharacterRecipe(recipe)
         local reagents = {}
         for _, reagent in ipairs(recipe.reagents or {}) do
             table.insert(reagents, {
@@ -845,7 +880,7 @@ function GW.ProfessionTelemetry.ToCharacterRecipeOverride(book)
                 quantityRequired = reagent.quantity,
             })
         end
-        table.insert(recipes, {
+        return {
             id = recipe.recipeId,
             name = recipe.name,
             known = recipe.known,
@@ -858,7 +893,17 @@ function GW.ProfessionTelemetry.ToCharacterRecipeOverride(book)
             craftedItemId = recipe.crafted and recipe.crafted.itemId or nil,
             craftedItemLink = recipe.crafted and recipe.crafted.itemLink or nil,
             reagents = #reagents > 0 and { { slotIndex = 1, reagents = reagents } } or nil,
-        })
+        }
+end
+GW.ProfessionTelemetry.ToCharacterRecipe = toCharacterRecipe
+
+function GW.ProfessionTelemetry.ToCharacterRecipeOverride(book)
+    if type(book) ~= "table" then
+        return nil
+    end
+    local recipes = {}
+    for _, recipe in ipairs(book.recipes or {}) do
+        table.insert(recipes, toCharacterRecipe(recipe))
     end
     local profession = book.profession or {}
     return {

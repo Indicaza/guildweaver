@@ -43,30 +43,69 @@ local function instanceContext()
     }
 end
 
-local function seenStore(now)
-    local db = GW.Store.GetDatabase()
-    if not db or not db.meta then return nil end
-    db.meta.mobLootSeen = db.meta.mobLootSeen or {}
-    local seen = db.meta.mobLootSeen
+-- Corpses already recorded, saved across reloads so a corpse looted twice
+-- (or reopened) is not counted twice. Bounded by age and count. Expired
+-- entries are swept at most once a minute, and a full cache is cut back in
+-- one batch, so a loot never walks the whole cache.
+local PRUNE_INTERVAL_SECONDS = 60
+local PRUNE_TARGET = MAX_SEEN - 100
+local seenCount = nil
+local lastPrune = nil
+
+local function pruneSeen(seen, now)
     local count = 0
-    local oldestKey, oldestTime = nil, math.huge
+    local kept = {}
     for key, value in pairs(seen) do
         if type(value) ~= "table" or not tonumber(value.at) or now - value.at > SEEN_SECONDS or now < value.at then
             seen[key] = nil
         else
             count = count + 1
-            if value.at < oldestTime then oldestKey, oldestTime = key, value.at end
+            kept[count] = value.at
         end
     end
-    while count > MAX_SEEN and oldestKey do
-        seen[oldestKey] = nil
-        count = count - 1
-        oldestKey, oldestTime = nil, math.huge
+    if count > MAX_SEEN then
+        -- Drop the oldest down to PRUNE_TARGET: find the cut-off time once.
+        table.sort(kept)
+        local cutoff = kept[count - PRUNE_TARGET]
         for key, value in pairs(seen) do
-            if value.at < oldestTime then oldestKey, oldestTime = key, value.at end
+            if count <= PRUNE_TARGET then break end
+            if value.at <= cutoff then
+                seen[key] = nil
+                count = count - 1
+            end
         end
+    end
+    seenCount = count
+    lastPrune = now
+end
+
+local function seenStore(now)
+    local db = GW.Store.GetDatabase()
+    if not db or not db.meta then return nil end
+    local seen = db.meta.mobLootSeen
+    if type(seen) ~= "table" then
+        seen = {}
+        db.meta.mobLootSeen = seen
+        seenCount = 0
+    end
+    if seenCount == nil or lastPrune == nil or now - lastPrune >= PRUNE_INTERVAL_SECONDS
+        or now < lastPrune or seenCount > MAX_SEEN then
+        pruneSeen(seen, now)
     end
     return seen
+end
+
+local function remember(seen, key, value)
+    if seen[key] == nil then
+        seenCount = (seenCount or 0) + 1
+    end
+    seen[key] = value
+end
+
+-- Tests and /reload of the store start the count over.
+function GW.MobLootCapture.ResetSeenCache()
+    seenCount = nil
+    lastPrune = nil
 end
 
 local function skinningWindow()
@@ -78,6 +117,16 @@ local function skinningWindow()
 end
 
 function GW.MobLootCapture.Capture()
+    local perf = GW.Perf
+    local started = perf and perf.Begin and perf.Begin() or nil
+    local result = GW.MobLootCapture.CaptureNow()
+    if perf and perf.End then
+        perf.End("loot_event", started)
+    end
+    return result
+end
+
+function GW.MobLootCapture.CaptureNow()
     local snapshot = GW.Character and GW.Character.GetCurrentSnapshot and GW.Character.GetCurrentSnapshot()
     if type(snapshot) ~= "table" or not snapshot.characterId then return nil end
     local loot = GW.GatheringTelemetry.ReadLoot()
@@ -91,9 +140,8 @@ function GW.MobLootCapture.Capture()
     end
     if skinningWindow() then
         for _, guid in ipairs(loot.sourceGuids or {}) do
-            seen[scopeKey(guid)] = { at = now, outputs = {}, skinned = true }
+            remember(seen, scopeKey(guid), { at = now, outputs = {}, skinned = true })
         end
-        seenStore(now)
         return nil
     end
     local sources = {}
@@ -143,12 +191,11 @@ function GW.MobLootCapture.Capture()
             }, { capturedAt = previous.at, characterId = snapshot.characterId, realm = snapshot.realm,
                 region = snapshot.region, gameBuild = snapshot.gameBuild })
             if envelope and GW.Store.SetTelemetryEvent("mob_loot:" .. tostring(snapshot.characterId) .. ":" .. guid, envelope) then
-                seen[scope] = previous
+                remember(seen, scope, previous)
                 count = count + 1
             end
         end
     end
-    seenStore(now)
     return count
 end
 

@@ -10,6 +10,9 @@ GW.TelemetryDomains.Inventory = GW.TelemetryDomain.Define({
     name = "Inventory",
     eventType = "inventory_snapshot",
     payloadSchemaVersion = 1,
+    -- Carried bags with their tooltips are a large payload; a money or bag
+    -- change is fingerprinted and stored across frames, not in the event's.
+    deferred = true,
     -- A new cached scan (bags or money) is the only way the payload changes,
     -- so an unchanged scan is never fingerprinted again.
     revision = function(snapshot)

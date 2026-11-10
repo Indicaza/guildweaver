@@ -40,6 +40,25 @@ local function defer(key, run)
     })
 end
 
+local function stored(streamKey)
+    local store = GW.Store
+    return type(store) == "table" and type(store.HasTelemetry) == "function" and store.HasTelemetry(streamKey) == true
+end
+
+-- Whether this item's full definition was already captured, this session or
+-- an earlier one (still waiting to sync, or acknowledged by the bridge).
+local function knownComplete(itemId)
+    if completeItems[itemId] then
+        return true
+    end
+    if stored("item_definition:item:" .. tostring(itemId)) then
+        completeItems[itemId] = true
+        return true
+    end
+    return false
+end
+GW.EconomicItemTelemetry.KnownComplete = knownComplete
+
 local function publishGameItem(itemId)
     local gameItems = GW.GameItemTelemetry
     itemId = tonumber(itemId)
@@ -271,77 +290,111 @@ local function itemIdFromLink(link)
     return tonumber(link:match("item:(%d+)"))
 end
 
-local function currentLootSlots()
-    local slots = {}
-    if type(Globals.GetNumLootItems) ~= "function" or type(Globals.GetLootSlotLink) ~= "function" then
-        return slots
-    end
+-- Looting never renders a tooltip. Reading the loot window (shared by every
+-- collector, see GatheringTelemetry.ReadLoot) only notes which new items
+-- appeared and in which slot; the definitions are built from the work queue
+-- afterwards, one item per step. If the window is still open the exact loot
+-- slot is rendered, otherwise the item link (the client has just cached the
+-- item, so the link renders in full). Each item is tried a bounded number of
+-- times per session; items already defined, now or in an earlier session,
+-- are skipped without any work.
+local MAX_LOOT_ATTEMPTS = 3
+local MAX_PENDING_LOOT = 64
+local lootAttempts = {}
+local lootPending = {}
+local lootQueued = {}
 
+local function perfCount(name, amount)
+    local perf = GW.Perf
+    if perf and perf.Count then
+        perf.Count(name, amount)
+    end
+end
+
+-- The slot still holding the item, if the window is open: the noted slot
+-- first, else any slot (slots shift as others are looted).
+local function liveLootSlot(slot, itemId)
+    if type(Globals.GetLootSlotLink) ~= "function" then
+        return nil
+    end
+    if slot and itemIdFromLink(safe(Globals.GetLootSlotLink, slot)) == itemId then
+        return slot
+    end
     local count = tonumber(safe(Globals.GetNumLootItems)) or 0
-    for slot = 1, count do
-        local link = safe(Globals.GetLootSlotLink, slot)
-        local itemId = itemIdFromLink(link)
-        if itemId and not slots[itemId] then
-            slots[itemId] = slot
+    for index = 1, count do
+        if index ~= slot and itemIdFromLink(safe(Globals.GetLootSlotLink, index)) == itemId then
+            return index
         end
     end
-    return slots
+    return nil
 end
 
--- Several collectors read the same loot window (mob loot plus a gathering
--- profession, on both LOOT_READY and LOOT_OPENED). Each incomplete item's
--- definition is attempted at most twice per window (item data can arrive
--- between the two events); the window resets on LOOT_CLOSED, or after a few
--- seconds if that event was missed.
-local LOOT_WINDOW_SECONDS = 10
-local MAX_LOOT_ATTEMPTS = 2
-local lootAttempts = {}
-local lootWindowStarted = nil
-
-local function lootClock()
-    return tonumber(safe(Globals.GetTime)) or nil
-end
-
-local function resetLootWindow()
-    lootAttempts = {}
-    lootWindowStarted = nil
-end
-
-local function attemptInLootWindow(itemId)
-    local current = lootClock()
-    if lootWindowStarted and current and current - lootWindowStarted > LOOT_WINDOW_SECONDS then
-        resetLootWindow()
+local function enrichLootStep()
+    local queue = GW.WorkQueue
+    while #lootPending > 0 do
+        local entry = table.remove(lootPending, 1)
+        lootQueued[entry.itemId] = nil
+        if not knownComplete(entry.itemId) then
+            local slot = liveLootSlot(entry.lootSlot, entry.itemId)
+            perfCount(slot and "loot_enrich_live_slot" or "loot_enrich_link")
+            pcall(GW.EconomicItemTelemetry.Publish, entry.output, slot and { lootSlot = slot } or nil)
+        end
+        if queue and queue.ShouldYield() then
+            break
+        end
     end
-    lootWindowStarted = lootWindowStarted or current
+    return #lootPending == 0
+end
+
+local function noteLootItem(output)
+    local itemId = tonumber(output.itemId)
+    if not itemId then
+        return
+    end
+    publishGameItem(itemId)
+    if lootQueued[itemId] or knownComplete(itemId) then
+        return
+    end
     local attempts = lootAttempts[itemId] or 0
     if attempts >= MAX_LOOT_ATTEMPTS then
-        return false
+        return
+    end
+    if #lootPending >= MAX_PENDING_LOOT then
+        -- Not lost: the item is noted again the next time it is looted.
+        perfCount("loot_enrich_deferred_full")
+        return
     end
     lootAttempts[itemId] = attempts + 1
-    return true
+    lootQueued[itemId] = true
+    table.insert(lootPending, { itemId = itemId, lootSlot = tonumber(output.lootSlot), output = pendingOutput(output) })
+end
+
+local function scheduleLootEnrichment()
+    if #lootPending == 0 then
+        return
+    end
+    local queue = GW.WorkQueue
+    if type(queue) ~= "table" or type(queue.Enqueue) ~= "function" then
+        enrichLootStep()
+        return
+    end
+    queue.Enqueue({ key = "loot_enrich", optional = true, category = "loot_enrich", step = enrichLootStep })
 end
 
 local originalReadLoot = type(GW.GatheringTelemetry) == "table" and GW.GatheringTelemetry.ReadLoot or nil
+local lastNotedLoot = nil
 if type(originalReadLoot) == "function" then
     GW.GatheringTelemetry.ReadLoot = function(...)
         local loot = originalReadLoot(...)
-        if type(loot) == "table" and type(loot.outputs) == "table" then
-            -- Read the tooltip from the live loot slot before auto-loot closes
-            -- the window: this part cannot be deferred. Generic hyperlink
-            -- scans are only a fallback.
+        -- A shared read was already noted by the first collector.
+        if type(loot) == "table" and type(loot.outputs) == "table" and loot ~= lastNotedLoot then
+            lastNotedLoot = loot
             local perf = GW.Perf
             local started = perf and perf.Begin and perf.Begin() or nil
-            local slots = nil
             for _, output in ipairs(loot.outputs) do
-                local itemId = tonumber(output.itemId)
-                if itemId and not completeItems[itemId] and attemptInLootWindow(itemId) then
-                    slots = slots or currentLootSlots()
-                    local slot = slots[itemId]
-                    pcall(GW.EconomicItemTelemetry.Publish, output, slot and { lootSlot = slot } or nil)
-                elseif itemId then
-                    publishGameItem(itemId)
-                end
+                noteLootItem(output)
             end
+            scheduleLootEnrichment()
             if perf and perf.End then
                 perf.End("loot_capture", started)
             end
@@ -357,7 +410,7 @@ local MAX_CATALOG_ATTEMPTS = 3
 local catalogAttempts = {}
 
 local function catalogCandidate(itemId)
-    if not itemId or completeItems[itemId] then
+    if not itemId or knownComplete(itemId) then
         return false
     end
     local attempts = catalogAttempts[itemId] or 0
@@ -454,14 +507,18 @@ if type(CreateFrame) == "function" then
         pcall(frame.RegisterEvent, frame, "LOOT_CLOSED")
         frame:SetScript("OnEvent", function(_, event, itemId, success)
             if event == "LOOT_CLOSED" then
-                resetLootWindow()
+                lastNotedLoot = nil
                 return
             end
             if success == false then
                 return
             end
-            if pendingItems[tonumber(itemId)] then
-                pcall(GW.EconomicItemTelemetry.Retry, itemId)
+            local id = tonumber(itemId)
+            if id and pendingItems[id] then
+                -- Item data arrives in bursts; build the definition later.
+                defer("item_retry:" .. tostring(id), function()
+                    pcall(GW.EconomicItemTelemetry.Retry, id)
+                end)
             end
         end)
     end

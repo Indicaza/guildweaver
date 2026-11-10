@@ -426,8 +426,30 @@ local function enrichEquipmentItem(item)
     end
 end
 
-local function invalidateEquipmentCache()
-    equipmentTooltips = {}
+-- Set bonus lines ("Tier Set (2/5)") depend on the other equipped items.
+local function hasSetLine(tooltip)
+    for _, line in ipairs(type(tooltip) == "table" and type(tooltip.lines) == "table" and tooltip.lines or {}) do
+        local text = type(line) == "table" and (line.left or line.leftText) or nil
+        if type(text) == "string" and text:find("%(%d+/%d+%)") then
+            return true
+        end
+    end
+    return false
+end
+
+-- setPiecesOnly keeps slots whose item did not change (their signature
+-- still matches) and only drops tooltips that list a set, which another
+-- slot's change can alter. A full invalidation drops every tooltip.
+local function invalidateEquipmentCache(setPiecesOnly)
+    if not setPiecesOnly then
+        equipmentTooltips = {}
+        return
+    end
+    for slotKey, cached in pairs(equipmentTooltips) do
+        if hasSetLine(cached.tooltip) then
+            equipmentTooltips[slotKey] = nil
+        end
+    end
 end
 
 local function copyItem(item)

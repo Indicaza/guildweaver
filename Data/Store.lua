@@ -330,10 +330,10 @@ local function resumableVisit(state, value, ignoredKeys, depth)
     end
     local valueType = type(value)
     if valueType ~= "table" then
-        resumableEmit(state, valueType)
-        resumableEmit(state, ":")
-        resumableEmit(state, tostring(value))
-        resumableEmit(state, ";")
+        -- One piece instead of four: the hash is sequential, so this equals
+        -- hashing them one by one, with a quarter of the calls.
+        resumableEmit(state, valueType .. ":" .. tostring(value) .. ";")
+        state.pieces = state.pieces + 3
         return
     end
     resumableEmit(state, "{")
@@ -410,13 +410,6 @@ local function countStreams(outbound)
     return count
 end
 
-local function evictionBefore(left, right)
-    if left.rank ~= right.rank then
-        return left.rank < right.rank
-    end
-    return left.sortKey < right.sortKey
-end
-
 local function noteWrite(outbound, isNew)
     if streamCount == nil then
         streamCount = countStreams(outbound)
@@ -433,20 +426,40 @@ local function pruneTelemetry(outbound)
     if streamCount <= MAX_TELEMETRY_STREAMS then
         return
     end
-    local queue = {}
+    -- Find the rank that cuts off the oldest records with one sort of plain
+    -- numbers (no per-record tables or comparator), then remove everything
+    -- older, and as many as needed at exactly that rank.
+    local ranks = {}
+    local total = 0
+    for _, record in pairs(outbound) do
+        total = total + 1
+        ranks[total] = recordRank(record)
+    end
+    table.sort(ranks)
+    local excess = streamCount - PRUNE_TARGET
+    local cutoff = ranks[excess]
+    local atCutoff = 0
+    for index = 1, excess do
+        if ranks[index] == cutoff then
+            atCutoff = atCutoff + 1
+        end
+    end
+    local removed = 0
     for key, record in pairs(outbound) do
-        queue[#queue + 1] = { key = key, rank = recordRank(record), sortKey = tostring(key) }
+        local rank = recordRank(record)
+        if rank < cutoff then
+            outbound[key] = nil
+            removed = removed + 1
+        elseif rank == cutoff and atCutoff > 0 then
+            outbound[key] = nil
+            atCutoff = atCutoff - 1
+            removed = removed + 1
+        end
     end
-    table.sort(queue, evictionBefore)
-    local index = 1
-    while streamCount > PRUNE_TARGET and index <= #queue do
-        outbound[queue[index].key] = nil
-        streamCount = streamCount - 1
-        index = index + 1
-    end
+    streamCount = streamCount - removed
     local perf = GW.Perf
     if perf and perf.Count then
-        perf.Count("telemetry_pruned", index - 1)
+        perf.Count("telemetry_pruned", removed)
     end
 end
 
@@ -681,6 +694,23 @@ function GW.Store.SetTelemetrySnapshot(streamKey, envelope, precomputedFingerpri
     noteWrite(outbound, existing == nil)
     pruneTelemetry(outbound)
     return true
+end
+
+-- Whether a state stream is waiting to sync or was already delivered (as
+-- acknowledged by the bridge). Lets collectors skip rebuilding data the
+-- server has, without fingerprinting anything.
+function GW.Store.HasTelemetry(streamKey)
+    local database = GuildweaverDB
+    local sync = type(database) == "table" and database.sync or nil
+    if type(sync) ~= "table" then
+        return false
+    end
+    local outbound = sync.outbound and sync.outbound.telemetry
+    if outbound and outbound[streamKey] ~= nil then
+        return true
+    end
+    local delivered = sync.deliveredTelemetry
+    return type(delivered) == "table" and delivered[streamKey] ~= nil
 end
 
 -- The stored outbound record of a stream, if any.
