@@ -429,6 +429,7 @@ local function contextPayload(pending, discipline)
         modifiers = context.modifiers,
         location = context.location,
         farming = GW.FarmingSessions and GW.FarmingSessions.Context and GW.FarmingSessions.Context() or nil,
+        dungeonRun = GW.DungeonSessions and GW.DungeonSessions.Context and GW.DungeonSessions.Context() or nil,
         trigger = {
             spellId = tonumber(pending.spellId),
             spellName = cleanString(pending.spellName),

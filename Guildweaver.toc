@@ -43,6 +43,7 @@ Data/CaptureIntegrity.lua
 Systems/CharacterStatEvents.lua
 Systems/SessionCapture.lua
 Systems/FarmingSessions.lua
+Systems/DungeonSessions.lua
 Systems/InventoryCapture.lua
 Systems/HerbalismCapture.lua
 Systems/SkinningCapture.lua
@@ -53,5 +54,6 @@ Systems/MobLootCapture.lua
 Systems/Quests.lua
 Telemetry/Compatibility.lua
 UI/QuestLog.lua
+UI/DungeonHud.lua
 UI/MainFrame.lua
 Core.lua

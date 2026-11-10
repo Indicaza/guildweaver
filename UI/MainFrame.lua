@@ -51,6 +51,22 @@ function GW.MainFrame:Initialize()
     end)
     self.farmButton = farmButton
     self:RefreshFarmingTimer()
+
+    -- Dungeon section: the HUD switch and the open or last run.
+    local dungeonButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+    dungeonButton:SetSize(150, 24)
+    dungeonButton:SetPoint("TOPLEFT", frame, "TOPLEFT", 150, -34)
+    dungeonButton:SetScript("OnClick", function()
+        GW.DungeonHud:SetEnabled(not GW.DungeonHud:IsEnabled())
+        self:RefreshDungeon()
+    end)
+    self.dungeonButton = dungeonButton
+    local dungeonText = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    dungeonText:SetPoint("LEFT", dungeonButton, "RIGHT", 10, 0)
+    dungeonText:SetPoint("RIGHT", frame, "RIGHT", -14, 0)
+    dungeonText:SetJustifyH("LEFT")
+    self.dungeonText = dungeonText
+    self:RefreshDungeon()
     GW.QuestLog:Initialize(frame)
 end
 
@@ -62,11 +78,34 @@ function GW.MainFrame:RefreshFarmingTimer()
     self.farmButton:SetText(context and context.mode == "manual" and "Stop farming" or "Start farming")
 end
 
+function GW.MainFrame:RefreshDungeon()
+    if not self.dungeonButton then
+        return
+    end
+    self.dungeonButton:SetText(GW.DungeonHud:IsEnabled() and "Dungeon HUD: on" or "Dungeon HUD: off")
+    local run = GW.DungeonSessions.Current()
+    local hud = GW.DungeonHud
+    if run then
+        self.dungeonText:SetText(string.format("Dungeon run: %s, %s, %d boss(es), %d death(s)%s",
+            run.name, hud.FormatDuration(run.durationSeconds), run.bossesDefeated or 0, run.deaths or 0,
+            run.inside and "" or " (outside, continues if you go back in)"))
+        return
+    end
+    local last = GW.DungeonSessions.History()[1]
+    if last then
+        self.dungeonText:SetText(string.format("Last run: %s, %s, %s. Reaches the website after /reload or logout.",
+            tostring(last.name or "Instance"), hud.FormatDuration(last.durationSeconds), tostring(last.status)))
+    else
+        self.dungeonText:SetText("Dungeon runs are tracked automatically inside dungeons and raids.")
+    end
+end
+
 function GW.MainFrame:Toggle()
     if self.frame:IsShown() then
         self.frame:Hide()
     else
         GW.QuestLog:Refresh()
+        self:RefreshDungeon()
         self.frame:Show()
     end
 end

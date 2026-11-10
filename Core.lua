@@ -164,6 +164,38 @@ SlashCmdList.GUILDWEAVER = function(message)
         return
     end
 
+    if command == "dungeon" or command:find("^dungeon ") then
+        local action, rest = command:match("^dungeon%s*(%S*)%s*(.-)$")
+        local sessions, hud = GW.DungeonSessions, GW.DungeonHud
+        if action == "split" then
+            local label = message:match("^%s*%S+%s+%S+%s+(.-)%s*$")
+            local entry = sessions.Split(label ~= "" and label or nil)
+            GW.Print(entry and ("Split recorded: " .. tostring(entry.name) .. " at " .. hud.FormatDuration(entry.at) .. ".")
+                or "No dungeon run is open.")
+        elseif action == "finish" then
+            GW.Print(sessions.Finish() and "Dungeon run saved as completed. It reaches the website after /reload or logout."
+                or "No dungeon run is open.")
+        elseif action == "hud" then
+            local enabled = hud:SetEnabled(rest == "on" or (rest ~= "off" and not hud:IsEnabled()))
+            GW.Print(enabled and "Dungeon HUD on. It shows inside dungeons and raids." or "Dungeon HUD off. Runs are still recorded.")
+            GW.MainFrame:RefreshDungeon()
+        elseif action == "details" then
+            hud:ToggleExpanded()
+        elseif action == "reset" then
+            hud:ResetPosition()
+            GW.Print("Dungeon HUD position reset.")
+        else
+            local run = sessions.Current()
+            if run then
+                for _, line in ipairs(hud.Lines(run, true)) do GW.Print(line) end
+            else
+                GW.Print("No dungeon run is open. Runs start when you enter a dungeon or raid.")
+            end
+            GW.Print("/gw dungeon split [name], /gw dungeon finish, /gw dungeon hud on|off, /gw dungeon details, /gw dungeon reset.")
+        end
+        return
+    end
+
     if command == "snapshot" then
         local snapshot = GW.Character.Capture("SLASH_COMMAND")
 
@@ -251,6 +283,7 @@ SlashCmdList.GUILDWEAVER = function(message)
 
     if command == "help" then
         GW.Print("/gw farm start and /gw farm stop measure a farming run. /gw farm shows its status.")
+        GW.Print("/gw dungeon shows the open dungeon run. /gw dungeon split [name] marks a split, /gw dungeon finish ends the run, /gw dungeon hud on|off shows or hides the tracker.")
         GW.Print("/gw opens Guildweaver. Telemetry capture is automatic at session start, during play, and logout. WoW writes it to disk on /reload and logout, when the bridge syncs it. /gw sync (or /gw capture) forces a checkpoint and a reload to sync now. /gw snapshot captures a diagnostic snapshot. /gw telemetry shows captured telemetry streams. /gw inventory rescans your bags and shows the inventory revision. /gw fishing shows the casts and catches recorded this session. /gw perf shows capture timings and counts (/gw perf reset clears them). /gw version shows the addon version. /gw reset resets the window position.")
         return
     end
