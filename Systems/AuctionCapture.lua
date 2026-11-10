@@ -8,6 +8,14 @@ local _, GW = ...
 --   item search       C_AuctionHouse.GetItemSearchResultInfo        every listing of one item
 --   browse            C_AuctionHouse.GetBrowseResults                lowest price and total per item
 --   full scan         C_AuctionHouse.GetReplicateItemInfo           the whole house (when someone ran one)
+--   classic page      GetAuctionItemInfo("list", i)                 one page of the classic browse frame
+--   classic get-all   GetAuctionItemInfo("list", i), getAll query    the whole house (when someone ran one)
+--
+-- The classic browse frame (QueryAuctionItems, AUCTION_ITEM_LIST_UPDATE) is
+-- what Forever's auction house looks like; the modern API is read too where
+-- it exists. QueryAuctionItems is only observed with hooksecurefunc, after
+-- the call, to know which query and page a result belongs to: never called,
+-- repeated or changed.
 --
 -- Results are collected while the auction house is open and written to the
 -- telemetry queue in a few events (at most MAX_ITEMS items each) when it
@@ -149,14 +157,16 @@ end
 
 local scheduleFlush
 
-local function store(entry)
+local function store(entry, quietly)
     local key = variantKey(entry.itemId, entry.suffix)
     if not state.items[key] then
         state.count = state.count + 1
     end
     state.items[key] = entry
-    state.lastChange = clock()
-    scheduleFlush()
+    if not quietly then
+        state.lastChange = clock()
+        scheduleFlush()
+    end
 end
 
 -- One commodity's listings (all sellers, sorted by price by the client).
@@ -335,18 +345,22 @@ local function payloadItem(entry, pointLimit)
         prices = trimmed
     end
     return { itemId = entry.itemId, suffix = entry.suffix, quantity = entry.quantity, listings = entry.listings,
-        minUnitBuyout = entry.minUnitBuyout, complete = entry.complete, prices = prices }
+        minUnitBuyout = entry.minUnitBuyout, complete = entry.complete, prices = prices,
+        name = entry.name, qualityId = entry.qualityId, requiredLevel = entry.requiredLevel }
 end
+
+local commitLegacyPages
 
 function Capture.Flush()
     state.flushScheduled = false
+    commitLegacyPages()
     if state.count == 0 then
         return 0
     end
     local perf = GW.Perf
     local started = perf and perf.Begin and perf.Begin() or nil
     local now = serverNow()
-    local byKind = { commodity = {}, item = {}, browse = {} }
+    local byKind = { commodity = {}, item = {}, browse = {}, page = {} }
     for key, entry in pairs(state.items) do
         local current = fingerprint(entry)
         local previous = state.sent[key]
@@ -399,44 +413,43 @@ local function suffixFromLink(link)
     return tonumber(suffix) or 0
 end
 
--- Reads a full scan (REPLICATE_ITEM_LIST_UPDATE) a slice per step through
--- the work queue, then writes it as one full snapshot. Never started by
--- Guildweaver: only when the player or another addon ran a full scan.
-function Capture.ReadReplicate()
-    local ah = api()
+local function isEquipment(cache, itemId)
+    local known = cache[itemId]
+    if known == nil then
+        local _, _, _, _, _, classId = call(Globals.GetItemInfoInstant, itemId)
+        known = classId == 2 or classId == 4
+        cache[itemId] = known
+    end
+    return known
+end
+
+-- Reads a whole-house scan a slice per step through the work queue, then
+-- writes it as one full snapshot. `readRow(row)` returns itemId, count,
+-- buyout, minBid and a link getter; never a seller or bidder.
+local function readFullScan(key, first, last, readRow, queryKind)
     local queue = GW.WorkQueue
-    if not ah or not state.market or not queue or type(queue.Enqueue) ~= "function" then return false end
-    local total = math.min(number(call(ah.GetNumReplicateItems)) or 0, MAX_REPLICATE_ROWS)
-    if total < 1 then return false end
+    if not state.market or not queue or type(queue.Enqueue) ~= "function" or last < first then return false end
     local market = state.market
-    local aggregate, keys, index = {}, {}, 0
-    local equipmentClass = {}
+    local aggregate, keys, index = {}, {}, first
+    local equipment = {}
     queue.Enqueue({
-        key = "auction_replicate",
+        key = key,
         category = "auction_capture",
         optional = true,
         isStale = function() return state.market ~= market end,
         step = function()
-            local last = math.min(total, index + REPLICATE_STEP)
-            for row = index, last - 1 do
-                -- name, texture, count, quality, usable, level, levelType, minBid, minIncrement,
-                -- buyout, bidAmount, highBidder, bidderFullName, owner, ownerFullName, saleStatus, itemID, hasAllInfo
-                local _, _, count, _, _, _, _, minBid, _, buyout, _, _, _, _, _, _, itemId = call(ah.GetReplicateItemInfo, row)
+            local stop = math.min(last, index + REPLICATE_STEP - 1)
+            for row = index, stop do
+                local itemId, count, buyout, minBid, link = readRow(row)
                 itemId, count, buyout, minBid = number(itemId), number(count), number(buyout), number(minBid)
                 if itemId and count and count > 0 then
-                    local isEquipment = equipmentClass[itemId]
-                    if isEquipment == nil then
-                        local _, _, _, _, _, classId = call(Globals.GetItemInfoInstant, itemId)
-                        isEquipment = classId == 2 or classId == 4
-                        equipmentClass[itemId] = isEquipment
-                    end
-                    local suffix = isEquipment and suffixFromLink(scalar(call(ah.GetReplicateItemLink, row))) or 0
-                    local key = variantKey(itemId, suffix)
-                    local entry = aggregate[key]
+                    local suffix = isEquipment(equipment, itemId) and suffixFromLink(scalar(link and link())) or 0
+                    local variant = variantKey(itemId, suffix)
+                    local entry = aggregate[variant]
                     if not entry then
                         entry = { itemId = itemId, suffix = suffix ~= 0 and suffix or nil, quantity = 0, listings = 0, prices = {}, complete = true }
-                        aggregate[key] = entry
-                        table.insert(keys, key)
+                        aggregate[variant] = entry
+                        table.insert(keys, variant)
                     end
                     entry.quantity = entry.quantity + count
                     entry.listings = entry.listings + 1
@@ -449,18 +462,18 @@ function Capture.ReadReplicate()
                     end
                 end
             end
-            index = last
-            if index < total then return false end
+            index = stop + 1
+            if index <= last then return false end
             local items = {}
-            for _, key in ipairs(keys) do
-                local entry = aggregate[key]
+            for _, variant in ipairs(keys) do
+                local entry = aggregate[variant]
                 trimPoints(entry.prices, FULL_SCAN_PRICE_POINTS)
                 table.insert(items, payloadItem(entry, FULL_SCAN_PRICE_POINTS))
             end
             table.sort(items, function(a, b) return a.itemId < b.itemId end)
             local saved = state.market
             state.market = market
-            writeScan(items, "full", "full")
+            writeScan(items, queryKind, "full")
             state.market = saved
             perfCount("auction_full_scans")
             return true
@@ -469,12 +482,167 @@ function Capture.ReadReplicate()
     return true
 end
 
+-- A modern full scan (REPLICATE_ITEM_LIST_UPDATE). Rows are 0-based.
+-- Never started by Guildweaver: only when the player or another addon ran it.
+function Capture.ReadReplicate()
+    local ah = api()
+    if not ah then return false end
+    local total = math.min(number(call(ah.GetNumReplicateItems)) or 0, MAX_REPLICATE_ROWS)
+    if total < 1 then return false end
+    return readFullScan("auction_replicate", 0, total - 1, function(row)
+        -- name, texture, count, quality, usable, level, levelType, minBid, minIncrement,
+        -- buyout, bidAmount, highBidder, bidderFullName, owner, ownerFullName, saleStatus, itemID, hasAllInfo
+        local _, _, count, _, _, _, _, minBid, _, buyout, _, _, _, _, _, _, itemId = call(ah.GetReplicateItemInfo, row)
+        return itemId, count, buyout, minBid, function() return call(ah.GetReplicateItemLink, row) end
+    end, "full")
+end
+
+-- Classic browse frame ------------------------------------------------------------------
+
+local LEGACY_PAGE = 50
+local GETALL_QUIET_SECONDS = 3
+local legacy = { query = nil, hooked = false, scan = nil, getAllAt = nil, getAllScheduled = false }
+Capture.legacy = legacy
+
+local function hookQueries()
+    if legacy.hooked or type(Globals.hooksecurefunc) ~= "function" or type(Globals.QueryAuctionItems) ~= "function" then return end
+    legacy.hooked = pcall(Globals.hooksecurefunc, "QueryAuctionItems", function(text, minLevel, maxLevel, page, usable, rarity, getAll, exactMatch)
+        legacy.query = {
+            signature = table.concat({ tostring(scalar(text) or ""), tostring(number(minLevel) or ""), tostring(number(maxLevel) or ""),
+                usable and "1" or "0", tostring(number(rarity) or ""), exactMatch and "1" or "0" }, "|"),
+            page = number(page) or 0,
+            getAll = getAll == true,
+        }
+    end) == true
+end
+
+local function legacyRow(index)
+    -- name, texture, count, quality, canUse, level, levelColHeader, minBid, minIncrement,
+    -- buyoutPrice, bidAmount, highBidder, bidderFullName, owner, ownerFullName, saleStatus, itemId, hasAllInfo
+    local name, _, count, quality, _, level, _, minBid, _, buyout, _, _, _, _, _, _, itemId = call(Globals.GetAuctionItemInfo, "list", index)
+    return name, count, quality, level, minBid, buyout, itemId
+end
+
+-- The pages of one query, merged. An item is complete once every page of
+-- its query was seen (or the whole result fit on one page).
+commitLegacyPages = function()
+    local scan = legacy.scan
+    legacy.scan = nil
+    if not scan or scan.pageCount == 0 then return end
+    local pagesNeeded = math.max(1, math.ceil((scan.total or 0) / LEGACY_PAGE))
+    local complete = (scan.signature ~= nil and scan.pageCount >= pagesNeeded) or (scan.pageCount == 1 and (scan.total or 0) <= scan.firstBatch)
+    local merged, order = {}, {}
+    for _, rows in pairs(scan.pages) do
+        for key, row in pairs(rows) do
+            local entry = merged[key]
+            if not entry then
+                entry = { itemId = row.itemId, suffix = row.suffix, quantity = 0, listings = 0, prices = {}, name = row.name,
+                    qualityId = row.qualityId, requiredLevel = row.requiredLevel, query = "page" }
+                merged[key] = entry
+                table.insert(order, key)
+            end
+            entry.quantity = entry.quantity + row.quantity
+            entry.listings = entry.listings + row.listings
+            if row.minUnitBuyout then entry.minUnitBuyout = entry.minUnitBuyout and math.min(entry.minUnitBuyout, row.minUnitBuyout) or row.minUnitBuyout end
+            for _, point in ipairs(row.prices) do addPoint(entry.prices, point[1], point[2], point[3]) end
+        end
+    end
+    for _, key in ipairs(order) do
+        local entry = merged[key]
+        entry.complete = complete
+        trimPoints(entry.prices, MAX_PRICE_POINTS)
+        -- A detailed modern search of the same item is never replaced.
+        local existing = state.items[key]
+        if not existing or existing.query == "page" or existing.query == "browse" then store(entry, true) end
+    end
+end
+
+local function readLegacyAll(total)
+    return readFullScan("auction_getall", 1, total, function(row)
+        local _, count, _, _, minBid, buyout, itemId = legacyRow(row)
+        return itemId, count, buyout, minBid, function() return call(Globals.GetAuctionItemLink, "list", row) end
+    end, "getall")
+end
+
+-- A "get all" scan fills the list over several updates; it is read once
+-- the updates stop.
+local function scheduleGetAll()
+    legacy.getAllAt = clock()
+    if legacy.getAllScheduled then return end
+    local timer = Globals.C_Timer
+    if not timer or type(timer.After) ~= "function" then return end
+    legacy.getAllScheduled = true
+    local function check()
+        if not state.open then legacy.getAllScheduled = false return end
+        local quiet = clock() - legacy.getAllAt
+        if quiet >= GETALL_QUIET_SECONDS - 0.1 then
+            legacy.getAllScheduled = false
+            local batch = number(call(Globals.GetNumAuctionItems, "list")) or 0
+            readLegacyAll(math.min(batch, MAX_REPLICATE_ROWS))
+        else
+            timer.After(math.max(0.5, GETALL_QUIET_SECONDS - quiet), check)
+        end
+    end
+    timer.After(GETALL_QUIET_SECONDS, check)
+end
+
+-- One page of the classic browse frame (at most 50 rows): read at once.
+function Capture.ReadLegacyList()
+    hookQueries()
+    local batch, total = call(Globals.GetNumAuctionItems, "list")
+    batch, total = number(batch) or 0, number(total) or 0
+    if batch < 1 then return 0 end
+    local query = legacy.query
+    if (query and query.getAll) or batch > LEGACY_PAGE * 2 then
+        scheduleGetAll()
+        return 0
+    end
+    local signature = query and query.signature or nil
+    local page = query and query.page or 0
+    local scan = legacy.scan
+    if not scan or not signature or scan.signature ~= signature then
+        commitLegacyPages()
+        scan = { signature = signature, pages = {}, pageCount = 0, firstBatch = batch }
+        legacy.scan = scan
+    end
+    scan.total = total
+    local rows, equipment = {}, {}
+    for index = 1, batch do
+        local name, count, quality, level, _, buyout, itemId = legacyRow(index)
+        itemId, count, buyout = number(itemId), number(count), number(buyout)
+        if itemId and count and count > 0 then
+            local suffix = isEquipment(equipment, itemId) and suffixFromLink(scalar(call(Globals.GetAuctionItemLink, "list", index))) or 0
+            local key = variantKey(itemId, suffix)
+            local row = rows[key]
+            if not row then
+                row = { itemId = itemId, suffix = suffix ~= 0 and suffix or nil, quantity = 0, listings = 0, prices = {},
+                    name = type(scalar(name)) == "string" and string.sub(name, 1, 120) or nil, qualityId = number(quality), requiredLevel = number(level) }
+                rows[key] = row
+            end
+            row.quantity = row.quantity + count
+            row.listings = row.listings + 1
+            if buyout and buyout > 0 then
+                local unit = math.floor(buyout / count + 0.5)
+                row.minUnitBuyout = row.minUnitBuyout and math.min(row.minUnitBuyout, unit) or unit
+                addPoint(row.prices, unit, count, 1)
+            end
+        end
+    end
+    -- The same page again (item details arriving) replaces, never adds.
+    if not scan.pages[page] then scan.pageCount = scan.pageCount + 1 end
+    scan.pages[page] = rows
+    state.lastChange = clock()
+    scheduleFlush()
+    return batch
+end
+
 -- Events -----------------------------------------------------------------------------
 
 local handlers = {
     AUCTION_HOUSE_SHOW = function()
         state.open = true
         state.market = readMarket()
+        hookQueries()
     end,
     AUCTION_HOUSE_CLOSED = function()
         state.open = false
@@ -485,6 +653,7 @@ local handlers = {
     AUCTION_HOUSE_BROWSE_RESULTS_UPDATED = function() Capture.ReadBrowse() end,
     AUCTION_HOUSE_BROWSE_RESULTS_ADDED = function(added) Capture.ReadBrowse(added) end,
     REPLICATE_ITEM_LIST_UPDATE = function() Capture.ReadReplicate() end,
+    AUCTION_ITEM_LIST_UPDATE = function() Capture.ReadLegacyList() end,
 }
 
 function Capture.HandleEvent(event, ...)
@@ -513,6 +682,7 @@ function Capture:Initialize()
     self.supportedEvents = registered
     frame:SetScript("OnEvent", function(_, event, ...) Capture.HandleEvent(event, ...) end)
     self.frame = frame
+    hookQueries()
 end
 
 GW.AuctionCapture:Initialize()

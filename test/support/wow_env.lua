@@ -485,6 +485,19 @@ function Env.install(env)
         end
         return env.cpu
     end
+    -- Post-hooks, as the client runs them: after the original, same arguments.
+    G.hooksecurefunc = function(target, name, hook)
+        if type(target) == "string" then
+            target, name, hook = G, target, name
+        end
+        local original = target[name]
+        assert(type(original) == "function", "hooksecurefunc: no function " .. tostring(name))
+        target[name] = function(...)
+            local results = { original(...) }
+            hook(...)
+            return unpack(results)
+        end
+    end
     G.GetTime = function() return env.time end
     G.GetServerTime = function() return env.serverTime end
     G.C_Timer = {

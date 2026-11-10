@@ -238,4 +238,119 @@ do
     equal(written[1].payload.market.faction, "horde")
 end
 
+-- The classic browse frame (Forever) ------------------------------------------------
+
+local function installClassic(options)
+    options = options or {}
+    local G = _G
+    local classic = { list = {}, total = 0, queries = 0 }
+    G.C_AuctionHouse = nil
+    G.QueryAuctionItems = function() classic.queries = classic.queries + 1 end
+    G.GetNumAuctionItems = function(kind) if kind ~= "list" then return 0, 0 end return #classic.list, classic.total end
+    G.GetAuctionItemInfo = function(kind, index)
+        local row = kind == "list" and classic.list[index]
+        if not row then return nil end
+        return row.name, 1, row.count, row.quality or 1, true, row.level or 0, "", row.minBid or 0, 0, row.buyout or 0, 0, false, "Bidder", "Secret Seller", "Secret Seller-Realm", 0, row.itemId, true
+    end
+    G.GetAuctionItemLink = function(_, index)
+        local row = classic.list[index]
+        return row and ("|cffffffff|Hitem:" .. row.itemId .. "::::::" .. (row.suffix or 0) .. ":::::|h[x]|h|r") or nil
+    end
+    G.GetItemInfoInstant = function(itemId) return itemId, "Armor", "Mail", "INVTYPE_CHEST", 1, (itemId >= 10000) and 4 or 7, 1 end
+    G.UnitFactionGroup = function() return options.faction or "Horde", "Horde" end
+    G.C_Map = G.C_Map or {}
+    G.C_Map.GetBestMapForUnit = function() return 1454 end
+    return classic
+end
+
+local function classicBoot()
+    local env = Env.new()
+    local addon = env:load()
+    local classic = installClassic()
+    env:login()
+    env:advance(3)
+    return env, addon, classic
+end
+
+local function rows(count, fields)
+    local list = {}
+    for index = 1, count do
+        local row = { name = "Linen Cloth", itemId = 2589, count = 20, buyout = 20 * (100 + index), quality = 1, level = 0 }
+        for key, value in pairs(fields or {}) do row[key] = value end
+        table.insert(list, row)
+    end
+    return list
+end
+
+-- Two pages of one search, merged; repeated updates of a page replace it.
+do
+    local env, _, classic = classicBoot()
+    env:dispatch("AUCTION_HOUSE_SHOW")
+    _G.QueryAuctionItems("linen", nil, nil, 0, false, -1, false, false)
+    classic.total = 70
+    classic.list = rows(50)
+    env:dispatch("AUCTION_ITEM_LIST_UPDATE")
+    env:dispatch("AUCTION_ITEM_LIST_UPDATE") -- item details arriving: the same page again
+    _G.QueryAuctionItems("linen", nil, nil, 1, false, -1, false, false)
+    classic.list = rows(20, { buyout = 20 * 90 })
+    env:dispatch("AUCTION_ITEM_LIST_UPDATE")
+    equal(#scans(env), 0, "waits for the player to stop paging")
+    env:advance(6)
+    local written = scans(env)
+    equal(#written, 1)
+    local payload = written[1].payload
+    equal(payload.query.kind, "page")
+    equal(payload.market.faction, "horde")
+    local cloth = itemsOf(written[1])["2589:0"]
+    equal(cloth.quantity, 70 * 20, "both pages, the repeated page counted once")
+    equal(cloth.listings, 70)
+    equal(cloth.minUnitBuyout, 90, "the cheaper second page")
+    equal(cloth.complete, true, "every page of the query was seen")
+    equal(cloth.name, "Linen Cloth")
+    for key in pairs(cloth) do
+        truthy(key ~= "owner" and key ~= "seller" and key ~= "bidder", "no player names: " .. key)
+    end
+    equal(classic.queries, 2, "only the player's own queries; Guildweaver never queried")
+end
+
+-- One page of a longer result is partial; equipment keeps its suffix.
+do
+    local env, _, classic = classicBoot()
+    env:dispatch("AUCTION_HOUSE_SHOW")
+    _G.QueryAuctionItems("of the bear", nil, nil, 0, false, -1, false, false)
+    classic.total = 120
+    classic.list = rows(50, { name = "Raider's Chestpiece of the Bear", itemId = 15210, suffix = -1081, count = 1, buyout = 50000, level = 30 })
+    env:dispatch("AUCTION_ITEM_LIST_UPDATE")
+    env:dispatch("AUCTION_HOUSE_CLOSED")
+    local item = itemsOf(scans(env)[1])["15210:-1081"]
+    truthy(item, "suffix kept")
+    equal(item.complete, false, "two pages never seen")
+    equal(item.requiredLevel, 30)
+end
+
+-- A "get all" scan someone else ran is read in slices once it settles.
+do
+    local env, addon, classic = classicBoot()
+    env:dispatch("AUCTION_HOUSE_SHOW")
+    _G.QueryAuctionItems("", nil, nil, 0, false, -1, true, false)
+    classic.list = {}
+    for index = 1, 2400 do table.insert(classic.list, { name = "x", itemId = 20000 + index, count = 1 + index % 3, buyout = 100 * (1 + index % 3) }) end
+    classic.total = #classic.list
+    env.eventsInFrames = true
+    env:dispatch("AUCTION_ITEM_LIST_UPDATE")
+    env:dispatch("AUCTION_ITEM_LIST_UPDATE")
+    equal(#scans(env), 0, "not read while the scan is still arriving")
+    local worst = env:advance(10)
+    local written = scans(env)
+    equal(#written, 3, "2400 items in chunks of 1000")
+    for _, envelope in ipairs(written) do
+        equal(envelope.payload.query.kind, "getall")
+        equal(envelope.payload.coverage, "full")
+        equal(envelope.payload.items[1].name, nil, "full scans carry no names")
+    end
+    truthy(worst < 8, "get-all scan never takes a long frame (" .. worst .. " ms)")
+    equal(classic.queries, 1, "never queried by Guildweaver")
+    truthy(addon.AuctionCapture.legacy.hooked, "the query is observed, not called")
+end
+
 print("auction capture tests passed")
