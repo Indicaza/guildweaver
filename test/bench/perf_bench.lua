@@ -283,6 +283,36 @@ scenario("dungeon pull: combat, loot, gear and bags", function()
     env:advance(10)
 end)
 
+-- The dungeon tracker alone: a run with frequent XP, money and roster
+-- events, boss kills and deaths, then leaving. Older roots ignore it.
+scenario("dungeon tracker: 300 XP/money/roster events, 5 bosses", function()
+    local inside = true
+    _G.IsInInstance = function() return inside, inside and "party" or "none" end
+    _G.GetInstanceInfo = function()
+        if not inside then return "Elwynn Forest", "none", 0, "", 0, 0, false, 0 end
+        return "The Deadmines", "party", 1, "Normal", 5, 0, false, 36
+    end
+    _G.UnitXP = function() return 100 end
+    _G.UnitXPMax = function() return 5000 end
+    _G.GetNumGroupMembers = function() return 5 end
+    env:dispatch("PLAYER_ENTERING_WORLD", false, false)
+    env:advance(2)
+    for index = 1, 100 do
+        env:dispatch("PLAYER_XP_UPDATE", "player")
+        env:dispatch("PLAYER_MONEY")
+        env:dispatch("GROUP_ROSTER_UPDATE")
+        if index % 20 == 0 then
+            env:dispatch("ENCOUNTER_START", index, "Boss " .. index, 1, 5)
+            env:dispatch("PLAYER_DEAD")
+            env:dispatch("ENCOUNTER_END", index, "Boss " .. index, 1, 5, 1)
+        end
+        env:advance(0.1)
+    end
+    inside = false
+    env:dispatch("PLAYER_ENTERING_WORLD", false, false)
+    env:advance(5)
+end)
+
 print(string.format("root=%s size=%s reloads=%d mob_loot=%d item_definitions=%d gathering=%d", root, size, env.reloads,
     countStreams("mob_loot:"), countStreams("item_definition:"), countStreams("gathering_loot:")))
 print("| Scenario | Tooltip renders | API calls | Simulated client ms | Worst simulated frame ms | Lua CPU ms | Worst Lua frame ms | Lua KB allocated |")
@@ -290,4 +320,9 @@ print("|---|---:|---:|---:|---:|---:|---:|---:|")
 for _, row in ipairs(rows) do
     print(string.format("| %s | %d | %d | %.1f | %.1f | %.1f | %.1f | %.0f |",
         row.name, row.tooltips, row.calls, row.simulated, row.worst, row.lua, row.worstLua, row.allocated))
+end
+local dungeonPerf = env.addon and env.addon.Perf and env.addon.Perf.Category and env.addon.Perf.Category("dungeon_event")
+if dungeonPerf then
+    print(string.format("dungeon_event: %d events, %.2f ms total, worst %.3f ms", dungeonPerf.count or 0,
+        dungeonPerf.totalMs or dungeonPerf.total or 0, dungeonPerf.worstMs or dungeonPerf.worst or 0))
 end

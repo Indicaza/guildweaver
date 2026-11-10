@@ -87,6 +87,14 @@ For measured elapsed time, use **Start farming** in `/gw`, or `/gw farm start`, 
 
 Gathering locations preserve UI `mapId` and normalized `x`/`y` in `[0,1]`, rounded to five decimals, plus zone/subzone. `coordinateSystem=ui_map_normalized` and `positionKind=player_at_cast` explicitly describe the player position observed at cast time; this is approximate evidence of the source's location. Missing or invalid positions are omitted, never replaced by zero. No continuous movement trail is collected.
 
+### Dungeon runs
+
+Entering a dungeon or raid starts a run automatically; a small tracker (time, XP, wallet change, bosses, deaths) shows inside instances. Drag to move it, drag its corner to resize, right-click for XP/hour, splits and a **Split** button. `/gw dungeon` shows the run, `/gw dungeon split [name]` marks a split, `/gw dungeon finish` ends it as completed, `/gw dungeon hud on|off` turns the tracker on or off (runs are recorded either way), `/gw dungeon reset` moves it back.
+
+A run continues through a /reload, a disconnect or a run back from the graveyard if you are back in the same instance within 10 minutes; offline time never counts. It ends as **completed** when every boss in the lockout is down (or on `/gw dungeon finish`), **abandoned** when you leave and do not come back without a confirmed full clear (5-player instances without a lockout report no boss total, so leaving them ends as abandoned unless you use `/gw dungeon finish`), **interrupted** when you log out and do not return. Bosses come from `ENCOUNTER_END`/`BOSS_KILL` when the client sends them; otherwise use splits. The combat log is never read. XP is not reported at the level cap. Gold is the wallet change during the run, not profit. Deaths are your character's own, never a wipe.
+
+`dungeon_run` is an envelope-v1 event stream, one stream key per run. It is written when the game saves (/reload, logout) as an open checkpoint and once more when the run ends; each write has a higher `sequence`, and the website ignores anything after a finished run. The timeline keeps at most 60 events, and the add-on keeps the last 10 runs for the window. Corpse loot and gathering inside a run carry `context.dungeonRun.runId`.
+
 ### Fishing
 
 Each accepted Fishing cast is a `gathering_attempt` (`activity=cast`) and each fishing loot window a `gathering_loot` (`activity=catch`). Casts are recognized by the Classic-era rank spell ids (7620, 7731, 7732, 18248), the modern spell (131474), or the spell name. A catch is recorded once per loot window. When the client reports fishing loot (`IsFishingLoot`) but the cast was not seen, because the channel ended first or the cast started before a reload, the catch is still recorded with context read at loot time and `capture.castObserved=false`.

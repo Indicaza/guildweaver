@@ -166,6 +166,8 @@ function GW.MobLootCapture.CaptureNow()
         end
     end
     local count = 0
+    local dungeon = GW.DungeonSessions
+    local dungeonRun = dungeon and dungeon.Context and dungeon.Context() or nil
     for guid, source in pairs(sources) do
         local scope = scopeKey(guid)
         local previous = seen[scope] or { at = now, outputs = {} }
@@ -186,13 +188,15 @@ function GW.MobLootCapture.CaptureNow()
                 schemaVersion = 1, observationId = guid, activity = "corpse_loot",
                 source = { guid = guid, npcId = source.npcId, name = names[guid], kind = "creature" },
                 outputs = outputs,
-                context = { location = location, instance = instanceContext(), lootMethod = safe(Globals.GetLootMethod) },
+                context = { location = location, instance = instanceContext(), lootMethod = safe(Globals.GetLootMethod),
+                    dungeonRun = dungeonRun },
                 capture = { attribution = "loot_source_pairs", visibility = "visible_to_observer", yieldBasis = "loot_window" },
             }, { capturedAt = previous.at, characterId = snapshot.characterId, realm = snapshot.realm,
                 region = snapshot.region, gameBuild = snapshot.gameBuild })
             if envelope and GW.Store.SetTelemetryEvent("mob_loot:" .. tostring(snapshot.characterId) .. ":" .. guid, envelope) then
                 remember(seen, scope, previous)
                 count = count + 1
+                if dungeonRun and dungeon.NoteLoot then dungeon.NoteLoot() end
             end
         end
     end
