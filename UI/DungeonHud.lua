@@ -323,6 +323,7 @@ local function unitIs(fn, unit)
         return false
     end
     local ok, value = pcall(fn, unit)
+    if ok and Globals.issecretvalue and Globals.issecretvalue(value) then return false end
     return ok and (value == true or value == 1)
 end
 
@@ -331,6 +332,7 @@ local function unitName(unit)
         return nil
     end
     local ok, name = pcall(Globals.UnitName, unit)
+    if ok and Globals.issecretvalue and Globals.issecretvalue(name) then return nil end
     return ok and type(name) == "string" and name or nil
 end
 
@@ -353,7 +355,7 @@ local function unitFor(name)
             return "boss" .. index
         end
     end
-    if matches("target") then
+    if wanted and matches("target") then
         return "target"
     end
     return nil
@@ -437,7 +439,7 @@ local function newCircle(parent)
     local portrait = frame:CreateTexture(nil, "ARTWORK")
     portrait:SetPoint("TOPLEFT", frame, "TOPLEFT", 2, -2)
     portrait:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -2, 2)
-    if type(frame.CreateMaskTexture) == "function" then
+    if type(frame.CreateMaskTexture) == "function" and type(portrait.AddMaskTexture) == "function" then
         for _, texture in ipairs({ ring, portrait }) do
             local mask = frame:CreateMaskTexture()
             mask:SetTexture(TEXTURES.mask, "CLAMPTOBLACKADDITIVE", "CLAMPTOBLACKADDITIVE")
@@ -529,7 +531,7 @@ function Hud:NoteCheckpoint(entry, unit)
     local circle = self.circles[entry.id]
     local engaged = self.engaged
     if not circle and entry.kind == "boss" and engaged and engaged.hasFace then
-        local same = not (entry.name and engaged.name) or string.lower(entry.name) == string.lower(engaged.name)
+        local same = entry.name and engaged.name and string.lower(entry.name) == string.lower(engaged.name)
         if same then
             -- The boss frame's circle becomes the kill's: its face stays.
             circle = engaged
@@ -558,7 +560,7 @@ local function updateHealth(unit)
     end
     local okMax, maximum = pcall(Globals.UnitHealthMax, unit)
     local ok, health = pcall(Globals.UnitHealth, unit)
-    if not okMax or not ok or maximum == nil or health == nil then
+    if not okMax or not ok then
         bar:Hide()
         return
     end
@@ -575,7 +577,7 @@ end
 function Hud:RefreshEngaged(force)
     local run = self.run
     local engaged = run and run.engaged
-    if not engaged or not self.engaged then
+    if not engaged or not self.engaged or self.Mode() == "minimized" then
         self.engagedUnit = nil
         updateHealth(nil)
         if self.engagedName then self.engagedName:Hide() end

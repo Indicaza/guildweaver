@@ -374,3 +374,52 @@ do
 end
 
 print("dungeon timer and boss row tests passed")
+
+do
+    resetWorld()
+    local env, addon = boot()
+    local sessions = addon.DungeonSessions
+    world.instance = SM
+    env:dispatch("PLAYER_ENTERING_WORLD")
+    pull(env)
+    equal(sessions.TimerState(), "running", "immediate first pull")
+    world.units.target = { name = "Scarlet Trainee" }
+    equal(addon.DungeonHud.UnitFor(nil), nil)
+    env:dispatch("ENCOUNTER_END", nil, nil, 1, 5, 1)
+    env:dispatch("BOSS_KILL", 4, "Loksey")
+    local run = sessions.Current()
+    equal(run.bossesDefeated, 1)
+    equal(run.splits[1].id, "boss:4")
+    equal(run.splits[1].name, "Loksey")
+    wait(env, 150)
+    zone(env, nil)
+    zone(env, SM)
+    equal(sessions.Current().runId, run.runId)
+    SlashCmdList.GUILDWEAVER("dungeon new")
+    truthy(sessions.Current().runId ~= run.runId)
+    equal(sessions.Current().bossesDefeated, 0)
+    pull(env)
+    wait(env, 150)
+    zone(env, nil)
+    wait(env, sessions.REENTRY_SECONDS + 60)
+    local last = sessions.History()[1]
+    truthy(last.timerSeconds <= last.durationSeconds)
+end
+
+do
+    resetWorld()
+    local env, addon = boot()
+    local function clear(setup, seconds)
+        world.lock.total, world.lock.complete = 1, 0
+        zone(env, SM)
+        wait(env, setup)
+        pull(env)
+        wait(env, seconds)
+        env:dispatch("BOSS_KILL", 1, "Loksey")
+        zone(env, nil)
+    end
+    clear(300, 150)
+    clear(0, 180)
+    local id = addon.Character.GetCurrentSnapshot().characterId
+    equal(addon.DungeonSessions.PersonalBest(id, {instanceId = 189, difficultyId = 1}).timerSeconds, 150)
+end

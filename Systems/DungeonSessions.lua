@@ -325,12 +325,12 @@ local function accountTime(run)
     end
     local now = clock()
     local last = tonumber(run.lastTick) or now
+    local timer = timerOf(run)
     if now >= last then
         run.durationSeconds = (run.durationSeconds or 0) + (now - last)
         if run.inside then
             run.insideSeconds = (run.insideSeconds or 0) + (now - last)
         end
-        local timer = timerOf(run)
         if timer.state == "running" then
             timer.seconds = (timer.seconds or 0) + (now - last)
         end
@@ -500,6 +500,7 @@ local function newRun(character, instance)
     }
     run.wallet.available = run.wallet.startCopper ~= nil
     refreshBosses(run)
+    run.bosses.atEntry = run.bosses.lockComplete
     addEvent(run, "enter", { name = instance.name })
     return run
 end
@@ -564,6 +565,7 @@ local function payloadFor(run, status, endReason)
         deaths = run.deaths,
         bosses = {
             defeated = run.bosses.defeated,
+            atEntry = run.bosses.atEntry,
             total = run.bosses.total,
             manualSplits = run.bosses.manualSplits,
             encounterEvents = run.encounterEvents == true,
@@ -624,22 +626,35 @@ Sessions.InstanceKey = instanceKey
 -- A personal best is kept only for a clear the boss evidence proves
 -- (lockout or every encounter), never a hand-finished or partial run, and
 -- only against the same character, instance and difficulty.
+local function pbBasis(timer)
+    if timer.startedBy == "entry" then return "entry" end
+    if timer.startedBy == "manual" then return "manual" end
+    return "first_pull"
+end
+
+local function eligibleTimer(timer)
+    return timer.starts == 1 and timer.stoppedBy ~= "manual"
+end
+
 local function notePb(dungeon, run, status, endReason)
     local basis = completionBasis(run, status, endReason)
     if basis ~= "lockout" and basis ~= "encounters" then
         return false
     end
     local key = instanceKey(run.instance)
-    if not key or not run.characterId then
+    if not key or not run.characterId or (run.bosses.atEntry or 0) > 0 then
         return false
     end
     local duration = math.floor((run.durationSeconds or 0) + 0.5)
-    if duration < 120 then
+    local timer = timerOf(run)
+    local seconds = timerOffset(run)
+    if seconds < 120 or not eligibleTimer(timer) then
         return false
     end
     dungeon.pbs[run.characterId] = type(dungeon.pbs[run.characterId]) == "table" and dungeon.pbs[run.characterId] or {}
+    key = key .. ":" .. pbBasis(timer)
     local current = dungeon.pbs[run.characterId][key]
-    if current and (tonumber(current.durationSeconds) or math.huge) <= duration then
+    if current and (tonumber(current.timerSeconds) or math.huge) <= seconds then
         return false
     end
     local points = {}
@@ -711,6 +726,7 @@ local function finish(characterId, status, endReason, options)
     end
     if options.atLeave and run.leftDurationSeconds then
         run.durationSeconds = run.leftDurationSeconds
+        timerOf(run).seconds = run.leftTimerSeconds or math.min(timerOffset(run), run.leftDurationSeconds)
         run.endedAt = run.leftAt
     end
     run.endedAt = run.endedAt or run.lastActiveAt or serverNow()
@@ -807,6 +823,7 @@ local function leave(run)
     run.inside = false
     run.leftAt = serverNow()
     run.leftDurationSeconds = run.durationSeconds
+    run.leftTimerSeconds = timerOf(run).seconds
     addEvent(run, "leave")
     if bossesDone(run) then
         finish(run.characterId, "completed", "all_bosses_defeated", { atLeave = true })
@@ -851,7 +868,7 @@ function Sessions.Evaluate(reason)
             if not run.inside then
                 accountTime(run)
                 run.inside = true
-                run.leftAt, run.leftDurationSeconds = nil, nil
+                run.leftAt, run.leftDurationSeconds, run.leftTimerSeconds = nil, nil, nil
                 addEvent(run, "reenter")
             end
             -- Fill in what a loading screen may have hidden at entry.
@@ -862,6 +879,9 @@ function Sessions.Evaluate(reason)
             run = newRun(character, instance)
             dungeon.active[characterId] = run
             boundActive(dungeon)
+        end
+        if timerOf(run).state == "ready" and unitIs(Globals.UnitAffectingCombat, "player") then
+            startTimer(run, "combat")
         end
     elseif run then
         leave(run)
@@ -896,6 +916,23 @@ local function recordKill(run, id, name, source)
     name = text(name)
     local nameKey = name and string.lower(name) or nil
     local now = offset(run)
+    local prior = bosses.lastAnonymous
+    if prior and (id or nameKey) and prior.source ~= source and now - prior.at <= DUPLICATE_KILL_SECONDS then
+        local checkpoint = checkpoints(run)[prior.index]
+        local event = run.timeline[prior.eventIndex]
+        if checkpoint then
+            checkpoint.id = id and ("boss:" .. id) or ("boss:name:" .. slug(name))
+            checkpoint.encounterId, checkpoint.name = id, name
+            noteCheckpoint(checkpoint, nil)
+        end
+        if event then event.encounterId, event.name = id, name end
+        if id then bosses.killed[tostring(id)] = true end
+        if nameKey then bosses.killedNames[nameKey] = true end
+        if name and GW.DungeonObjectives then GW.DungeonObjectives.NoteBossKill(run.characterId, name, run.instance.name) end
+        bosses.duplicatesIgnored = (bosses.duplicatesIgnored or 0) + 1
+        bosses.lastAnonymous = nil
+        return false
+    end
     local duplicate = (id and bosses.killed[tostring(id)]) or (nameKey and bosses.killedNames[nameKey])
         or (not id and not nameKey and bosses.lastKillAt and now - bosses.lastKillAt <= DUPLICATE_KILL_SECONDS)
     if duplicate then
@@ -906,9 +943,13 @@ local function recordKill(run, id, name, source)
     if nameKey then bosses.killedNames[nameKey] = true end
     bosses.lastKillAt = now
     bosses.defeated = bosses.defeated + 1
-    addEvent(run, "boss_kill", { encounterId = id, name = name, source = source })
+    local event = addEvent(run, "boss_kill", { encounterId = id, name = name, source = source })
     local checkpoint = addCheckpoint(run, { id = id and ("boss:" .. id) or (name and ("boss:name:" .. slug(name))) or ("boss:" .. bosses.defeated .. "-unnamed"),
         kind = "boss", at = now, timerAt = timerOffset(run), name = name, encounterId = id, source = source })
+    bosses.lastAnonymous = nil
+    if not id and not nameKey then
+        bosses.lastAnonymous = { at = now, source = source, index = checkpoint and #run.checkpoints, eventIndex = event and #run.timeline }
+    end
     run.engaged = nil
     refreshBosses(run)
     if bossesDone(run) and not run.completeMarked then
@@ -944,19 +985,26 @@ local handlers = {
             run.group.maxSize = size
         end
     end),
-    PLAYER_REGEN_DISABLED = withRun(function(run)
+    PLAYER_REGEN_DISABLED = function()
+        local run = currentRun()
+        if not run or not run.inside or run.suspended then
+            if not readInstance() then return end
+            Sessions.Evaluate("combat")
+            run = currentRun()
+        end
         -- The first pull starts the clock. A timer stopped by hand stays
         -- stopped until Start.
-        if run.inside and timerOf(run).state == "ready" then
+        if run and run.inside and timerOf(run).state == "ready" then
             startTimer(run, "combat")
         end
-    end),
+    end,
     ENCOUNTER_START = withRun(function(run, id, name)
         Sessions.encounterEventsAvailable = true
         run.encounterEvents = true
         if timerOf(run).state == "ready" then
             startTimer(run, "encounter")
         end
+        run.bosses.lastAnonymous = nil
         -- The boss being fought, for the tracker's boss frame.
         run.engaged = { encounterId = encounterId(id), name = text(name), since = timerOffset(run) }
         addEvent(run, "encounter_start", { encounterId = encounterId(id), name = text(name) })
@@ -1130,6 +1178,18 @@ function Sessions.TimerState()
 end
 
 -- Ends the current run as completed.
+function Sessions.NewRun()
+    local character = snapshot()
+    local instance = readInstance()
+    if not character or not instance then return false end
+    local run = activeRun(character.characterId)
+    if run then
+        finish(character.characterId, statusWhenLeft(run), "instance_reset", { atLeave = not run.inside })
+    end
+    Sessions.Evaluate("instance_reset")
+    return true
+end
+
 function Sessions.Finish()
     local character = snapshot()
     if not character or not activeRun(character.characterId) then
@@ -1149,7 +1209,7 @@ function Sessions.Current()
     local timer = timerOf(run)
     local xpGained = xp.available and not xp.atCapAtEntry and xp.gained or nil
     local hours = (run.durationSeconds or 0) / 3600
-    local pb = Sessions.PersonalBest(run.characterId, run.instance)
+    local pb = Sessions.PersonalBest(run.characterId, run.instance, pbBasis(timer))
     local reference = {}
     for _, entry in ipairs(pb and pb.checkpoints or {}) do reference[entry.id] = entry end
     local splits = {}
@@ -1158,7 +1218,7 @@ function Sessions.Current()
     for _, entry in ipairs(checkpoints(run)) do
         local match = reference[entry.id]
         -- Compared only when both runs recorded the checkpoint the same way.
-        local comparable = match and ((entry.kind == "boss" and entry.source ~= "manual" and match.source ~= "manual")
+        local comparable = eligibleTimer(timer) and match and ((entry.kind == "boss" and entry.source ~= "manual" and match.source ~= "manual")
             or (entry.kind == "split" and match.kind == "split"))
         -- Times shown and compared are the timer's; elapsedAt is the online
         -- time since entry.
@@ -1202,11 +1262,11 @@ function Sessions.Current()
 end
 
 -- The personal best for a character in an instance at a difficulty, or nil.
-function Sessions.PersonalBest(characterId, instance)
+function Sessions.PersonalBest(characterId, instance, basis)
     local dungeon = store()
     local key = instanceKey(instance)
     local byCharacter = dungeon and characterId and dungeon.pbs[characterId]
-    return type(byCharacter) == "table" and key and byCharacter[key] or nil
+    return type(byCharacter) == "table" and key and byCharacter[key .. ":" .. (basis or "first_pull")] or nil
 end
 
 function Sessions.History()

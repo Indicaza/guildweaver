@@ -172,6 +172,8 @@ SlashCmdList.GUILDWEAVER = function(message)
             local entry = sessions.Split(label ~= "" and label or nil)
             GW.Print(entry and ("Split recorded: " .. tostring(entry.name) .. " at " .. hud.FormatDuration(entry.at) .. ".")
                 or "No dungeon run is open.")
+        elseif action == "new" then
+            GW.Print(sessions.NewRun() and "New dungeon run started." or "Enter the new instance first.")
         elseif action == "finish" then
             GW.Print(sessions.Finish() and "Dungeon run saved as completed. It reaches the website after /reload or logout."
                 or "No dungeon run is open.")
