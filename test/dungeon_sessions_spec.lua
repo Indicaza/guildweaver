@@ -143,7 +143,7 @@ do
     local payload, record = lastRun(env)
     equal(record.kind, "event", "runs use the event stream")
     equal(record.envelope.eventType, "dungeon_run")
-    equal(payload.schemaVersion, 1)
+    equal(payload.schemaVersion, 2)
     equal(payload.status, "completed")
     equal(payload.endReason, "all_bosses_defeated")
     equal(payload.instance.name, "The Deadmines")
@@ -167,7 +167,14 @@ do
     equal(record.envelope.realm, "Live Realm")
     local kinds = {}
     for _, entry in ipairs(payload.timeline) do kinds[#kinds + 1] = entry.kind end
-    equal(table.concat(kinds, ","), "enter,encounter_start,boss_kill,death,encounter_failed,boss_kill,leave", "timeline")
+    equal(table.concat(kinds, ","), "enter,encounter_start,boss_kill,death,encounter_failed,boss_kill,complete,leave", "timeline")
+    -- Schema 2: checkpoints with stable ids, what proved the clear.
+    equal(#payload.checkpoints, 2, "two boss checkpoints")
+    equal(payload.checkpoints[1].id, "boss:1")
+    equal(payload.checkpoints[2].id, "boss:2")
+    equal(payload.checkpoints[1].source, "encounter_end")
+    equal(payload.completion.basis, "encounters", "both kills reported by the client")
+    equal(payload.bosses.duplicatesIgnored, 1, "BOSS_KILL after ENCOUNTER_END ignored")
     equal(#addon.DungeonSessions.History(), 1, "kept for the window")
 end
 
@@ -436,7 +443,7 @@ do
     equal(GuildweaverDB.ui.dungeonHud.expanded, true, "expanded is saved")
     equal(GuildweaverDB.ui.dungeonHud.enabled, true, "enabled is saved")
     local lines = addon.DungeonHud.lines
-    truthy(lines[4]:find("XP/hour", 1, true), "details show XP/hour")
+    truthy(table.concat(lines, "\n"):find("/h", 1, true), "details show XP/hour")
     SlashCmdList.GUILDWEAVER("dungeon split Big Boss")
     equal(active(addon).splits[1].name, "Big Boss", "slash split keeps the name's case")
     SlashCmdList.GUILDWEAVER("dungeon hud off")

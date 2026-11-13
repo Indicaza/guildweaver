@@ -12,13 +12,22 @@ local _, GW = ...
 GW.DungeonSessions = GW.DungeonSessions or {}
 
 local Globals = _G or {}
-local SCHEMA_VERSION = 1
+-- Payload schema 2 (add-on 0.6) adds checkpoints, completion.basis, a
+-- "complete" timeline marker and bosses.duplicatesIgnored. The website
+-- still reads schema 1 runs from older add-ons.
+local SCHEMA_VERSION = 2
 -- Leaving and coming back to the same instance within this window (a run
 -- back after a death, a disconnect, a /reload) continues the run.
 local REENTRY_SECONDS = 600
 local MAX_TIMELINE = 60
 local MAX_HISTORY = 10
 local MAX_ACTIVE = 8
+-- Boss kills and manual splits, kept apart from the timeline so deaths or
+-- re-entries can never push them out.
+local MAX_CHECKPOINTS = 40
+-- A second kill report with no encounter id this soon after one is the
+-- same kill (ENCOUNTER_END and BOSS_KILL both fire).
+local DUPLICATE_KILL_SECONDS = 10
 -- Runs shorter than this with nothing recorded are not kept (zoning in and
 -- straight back out, a ghost passing the portal).
 local MIN_KEEP_SECONDS = 60
@@ -29,6 +38,7 @@ Sessions.SCHEMA_VERSION = SCHEMA_VERSION
 Sessions.REENTRY_SECONDS = REENTRY_SECONDS
 Sessions.MAX_TIMELINE = MAX_TIMELINE
 Sessions.MAX_HISTORY = MAX_HISTORY
+Sessions.MAX_CHECKPOINTS = MAX_CHECKPOINTS
 
 local function isSecret(value)
     if type(Globals.issecretvalue) ~= "function" then
@@ -98,6 +108,8 @@ local function store()
     local dungeon = db.dungeon
     dungeon.active = type(dungeon.active) == "table" and dungeon.active or {}
     dungeon.history = type(dungeon.history) == "table" and dungeon.history or {}
+    -- Personal bests per character and instance+difficulty (see notePb).
+    dungeon.pbs = type(dungeon.pbs) == "table" and dungeon.pbs or {}
     return dungeon
 end
 
@@ -219,6 +231,54 @@ local function addEvent(run, kind, fields)
     return entry
 end
 
+local function slug(value)
+    value = string.lower(tostring(value or ""))
+    value = value:gsub("[^%w]+", "-"):gsub("^%-+", ""):gsub("%-+$", "")
+    return string.sub(value, 1, 60)
+end
+
+-- Checkpoints of a run, created on first use so a run started by an older
+-- add-on version (no checkpoints saved) gets them from its timeline.
+local function checkpoints(run)
+    if type(run.checkpoints) == "table" then
+        return run.checkpoints
+    end
+    run.checkpoints = {}
+    local seen = {}
+    for _, entry in ipairs(run.timeline or {}) do
+        local id = nil
+        if entry.kind == "boss_kill" then
+            id = entry.encounterId and ("boss:" .. entry.encounterId) or ("boss:name:" .. slug(entry.name))
+            if seen[id] then id = nil end
+        elseif entry.kind == "manual_split" then
+            local base = "split:" .. (slug(entry.name) ~= "" and slug(entry.name) or "split")
+            id = seen[base] and (base .. ":" .. (seen[base] + 1)) or base
+            seen[base] = (seen[base] or 0) + 1
+        end
+        if id and #run.checkpoints < MAX_CHECKPOINTS then
+            seen[id] = seen[id] or 1
+            table.insert(run.checkpoints, { id = id, kind = entry.kind == "boss_kill" and "boss" or "split", at = entry.at,
+                name = entry.name, encounterId = entry.encounterId,
+                source = entry.kind == "boss_kill" and entry.source or "manual" })
+        end
+    end
+    return run.checkpoints
+end
+
+local function addCheckpoint(run, entry)
+    local list = checkpoints(run)
+    if #list >= MAX_CHECKPOINTS then
+        return nil
+    end
+    for _, existing in ipairs(list) do
+        if existing.id == entry.id then
+            return nil
+        end
+    end
+    table.insert(list, entry)
+    return entry
+end
+
 -- Adds the time since the last tick to the run. Offline time never counts:
 -- the clock restarts on resume.
 local function accountTime(run)
@@ -306,6 +366,24 @@ local function bossesDone(run)
     return complete >= bosses.total
 end
 
+-- What proved a clear: the lockout's own count, or the encounter events.
+local function completionBasis(run, status, endReason)
+    if status ~= "completed" then
+        return "none"
+    end
+    local bosses = run.bosses
+    if bosses.total and (bosses.lockComplete or 0) >= bosses.total then
+        return "lockout"
+    end
+    if bosses.total and (bosses.defeated or 0) >= bosses.total then
+        return "encounters"
+    end
+    if endReason == "manual_finish" then
+        return "manual"
+    end
+    return "none"
+end
+
 local function newRun(character, instance)
     local now = serverNow()
     local xp = readXp()
@@ -341,7 +419,8 @@ local function newRun(character, instance)
         },
         wallet = { startCopper = readMoney(), netCopper = 0 },
         deaths = 0,
-        bosses = { defeated = 0, killed = {}, manualSplits = 0 },
+        bosses = { defeated = 0, killed = {}, killedNames = {}, manualSplits = 0, duplicatesIgnored = 0 },
+        checkpoints = {},
         encounterEvents = Sessions.encounterEventsAvailable == true,
         lootObservations = 0,
         timeline = {},
@@ -369,8 +448,12 @@ local function payloadFor(run, status, endReason)
         timeline[index] = copy
     end
     local bosses = {}
-    for _, entry in ipairs(run.timeline or {}) do
-        if entry.kind == "boss_kill" then
+    local points = {}
+    for index, entry in ipairs(checkpoints(run)) do
+        local copy = {}
+        for key, value in pairs(entry) do copy[key] = value end
+        points[index] = copy
+        if entry.kind == "boss" then
             table.insert(bosses, { encounterId = entry.encounterId, name = entry.name, at = entry.at, source = entry.source })
         end
     end
@@ -410,11 +493,14 @@ local function payloadFor(run, status, endReason)
             total = run.bosses.total,
             manualSplits = run.bosses.manualSplits,
             encounterEvents = run.encounterEvents == true,
+            duplicatesIgnored = run.bosses.duplicatesIgnored or 0,
             list = bosses,
         },
         loot = { observations = run.lootObservations },
         timeline = timeline,
         timelineTruncated = run.timelineTruncated == true or nil,
+        checkpoints = points,
+        completion = { basis = completionBasis(run, status, endReason) },
     }
 end
 
@@ -439,7 +525,50 @@ local function publish(run, status, endReason)
     return payload
 end
 
+local function instanceKey(instance)
+    if not instance then
+        return nil
+    end
+    local where = instance.instanceId and ("i" .. instance.instanceId) or (instance.name and ("n" .. instance.name)) or nil
+    if not where then
+        return nil
+    end
+    return where .. ":" .. tostring(instance.difficultyId or instance.difficultyName or "")
+end
+Sessions.InstanceKey = instanceKey
+
+-- A personal best is kept only for a clear the boss evidence proves
+-- (lockout or every encounter), never a hand-finished or partial run, and
+-- only against the same character, instance and difficulty.
+local function notePb(dungeon, run, status, endReason)
+    local basis = completionBasis(run, status, endReason)
+    if basis ~= "lockout" and basis ~= "encounters" then
+        return false
+    end
+    local key = instanceKey(run.instance)
+    if not key or not run.characterId then
+        return false
+    end
+    local duration = math.floor((run.durationSeconds or 0) + 0.5)
+    if duration < 120 then
+        return false
+    end
+    dungeon.pbs[run.characterId] = type(dungeon.pbs[run.characterId]) == "table" and dungeon.pbs[run.characterId] or {}
+    local current = dungeon.pbs[run.characterId][key]
+    if current and (tonumber(current.durationSeconds) or math.huge) <= duration then
+        return false
+    end
+    local points = {}
+    for _, entry in ipairs(checkpoints(run)) do
+        table.insert(points, { id = entry.id, kind = entry.kind, at = entry.at, name = entry.name, source = entry.source })
+    end
+    dungeon.pbs[run.characterId][key] = { runId = run.runId, durationSeconds = duration, startedAt = run.startedAt,
+        basis = basis, checkpoints = points }
+    return true
+end
+
 local function remember(dungeon, run, status, endReason)
+    notePb(dungeon, run, status, endReason)
     local history = dungeon.history
     table.insert(history, 1, {
         runId = run.runId,
@@ -453,6 +582,9 @@ local function remember(dungeon, run, status, endReason)
         netCopper = run.wallet.available and run.wallet.netCopper or nil,
         deaths = run.deaths,
         bossesDefeated = run.bosses.defeated,
+        bossesTotal = run.bosses.total,
+        instanceKey = instanceKey(run.instance),
+        completionBasis = completionBasis(run, status, endReason),
     })
     while #history > MAX_HISTORY do
         table.remove(history)
@@ -658,16 +790,39 @@ local function encounterId(value)
     return id and id > 0 and math.floor(id) or nil
 end
 
+-- One kill per boss per run. ENCOUNTER_END and BOSS_KILL both report a
+-- kill: the same encounter id, the same name, or (with neither) a second
+-- report within a few seconds is the same kill. Kills are never inferred
+-- from anything else.
 local function recordKill(run, id, name, source)
-    if id and run.bosses.killed[tostring(id)] then
+    local bosses = run.bosses
+    bosses.killed = bosses.killed or {}
+    bosses.killedNames = bosses.killedNames or {}
+    name = text(name)
+    local nameKey = name and string.lower(name) or nil
+    local now = offset(run)
+    local duplicate = (id and bosses.killed[tostring(id)]) or (nameKey and bosses.killedNames[nameKey])
+        or (not id and not nameKey and bosses.lastKillAt and now - bosses.lastKillAt <= DUPLICATE_KILL_SECONDS)
+    if duplicate then
+        bosses.duplicatesIgnored = (bosses.duplicatesIgnored or 0) + 1
         return false
     end
-    if id then
-        run.bosses.killed[tostring(id)] = true
-    end
-    run.bosses.defeated = run.bosses.defeated + 1
-    addEvent(run, "boss_kill", { encounterId = id, name = text(name), source = source })
+    if id then bosses.killed[tostring(id)] = true end
+    if nameKey then bosses.killedNames[nameKey] = true end
+    bosses.lastKillAt = now
+    bosses.defeated = bosses.defeated + 1
+    addEvent(run, "boss_kill", { encounterId = id, name = name, source = source })
+    addCheckpoint(run, { id = id and ("boss:" .. id) or (name and ("boss:name:" .. slug(name))) or ("boss:" .. bosses.defeated .. "-unnamed"),
+        kind = "boss", at = now, name = name, encounterId = id, source = source })
     refreshBosses(run)
+    if bossesDone(run) and not run.completeMarked then
+        run.completeMarked = true
+        addEvent(run, "complete")
+    end
+    local objectives = GW.DungeonObjectives
+    if objectives and objectives.NoteBossKill and name then
+        pcall(objectives.NoteBossKill, run.characterId, name, run.instance and run.instance.name)
+    end
     return true
 end
 
@@ -794,7 +949,17 @@ function Sessions.Split(label)
     end
     accountTime(run)
     run.bosses.manualSplits = (run.bosses.manualSplits or 0) + 1
-    local entry = addEvent(run, "manual_split", { name = text(label, 60) or ("Split " .. run.bosses.manualSplits) })
+    local name = text(label, 60) or ("Split " .. run.bosses.manualSplits)
+    local entry = addEvent(run, "manual_split", { name = name }) or { at = offset(run), kind = "manual_split", name = name }
+    local base = "split:" .. (slug(name) ~= "" and slug(name) or "split")
+    local id, count = base, 1
+    for _, existing in ipairs(checkpoints(run)) do
+        if existing.id == id then
+            count = count + 1
+            id = base .. ":" .. count
+        end
+    end
+    addCheckpoint(run, { id = id, kind = "split", at = entry.at, name = name, source = "manual" })
     refreshUi()
     return entry
 end
@@ -818,12 +983,22 @@ function Sessions.Current()
     local xp = run.xp
     local xpGained = xp.available and not xp.atCapAtEntry and xp.gained or nil
     local hours = (run.durationSeconds or 0) / 3600
+    local pb = Sessions.PersonalBest(run.characterId, run.instance)
+    local reference = {}
+    for _, entry in ipairs(pb and pb.checkpoints or {}) do reference[entry.id] = entry end
     local splits = {}
-    for _, entry in ipairs(run.timeline or {}) do
-        if entry.kind == "boss_kill" or entry.kind == "manual_split" then
-            table.insert(splits, { at = entry.at, name = entry.name or (entry.kind == "boss_kill" and "Boss" or "Split"),
-                kind = entry.kind })
-        end
+    local previous = 0
+    local pace = nil
+    for _, entry in ipairs(checkpoints(run)) do
+        local match = reference[entry.id]
+        -- Compared only when both runs recorded the checkpoint the same way.
+        local comparable = match and ((entry.kind == "boss" and entry.source ~= "manual" and match.source ~= "manual")
+            or (entry.kind == "split" and match.kind == "split"))
+        local delta = comparable and (entry.at - (tonumber(match.at) or 0)) or nil
+        if delta then pace = delta end
+        table.insert(splits, { at = entry.at, split = entry.at - previous, name = entry.name or (entry.kind == "boss" and "Boss" or "Split"),
+            kind = entry.kind == "boss" and "boss_kill" or "manual_split", id = entry.id, pbAt = match and match.at or nil, delta = delta })
+        previous = entry.at
     end
     return {
         runId = run.runId,
@@ -840,7 +1015,23 @@ function Sessions.Current()
         bossesTotal = run.bosses.total,
         encounterEvents = run.encounterEvents == true,
         splits = splits,
+        insideSeconds = run.insideSeconds or 0,
+        levelUps = xp.levelUps or 0,
+        level = xp.lastLevel or run.levelAtExit,
+        pb = pb and { durationSeconds = pb.durationSeconds, startedAt = pb.startedAt } or nil,
+        -- Seconds ahead (negative) or behind the PB at the last matching
+        -- checkpoint; nil when nothing matched yet.
+        pace = pace,
+        objective = GW.DungeonObjectives and GW.DungeonObjectives.Current and GW.DungeonObjectives.Current(run.characterId) or nil,
     }
+end
+
+-- The personal best for a character in an instance at a difficulty, or nil.
+function Sessions.PersonalBest(characterId, instance)
+    local dungeon = store()
+    local key = instanceKey(instance)
+    local byCharacter = dungeon and characterId and dungeon.pbs[characterId]
+    return type(byCharacter) == "table" and key and byCharacter[key] or nil
 end
 
 function Sessions.History()
