@@ -175,6 +175,19 @@ SlashCmdList.GUILDWEAVER = function(message)
         elseif action == "finish" then
             GW.Print(sessions.Finish() and "Dungeon run saved as completed. It reaches the website after /reload or logout."
                 or "No dungeon run is open.")
+        elseif action == "start" or action == "stop" or action == "timer" then
+            local state = sessions.TimerState()
+            if not state then
+                GW.Print("No dungeon run is open. Runs start when you enter a dungeon or raid.")
+            elseif action == "timer" then
+                GW.Print("Dungeon timer " .. tostring(sessions.ToggleTimer()) .. ", " .. hud.ClockText(sessions.Current()) .. ".")
+            elseif action == "start" then
+                GW.Print(sessions.StartTimer() and "Dungeon timer started. It also starts by itself on your first pull."
+                    or "The dungeon timer is already running.")
+            else
+                GW.Print(sessions.StopTimer() and ("Dungeon timer stopped at " .. hud.ClockText(sessions.Current()) .. ". /gw dungeon start resumes it; the run stays open.")
+                    or "The dungeon timer is not running.")
+            end
         elseif action == "hud" then
             local enabled = hud:SetEnabled(rest == "on" or (rest ~= "off" and not hud:IsEnabled()))
             GW.Print(enabled and "Dungeon HUD on. It shows inside dungeons and raids." or "Dungeon HUD off. Runs are still recorded.")
@@ -189,7 +202,7 @@ SlashCmdList.GUILDWEAVER = function(message)
         elseif action == "pb" then
             local run = sessions.Current()
             if run and run.pb then
-                GW.Print("Personal best here: " .. hud.FormatDuration(run.pb.durationSeconds) .. (run.pace and (", now " .. hud.FormatPace(run.pace, false)) or "") .. ".")
+                GW.Print("Personal best here: " .. hud.FormatDuration(run.pb.seconds or run.pb.durationSeconds) .. (run.pace and (", now " .. hud.FormatPace(run.pace, false)) or "") .. ".")
             else
                 GW.Print("No personal best for this dungeon and difficulty yet. A clear counts when every boss kill is reported.")
             end
@@ -203,7 +216,7 @@ SlashCmdList.GUILDWEAVER = function(message)
             else
                 GW.Print("No dungeon run is open. Runs start when you enter a dungeon or raid.")
             end
-            GW.Print("/gw dungeon split [name], /gw dungeon finish, /gw dungeon hud on|off, /gw dungeon mode [min|compact|full], /gw dungeon pb, /gw dungeon reset. Objectives: /gw obj.")
+            GW.Print("/gw dungeon start|stop (the timer also starts on your first pull), /gw dungeon split [name], /gw dungeon finish, /gw dungeon hud on|off, /gw dungeon mode [min|compact|full], /gw dungeon pb, /gw dungeon reset. Objectives: /gw obj.")
         end
         return
     end
@@ -333,7 +346,7 @@ SlashCmdList.GUILDWEAVER = function(message)
 
     if command == "help" then
         GW.Print("/gw farm start and /gw farm stop measure a farming run. /gw farm shows its status.")
-        GW.Print("/gw dungeon shows the open dungeon run. /gw dungeon split [name] marks a split, /gw dungeon finish ends the run, /gw dungeon hud on|off shows or hides the tracker, /gw dungeon mode cycles minimized/compact/expanded. /gw obj manages your dungeon objectives.")
+        GW.Print("/gw dungeon shows the open dungeon run. Its timer starts on your first pull; /gw dungeon start and /gw dungeon stop control it by hand. /gw dungeon split [name] marks a split (named after your target without a name), /gw dungeon finish ends the run, /gw dungeon hud on|off shows or hides the tracker, /gw dungeon mode cycles minimized/compact/expanded. /gw obj manages your dungeon objectives.")
         GW.Print("/gw opens Guildweaver. Telemetry capture is automatic at session start, during play, and logout. WoW writes it to disk on /reload and logout, when the bridge syncs it. /gw sync (or /gw capture) forces a checkpoint and a reload to sync now. /gw snapshot captures a diagnostic snapshot. /gw telemetry shows captured telemetry streams. /gw inventory rescans your bags and shows the inventory revision. /gw fishing shows the casts and catches recorded this session. /gw perf shows capture timings and counts (/gw perf reset clears them). /gw version shows the addon version. /gw reset resets the window position.")
         return
     end

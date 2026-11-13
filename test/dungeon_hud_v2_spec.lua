@@ -80,6 +80,11 @@ local function zone(env, instance)
     env:advance(2)
 end
 
+-- The first pull: the run timer starts here (see dungeon_timer_spec).
+local function pull(env)
+    env:dispatch("PLAYER_REGEN_DISABLED")
+end
+
 local function relog(env, gap)
     env:dispatch("PLAYER_LOGOUT")
     return boot({ db = GuildweaverDB, serverTime = env.serverTime + (gap or 5), money = env.money, level = env.player.level })
@@ -96,6 +101,7 @@ end
 -- A full clear: three bosses at `pace` seconds apart.
 local function clear(env, pace)
     zone(env, SM)
+    pull(env)
     wait(env, pace)
     kill(env, 1, "Houndmaster Loksey")
     wait(env, pace)
@@ -129,6 +135,7 @@ do
     hud:SetMode("compact")
 
     zone(env, SM)
+    pull(env)
     truthy(hud.visible, "HUD shows inside")
     equal(#hud.lines, 4, "compact: title, time/bosses/deaths, XP, PB")
     contains(hud.lines, "Scarlet Monastery (Normal)")
@@ -255,6 +262,7 @@ do
 
     -- A second, faster run: pace against the PB at each checkpoint.
     zone(env, SM)
+    pull(env)
     local run = addon.DungeonSessions.Current()
     equal(run.pb.durationSeconds, first.durationSeconds, "PB shown at entry")
     contains(addon.DungeonHud.lines, "PB ", "PB line")

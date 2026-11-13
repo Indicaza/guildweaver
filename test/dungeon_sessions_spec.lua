@@ -167,7 +167,8 @@ do
     equal(record.envelope.realm, "Live Realm")
     local kinds = {}
     for _, entry in ipairs(payload.timeline) do kinds[#kinds + 1] = entry.kind end
-    equal(table.concat(kinds, ","), "enter,encounter_start,boss_kill,death,encounter_failed,boss_kill,complete,leave", "timeline")
+    equal(table.concat(kinds, ","), "enter,timer_start,encounter_start,boss_kill,death,encounter_failed,boss_kill,complete,timer_stop,leave",
+        "timeline: the first encounter starts the timer, the last boss stops it")
     -- Schema 2: checkpoints with stable ids, what proved the clear.
     equal(#payload.checkpoints, 2, "two boss checkpoints")
     equal(payload.checkpoints[1].id, "boss:1")
