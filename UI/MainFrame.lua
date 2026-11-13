@@ -86,15 +86,17 @@ function GW.MainFrame:RefreshDungeon()
     local run = GW.DungeonSessions.Current()
     local hud = GW.DungeonHud
     if run then
-        self.dungeonText:SetText(string.format("Dungeon run: %s, %s, %d boss(es), %d death(s)%s",
-            run.name, hud.FormatDuration(run.durationSeconds), run.bossesDefeated or 0, run.deaths or 0,
+        local state = hud.TimerState(run)
+        self.dungeonText:SetText(string.format("Dungeon run: %s, timer %s%s, %d boss(es), %d death(s)%s",
+            run.name, hud.ClockText(run), state == "running" and "" or (" (" .. state .. ")"),
+            run.bossesDefeated or 0, run.deaths or 0,
             run.inside and "" or " (outside, continues if you go back in)"))
         return
     end
     local last = GW.DungeonSessions.History()[1]
     if last then
         self.dungeonText:SetText(string.format("Last run: %s, %s, %s. Reaches the website after /reload or logout.",
-            tostring(last.name or "Instance"), hud.FormatDuration(last.durationSeconds), tostring(last.status)))
+            tostring(last.name or "Instance"), hud.FormatDuration(last.timerSeconds or last.durationSeconds), tostring(last.status)))
     else
         self.dungeonText:SetText("Dungeon runs are tracked automatically inside dungeons and raids.")
     end

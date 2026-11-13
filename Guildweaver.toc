@@ -43,6 +43,7 @@ Data/CaptureIntegrity.lua
 Systems/CharacterStatEvents.lua
 Systems/SessionCapture.lua
 Systems/FarmingSessions.lua
+Systems/DungeonObjectives.lua
 Systems/DungeonSessions.lua
 Systems/InventoryCapture.lua
 Systems/HerbalismCapture.lua
