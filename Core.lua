@@ -95,6 +95,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         GW.Store.Initialize()
         GW.Quests.Initialize()
         GW.MainFrame:Initialize()
+        GW.MinimapButton:Initialize()
         GW.Character:Initialize()
         GW.SessionCapture:Initialize()
         return
@@ -102,7 +103,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
 
     if event == "PLAYER_LOGIN" then
         GW.Store.ConfirmLiveClient()
-        GW.Print("v" .. GW.version .. " loaded. Telemetry capture is automatic; /gw opens Guildweaver.")
+        GW.Print("v" .. GW.version .. " loaded. Click the minimap button or type /gw to open Guildweaver.")
     end
 end)
 
@@ -137,6 +138,18 @@ SlashCmdList.GUILDWEAVER = function(message)
 
     if command == "" then
         GW.MainFrame:Toggle()
+        return
+    end
+
+    if command == "settings" or command == "options" or command == "config" then
+        GW.MainFrame:Open("settings")
+        return
+    end
+
+    if command == "minimap" then
+        local hidden = not GW.UiPrefs.MinimapHidden()
+        GW.UiPrefs.SetMinimapHidden(hidden)
+        GW.Print(hidden and "Minimap button hidden. /gw minimap shows it again." or "Minimap button shown.")
         return
     end
 
@@ -349,6 +362,7 @@ SlashCmdList.GUILDWEAVER = function(message)
     if command == "help" then
         GW.Print("/gw farm start and /gw farm stop measure a farming run. /gw farm shows its status.")
         GW.Print("/gw dungeon shows the open dungeon run. Its timer starts on your first pull; /gw dungeon start and /gw dungeon stop control it by hand. /gw dungeon split [name] marks a split (named after your target without a name), /gw dungeon finish ends the run, /gw dungeon hud on|off shows or hides the tracker, /gw dungeon mode cycles minimized/compact/expanded. /gw obj manages your dungeon objectives.")
+        GW.Print("/gw settings opens the settings; /gw minimap shows or hides the minimap button.")
         GW.Print("/gw opens Guildweaver. Telemetry capture is automatic at session start, during play, and logout. WoW writes it to disk on /reload and logout, when the bridge syncs it. /gw sync (or /gw capture) forces a checkpoint and a reload to sync now. /gw snapshot captures a diagnostic snapshot. /gw telemetry shows captured telemetry streams. /gw inventory rescans your bags and shows the inventory revision. /gw fishing shows the casts and catches recorded this session. /gw perf shows capture timings and counts (/gw perf reset clears them). /gw version shows the addon version. /gw reset resets the window position.")
         return
     end

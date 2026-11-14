@@ -15,13 +15,15 @@ The first milestone establishes a reliable addon foundation:
 - automatic final snapshot on `/reload`, logout, or UI shutdown before SavedVariables are flushed
 - background bridge sync with no manual export step
 - `/gw` and `/guildweaver` slash commands
-- draggable native WoW frame
-- persisted frame position
+- a minimap launcher and an in-game dashboard (see [Interface](#interface))
+- persisted window, HUD and launcher positions
 - Lua syntax and lint checks in GitHub Actions
 
 ## Commands
 
-- `/gw` toggles the Guildweaver window
+- `/gw` toggles the Guildweaver dashboard
+- `/gw settings` opens the dashboard on Settings
+- `/gw minimap` shows or hides the minimap button
 - `/gw version` prints the current addon version
 - `/gw snapshot` captures a diagnostic snapshot; normal synchronization does not require it
 - `/gw inventory` rescans your bags and prints the inventory telemetry revision
@@ -30,6 +32,16 @@ The first milestone establishes a reliable addon foundation:
 - `/gw perf` prints capture counts, timings, worst frames, work-queue state and tooltip-scan counts for this session; `/gw perf reset` clears them
 - `/gw reset` resets the window position
 - `/gw help` prints command help
+
+## Interface
+
+**Minimap button.** The Guildweaver emblem on the minimap edge. Click opens or closes the dashboard; double-click opens it on Settings (a single click waits out the double-click window, so a double-click never opens and closes the window first); right-click shows quick actions (open, show or hide the dungeon HUD, start or stop a timed farming run, Sync & data, Settings, hide the button); drag moves it around the minimap. Its angle and visibility are saved. `/gw` always works, with or without it.
+
+**Dashboard.** One window with a sidebar: **Overview** (a card per module), **Dungeons** (the open run with Start/Pause/Resume, Split and End run, recent runs, objectives), **Farming** (start or stop a timed run, elapsed time and gathers, this session's fishing), **Guild Quests** (the quest log: Available, My Quests, Completed, join and leave objectives), **Sync & Data** (what is waiting for the bridge, Sync now, and an Advanced section with the diagnostic commands) and **Settings**. It remembers its position and the last view, closes with Escape, and is built the first time it is opened. While open it updates live numbers once a second; closed it costs nothing.
+
+**Settings** are grouped by module: the minimap button and window position; the dungeon HUD (show in dungeons, collapse in combat, lock position, default view, size, reset position). Data collection has no switch: hiding the HUD or any window never stops recording.
+
+The look (blue-black panels, hairline borders, antique gold accents) and the controls live in `UI/Theme.lua` and `UI/Widgets.lua`, shared by every window, the HUD and the launcher. Everything is plain frames and textures with no secure templates and no protected calls. `docs/ui-acceptance.md` is the in-game visual checklist.
 
 ## Synchronization
 
@@ -89,13 +101,13 @@ Gathering locations preserve UI `mapId` and normalized `x`/`y` in `[0,1]`, round
 
 ### Dungeon runs
 
-Entering a dungeon or raid starts a run automatically, and a tracker shows inside instances. It has three modes: **minimized** (one line: the clock, **Start**/**Stop**, bosses, XP/hour), **compact** (the default: the dungeon, the clock with **Start**/**Stop** and **Split**, the boss row, bosses, deaths, XP, XP/hour, personal-best pace and your current objective) and **expanded** (everything in compact plus time inside, XP with level-ups, every boss and split with its split time and pace against your best, your objectives and the wallet change). Right-click it, or use its `-`/`+` buttons, to change mode. Drag it to move it; drag its corner to change its width, the height follows the content. Mode, position and width are saved. It is a plain frame on the LOW strata (below action bars and dialogs), with no sounds, no animations and no protected calls, so it works the same in combat. It redraws only when a text changes: once a second for the clock while it runs, otherwise only on run events.
+Entering a dungeon or raid starts a run automatically, and a HUD shows inside instances. It has three modes: **minimized** (the clock with a status light: grey ready, green running, amber paused, gold cleared), **compact** (the default: the dungeon, the clock with **Start**/**Pause**/**Resume**, boss progress pips, one line of numbers such as deaths and XP/hour, and your current objective) and **expanded** (adds **Split**, small boss faces, time inside, deaths, XP, XP/hour, the wallet change, your best and pace, recent splits, objectives, **End run** and **Options**). Nothing is shown before it has a value: no `-/h`, no "PB: none yet". Right-click it, or use its `–`/`+` buttons, to change mode; `×` hides it for the current run (the run is still recorded; the minimap menu or the dashboard brings it back). In combat it collapses to minimized by default and returns to your mode afterwards; a mode you pick during a fight lasts until the fight ends. Drag it to move it unless locked; it keeps its top-left corner when the mode changes. Mode, position, size, lock and the combat preference are saved. It is a plain frame on the LOW strata (below action bars and dialogs), with no sounds, no animations and no protected calls. It is laid out only on run events; once a second only its clock text is updated, and a full refresh every 15 seconds keeps XP/hour current.
 
 After resetting and re-entering the same dungeon, use `/gw dungeon new` to close the previous attempt and start a fresh one. Records use the timed clock and require a verified clear with one uninterrupted start. Manual starts, first pulls, and entry-timed runs have separate records.
 
-**The timer.** The clock is the timed run, not the time since you zoned in. It is *ready* when you enter (`0:00`, "Starts on your first pull"), starts by itself the first time you enter combat or a boss encounter starts, and can be started and stopped by hand with the **Start**/**Stop** button or `/gw dungeon start|stop`. **Stop** pauses it and leaves the run open; **Start** resumes it. Combat never restarts a timer you stopped. The last boss of the lockout stops it ("Clear. Timer stopped"). Boss kills and splits are stamped with the timer, so split times, pace and personal bests all compare timed runs. The run's elapsed online time since entry is still kept and sent as `durationSeconds`.
+**The timer.** The clock is the timed run, not the time since you zoned in. It is *ready* when you enter (`0:00`, "Starts on your first pull"), starts by itself the first time you enter combat or a boss encounter starts, and can be paused and resumed by hand with the **Start**/**Pause**/**Resume** button or `/gw dungeon start|stop`. **Pause** stops the clock and leaves the run open; **End run** (expanded HUD or the dashboard, click twice) or `/gw dungeon finish` closes the run. Combat never restarts a timer you paused. The last boss of the lockout stops it ("Cleared"). Boss kills and splits are stamped with the timer, so split times, pace and personal bests all compare timed runs. The run's elapsed online time since entry is still kept and sent as `durationSeconds`.
 
-**The boss row.** Under the clock, one round portrait per boss kill (gold ring, check) and per split (steel ring), the boss being fought (red ring, its name and health underneath) and a dim circle for every boss the lockout still lists. The face is the client's own portrait of the unit while it is on screen: the boss frame (`boss1`) or your target with that name for a fight, and the fight's circle becomes the kill's when the boss falls, so its face stays. A **Split** with an NPC targeted is named after it and takes its face, so bosses the client does not report still get a name and a portrait; a split with a player targeted, or none, is just "Split n". After a reload, circles show an icon instead of the face. Hover a circle for its name and time.
+**Boss progress.** Pips under the clock, one per boss the lockout lists: gold when down, red for the fight. Without a lockout total the HUD says how many bosses are down. During a fight the boss's name and a thin health bar show under the clock. The expanded HUD adds a row of small round faces, one per boss kill (gold ring) and per split (blue ring) and for the fight (red ring); bosses not yet reached get no placeholder. The face is the client's own portrait of the unit while it is on screen: the boss frame (`boss1`) or your target with that name for a fight, and the fight's circle becomes the kill's when the boss falls, so its face stays. A **Split** with an NPC targeted is named after it and takes its face, so bosses the client does not report still get a name and a portrait; a split with a player targeted, or none, is just "Split n". After a reload, faces show an icon instead. Hover a face for its name and time.
 
 Commands: `/gw dungeon` shows the run, `/gw dungeon start`, `/gw dungeon stop` and `/gw dungeon timer` (toggle) control the timer, `/gw dungeon split [name]` marks a split (named after your target without a name), `/gw dungeon finish` ends it as completed, `/gw dungeon mode [min|compact|full]` sets or cycles the mode, `/gw dungeon pb` shows your best here and the pace, `/gw dungeon hud on|off` turns the tracker on or off (runs are recorded either way), `/gw dungeon reset` moves it back.
 

@@ -1,9 +1,20 @@
 local _, GW = ...
 
+-- The guild quest log, shown in the dashboard's Guild Quests view: tabs
+-- for available, mine and completed quests, a paged list, and the selected
+-- quest with its rewards and objectives. Joining or leaving an objective is
+-- queued for the bridge (GW.Quests); preview data cannot be acted on.
 GW.QuestLog = GW.QuestLog or {}
 
-local visibleQuestRows = 8
-local visibleObjectiveRows = 5
+local UI, Theme = GW.UI, GW.Theme
+
+local visibleQuestRows = 7
+local visibleObjectiveRows = 4
+local LIST_WIDTH = 204
+local ROW_HEIGHT = 40
+local OBJECTIVE_HEIGHT = 34
+local TABS = { { "available", "Available" }, { "my", "My Quests" }, { "completed", "Completed" } }
+local BULLET = "  \226\128\162  "
 
 local function rewardText(quest)
     local rewards = {}
@@ -17,7 +28,7 @@ local function rewardText(quest)
         return "No configured rewards"
     end
 
-    return table.concat(rewards, "  •  ")
+    return table.concat(rewards, BULLET)
 end
 
 local function objectiveProgressText(objective)
@@ -38,53 +49,71 @@ local function assignmentText(objective)
     local status = assignment.status or "available"
 
     if status == "assigned" then
-        return "Assigned to you"
+        return "Assigned to you", "good"
     end
 
     if status == "pending-join" then
-        return "Joining when bridge syncs"
+        return "Joining when bridge syncs", "warn"
     end
 
     if status == "pending-leave" then
-        return "Leaving when bridge syncs"
+        return "Leaving when bridge syncs", "warn"
     end
 
     if status == "complete" then
-        return "Complete"
+        return "Complete", "gold"
     end
 
     local count = #(assignment.members or {})
     if count > 0 then
-        return tostring(count) .. " guildmate" .. (count == 1 and "" or "s") .. " assigned"
+        return tostring(count) .. " guildmate" .. (count == 1 and "" or "s") .. " assigned", "textMuted"
     end
 
-    return "Available"
+    return "Available", "textMuted"
 end
+GW.QuestLog.AssignmentText = assignmentText
 
-local function createTab(parent, label, x, onClick)
-    local button = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
-    button:SetSize(112, 24)
-    button:SetPoint("TOPLEFT", parent, "TOPLEFT", x, -4)
-    button:SetText(label)
-    button:SetScript("OnClick", onClick)
-    return button
+-- A selectable list row: background on hover, gold edge when selected.
+local function selectableRow(parent, height)
+    local row = UI.CreateFrame("Button", parent)
+    row:SetHeight(height)
+    row.bg = row:CreateTexture(nil, "BACKGROUND")
+    row.bg:SetAllPoints(row)
+    Theme.Fill(row.bg, "bgHover")
+    row.bg:Hide()
+    row.edge = row:CreateTexture(nil, "ARTWORK")
+    row.edge:SetPoint("TOPLEFT", row, "TOPLEFT", 0, 0)
+    row.edge:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 0, 0)
+    row.edge:SetWidth(2)
+    Theme.Fill(row.edge, "gold")
+    row.edge:Hide()
+    row.selected = false
+    pcall(row.RegisterForClicks, row, "LeftButtonUp")
+    row:SetScript("OnEnter", function(self) if not self.selected then self.bg:Show() end end)
+    row:SetScript("OnLeave", function(self) if not self.selected then self.bg:Hide() end end)
+    function row:SetSelected(selected)
+        self.selected = selected == true
+        Theme.Fill(self.bg, selected and "bgActive" or "bgHover")
+        UI.SetShown(self.bg, selected)
+        UI.SetShown(self.edge, selected)
+    end
+    return row
 end
 
 local function createQuestRow(parent, index)
-    local row = CreateFrame("Button", nil, parent)
-    row:SetSize(286, 46)
-    row:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, -((index - 1) * 48))
-    row:SetHighlightTexture("Interface\\Buttons\\UI-Listbox-Highlight2")
+    local row = selectableRow(parent, ROW_HEIGHT)
+    row:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, -((index - 1) * (ROW_HEIGHT + 2)))
+    row:SetPoint("RIGHT", parent, "RIGHT", 0, 0)
 
-    local title = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    title:SetPoint("TOPLEFT", 8, -7)
+    local title = UI.Text(row, "label", "text")
+    title:SetPoint("TOPLEFT", 10, -6)
     title:SetPoint("RIGHT", -8, 0)
-    title:SetJustifyH("LEFT")
+    pcall(title.SetWordWrap, title, false)
 
-    local meta = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    meta:SetPoint("BOTTOMLEFT", 8, 7)
+    local meta = UI.Text(row, "small", "textFaint")
+    meta:SetPoint("BOTTOMLEFT", 10, 6)
     meta:SetPoint("RIGHT", -8, 0)
-    meta:SetJustifyH("LEFT")
+    pcall(meta.SetWordWrap, meta, false)
 
     row.title = title
     row.meta = meta
@@ -92,20 +121,19 @@ local function createQuestRow(parent, index)
 end
 
 local function createObjectiveRow(parent, index)
-    local row = CreateFrame("Button", nil, parent)
-    row:SetSize(452, 54)
-    row:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, -((index - 1) * 56))
-    row:SetHighlightTexture("Interface\\Buttons\\UI-Listbox-Highlight2")
+    local row = selectableRow(parent, OBJECTIVE_HEIGHT)
+    row:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, -((index - 1) * (OBJECTIVE_HEIGHT + 2)))
+    row:SetPoint("RIGHT", parent, "RIGHT", 0, 0)
 
-    local title = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    title:SetPoint("TOPLEFT", 8, -7)
+    local title = UI.Text(row, "label", "text")
+    title:SetPoint("TOPLEFT", 10, -4)
     title:SetPoint("RIGHT", -8, 0)
-    title:SetJustifyH("LEFT")
+    pcall(title.SetWordWrap, title, false)
 
-    local status = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    status:SetPoint("BOTTOMLEFT", 8, 7)
+    local status = UI.Text(row, "small", "textMuted")
+    status:SetPoint("BOTTOMLEFT", 10, 4)
     status:SetPoint("RIGHT", -8, 0)
-    status:SetJustifyH("LEFT")
+    pcall(status.SetWordWrap, status, false)
 
     row.title = title
     row.status = status
@@ -117,42 +145,34 @@ function GW.QuestLog:Initialize(parent)
         return
     end
 
-    local frame = CreateFrame("Frame", nil, parent)
-    frame:SetPoint("TOPLEFT", 14, -66)
-    frame:SetPoint("BOTTOMRIGHT", -14, 14)
+    local frame = UI.CreateFrame("Frame", parent)
+    frame:SetAllPoints(parent)
 
     self.activeTab = "available"
     self.page = 1
 
-    self.tabs = {
-        available = createTab(frame, "Available", 0, function()
-            self:SetTab("available")
-        end),
-        my = createTab(frame, "My Quests", 118, function()
-            self:SetTab("my")
-        end),
-        completed = createTab(frame, "Completed", 236, function()
-            self:SetTab("completed")
-        end),
-    }
+    self.tabs = UI.Segmented(frame, TABS, function() return self.activeTab end, function(tab) self:SetTab(tab) end,
+        { segmentWidth = 88, height = 22 })
+    self.tabs:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, 0)
 
-    local sourceText = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    sourceText:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -4, -11)
+    local sourceDot = UI.Dot(frame, 7)
+    self.sourceDot = sourceDot
+    local sourceText = UI.Text(frame, "small", "textMuted", "RIGHT")
+    sourceText:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, -5)
+    sourceDot:SetPoint("RIGHT", sourceText, "LEFT", -6, 0)
     self.sourceText = sourceText
 
-    local divider = frame:CreateTexture(nil, "ARTWORK")
-    divider:SetColorTexture(0.35, 0.30, 0.20, 0.6)
-    divider:SetWidth(1)
-    divider:SetPoint("TOPLEFT", 302, -36)
-    divider:SetPoint("BOTTOMLEFT", 302, 36)
+    -- The list, on an inset panel, with its pager.
+    local listPanel = UI.CreateFrame("Frame", frame)
+    listPanel:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -34)
+    listPanel:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, 0)
+    listPanel:SetWidth(LIST_WIDTH)
+    Theme.Skin(listPanel, "bgInset", "border")
 
-    local listHeader = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    listHeader:SetPoint("TOPLEFT", 4, -42)
-    listHeader:SetText("GUILD QUESTS")
-
-    local list = CreateFrame("Frame", nil, frame)
-    list:SetPoint("TOPLEFT", 4, -64)
-    list:SetSize(286, 384)
+    local list = UI.CreateFrame("Frame", listPanel)
+    list:SetPoint("TOPLEFT", listPanel, "TOPLEFT", 1, -1)
+    list:SetPoint("RIGHT", listPanel, "RIGHT", -1, 0)
+    list:SetHeight(visibleQuestRows * (ROW_HEIGHT + 2))
     self.list = list
     self.questRows = {}
 
@@ -166,71 +186,73 @@ function GW.QuestLog:Initialize(parent)
         table.insert(self.questRows, row)
     end
 
-    local previous = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-    previous:SetSize(72, 22)
-    previous:SetPoint("BOTTOMLEFT", 4, 4)
-    previous:SetText("Previous")
-    previous:SetScript("OnClick", function()
+    local previous = UI.IconButton(listPanel, "\226\128\185", { size = 22, tooltip = "Previous page", onClick = function()
         self.page = math.max(1, self.page - 1)
         self:Refresh()
-    end)
+    end })
+    previous:SetPoint("BOTTOMLEFT", listPanel, "BOTTOMLEFT", 6, 6)
     self.previousButton = previous
 
-    local pageText = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    pageText:SetPoint("LEFT", previous, "RIGHT", 10, 0)
-    self.pageText = pageText
-
-    local nextButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-    nextButton:SetSize(72, 22)
-    nextButton:SetPoint("BOTTOMLEFT", 214, 4)
-    nextButton:SetText("Next")
-    nextButton:SetScript("OnClick", function()
+    local nextButton = UI.IconButton(listPanel, "\226\128\186", { size = 22, tooltip = "Next page", onClick = function()
         self.page = self.page + 1
         self:Refresh()
-    end)
+    end })
+    nextButton:SetPoint("BOTTOMRIGHT", listPanel, "BOTTOMRIGHT", -6, 6)
     self.nextButton = nextButton
 
-    local details = CreateFrame("Frame", nil, frame)
-    details:SetPoint("TOPLEFT", 318, -38)
-    details:SetPoint("BOTTOMRIGHT", -4, 4)
+    local pageText = UI.Text(listPanel, "small", "textFaint", "CENTER")
+    pageText:SetPoint("BOTTOM", listPanel, "BOTTOM", 0, 11)
+    self.pageText = pageText
+
+    self.emptyText = UI.Text(listPanel, "label", "textFaint", "CENTER")
+    self.emptyText:SetPoint("TOP", listPanel, "TOP", 0, -24)
+    self.emptyText:SetWidth(LIST_WIDTH - 24)
+
+    -- The selected quest.
+    local details = UI.CreateFrame("Frame", frame)
+    details:SetPoint("TOPLEFT", listPanel, "TOPRIGHT", 18, -2)
+    details:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, 0)
     self.details = details
 
-    local campaign = details:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    local campaign = UI.Text(details, "caps", "textFaint")
     campaign:SetPoint("TOPLEFT", 0, 0)
     campaign:SetPoint("RIGHT", 0, 0)
-    campaign:SetJustifyH("LEFT")
+    pcall(campaign.SetWordWrap, campaign, false)
     self.campaignText = campaign
 
-    local title = details:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    local title = UI.Text(details, "title", "goldBright")
     title:SetPoint("TOPLEFT", campaign, "BOTTOMLEFT", 0, -6)
     title:SetPoint("RIGHT", 0, 0)
-    title:SetJustifyH("LEFT")
+    pcall(title.SetWordWrap, title, false)
     self.titleText = title
 
-    local description = details:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-    description:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -10)
-    description:SetWidth(452)
-    description:SetJustifyH("LEFT")
-    description:SetJustifyV("TOP")
+    local description = UI.Text(details, "label", "text")
+    description:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -8)
+    description:SetPoint("RIGHT", 0, 0)
+    description:SetHeight(46)
+    pcall(description.SetWordWrap, description, true)
+    pcall(description.SetJustifyV, description, "TOP")
+    pcall(description.SetMaxLines, description, 3)
     self.descriptionText = description
 
-    local rewardLabel = details:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    rewardLabel:SetPoint("TOPLEFT", description, "BOTTOMLEFT", 0, -16)
+    local rewardLabel = UI.Text(details, "caps", "goldDim")
+    rewardLabel:SetPoint("TOPLEFT", description, "BOTTOMLEFT", 0, -8)
     rewardLabel:SetText("REWARDS")
 
-    local rewards = details:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    rewards:SetPoint("TOPLEFT", rewardLabel, "BOTTOMLEFT", 0, -5)
-    rewards:SetWidth(452)
-    rewards:SetJustifyH("LEFT")
+    local rewards = UI.Text(details, "label", "text")
+    rewards:SetPoint("TOPLEFT", rewardLabel, "BOTTOMLEFT", 0, -4)
+    rewards:SetPoint("RIGHT", 0, 0)
+    pcall(rewards.SetWordWrap, rewards, false)
     self.rewardsText = rewards
 
-    local objectivesLabel = details:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    objectivesLabel:SetPoint("TOPLEFT", rewards, "BOTTOMLEFT", 0, -18)
+    local objectivesLabel = UI.Text(details, "caps", "goldDim")
+    objectivesLabel:SetPoint("TOPLEFT", rewards, "BOTTOMLEFT", 0, -12)
     objectivesLabel:SetText("OBJECTIVES")
 
-    local objectives = CreateFrame("Frame", nil, details)
-    objectives:SetPoint("TOPLEFT", objectivesLabel, "BOTTOMLEFT", 0, -8)
-    objectives:SetSize(452, 280)
+    local objectives = UI.CreateFrame("Frame", details)
+    objectives:SetPoint("TOPLEFT", objectivesLabel, "BOTTOMLEFT", 0, -6)
+    objectives:SetPoint("RIGHT", details, "RIGHT", 0, 0)
+    objectives:SetHeight(visibleObjectiveRows * (OBJECTIVE_HEIGHT + 2))
     self.objectives = objectives
     self.objectiveRows = {}
 
@@ -244,16 +266,16 @@ function GW.QuestLog:Initialize(parent)
         table.insert(self.objectiveRows, row)
     end
 
-    local action = CreateFrame("Button", nil, details, "UIPanelButtonTemplate")
-    action:SetSize(154, 26)
-    action:SetPoint("BOTTOMRIGHT", 0, 0)
-    action:SetScript("OnClick", function()
+    local action = UI.Button(details, "No Objective", { width = 150, height = 26, variant = "primary", onClick = function()
         self:RunSelectedAction()
-    end)
+    end })
+    action:SetPoint("BOTTOMRIGHT", 0, 0)
     self.actionButton = action
 
-    local hint = details:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    hint:SetPoint("RIGHT", action, "LEFT", -10, 0)
+    local hint = UI.Text(details, "small", "textMuted")
+    hint:SetPoint("RIGHT", action, "LEFT", -12, 0)
+    hint:SetPoint("LEFT", details, "LEFT", 0, 0)
+    pcall(hint.SetWordWrap, hint, false)
     hint:SetText("Select an objective")
     self.actionHint = hint
 
@@ -302,29 +324,31 @@ function GW.QuestLog:Refresh()
     local pageCount = math.max(1, math.ceil(#quests / visibleQuestRows))
     self.page = math.min(self.page, pageCount)
 
-    self.sourceText:SetText(source == "live" and "Synced with Holdfast" or "Preview data")
-
-    for tab, button in pairs(self.tabs) do
-        button:SetEnabled(tab ~= self.activeTab)
-    end
+    UI.SetText(self.sourceText, source == "live" and "Synced with your guild" or "Preview data")
+    self.sourceDot:SetStatus(source == "live" and "good" or "warn")
+    self.tabs:Refresh()
 
     local startIndex = ((self.page - 1) * visibleQuestRows) + 1
     for rowIndex, row in ipairs(self.questRows) do
         local quest = quests[startIndex + rowIndex - 1]
         if quest then
             row.questId = quest.id
-            row.title:SetText(quest.title or "Untitled Quest")
-            row.meta:SetText((quest.priority or "Normal") .. "  •  " .. (quest.campaign or "Guild Quest"))
+            UI.SetText(row.title, quest.title or "Untitled Quest")
+            UI.SetText(row.meta, (quest.priority or "Normal") .. BULLET .. (quest.campaign or "Guild Quest"))
             row:Show()
         else
-            row.questId = nil
+            row.questId = false
             row:Hide()
         end
     end
 
-    self.pageText:SetText(tostring(self.page) .. " / " .. tostring(pageCount))
+    UI.SetText(self.emptyText, #quests == 0 and (self.activeTab == "my" and "You have not joined any quests yet."
+        or (self.activeTab == "completed" and "No completed quests yet." or "No quests here yet.")) or "")
+    UI.SetText(self.pageText, pageCount > 1 and (tostring(self.page) .. " / " .. tostring(pageCount)) or "")
     self.previousButton:SetEnabled(self.page > 1)
     self.nextButton:SetEnabled(self.page < pageCount)
+    UI.SetShown(self.previousButton, pageCount > 1)
+    UI.SetShown(self.nextButton, pageCount > 1)
 
     local selected = self.selectedQuestId and GW.Quests.GetQuestById(self.selectedQuestId) or nil
     if not selected then
@@ -332,47 +356,50 @@ function GW.QuestLog:Refresh()
         self.selectedQuestId = selected and selected.id or nil
         self.selectedObjectiveId = nil
     end
+    for _, row in ipairs(self.questRows) do
+        row:SetSelected(row.questId and row.questId == self.selectedQuestId)
+    end
 
     self:UpdateDetails(selected, source)
 end
 
 function GW.QuestLog:UpdateDetails(quest, source)
     if not quest then
-        self.campaignText:SetText("")
-        self.titleText:SetText("No quests here yet")
-        self.descriptionText:SetText("Guild quests synced from your website will appear here.")
-        self.rewardsText:SetText("")
+        UI.SetText(self.campaignText, "")
+        UI.SetText(self.titleText, "No quests here yet")
+        UI.SetText(self.descriptionText, "Guild quests synced from your guild's website will appear here.")
+        UI.SetText(self.rewardsText, "")
         for _, row in ipairs(self.objectiveRows) do
             row:Hide()
         end
-        self.actionButton:SetText("No Objective")
-        self.actionButton:Disable()
-        self.actionHint:SetText("")
+        self.actionButton:SetLabel("No Objective")
+        self.actionButton:SetEnabled(false)
+        UI.SetText(self.actionHint, "")
         self.selectedAction = nil
         return
     end
 
-    self.campaignText:SetText((quest.campaign or "Guild Quest") .. "  •  " .. (quest.priority or "Normal") .. " Priority")
-    self.titleText:SetText(quest.title or "Untitled Quest")
-    self.descriptionText:SetText(quest.description or "")
-    self.rewardsText:SetText(rewardText(quest))
+    UI.SetText(self.campaignText, string.upper((quest.campaign or "Guild Quest") .. BULLET .. (quest.priority or "Normal") .. " Priority"))
+    UI.SetText(self.titleText, quest.title or "Untitled Quest")
+    UI.SetText(self.descriptionText, quest.description or "")
+    UI.SetText(self.rewardsText, rewardText(quest))
 
     local selectedObjective = nil
     for index, row in ipairs(self.objectiveRows) do
         local objective = (quest.objectives or {})[index]
         if objective then
             row.objectiveId = objective.id
-            row.title:SetText(objective.title or "Objective")
+            UI.SetText(row.title, objective.title or "Objective")
             local progress = objectiveProgressText(objective)
-            local status = assignmentText(objective)
-            row.status:SetText(progress ~= "" and (status .. "  •  " .. progress) or status)
+            local status, color = assignmentText(objective)
+            UI.SetText(row.status, Theme.Colorize(status, color) .. (progress ~= "" and (BULLET .. progress) or ""))
             row:Show()
 
             if self.selectedObjectiveId == objective.id then
                 selectedObjective = objective
             end
         else
-            row.objectiveId = nil
+            row.objectiveId = false
             row:Hide()
         end
     end
@@ -381,24 +408,22 @@ function GW.QuestLog:UpdateDetails(quest, source)
         selectedObjective = quest.objectives[1]
         self.selectedObjectiveId = selectedObjective.id
     end
+    for _, row in ipairs(self.objectiveRows) do
+        row:SetSelected(row.objectiveId and row.objectiveId == self.selectedObjectiveId)
+    end
 
     if not selectedObjective then
-        self.actionButton:SetText("No Objective")
-        self.actionButton:Disable()
-        self.actionHint:SetText("")
+        self.actionButton:SetLabel("No Objective")
+        self.actionButton:SetEnabled(false)
+        UI.SetText(self.actionHint, "")
         self.selectedAction = nil
         return
     end
 
     local label, enabled, action = GW.Quests.ObjectiveActionLabel(selectedObjective)
-    self.actionButton:SetText(source == "mock" and "Preview Only" or label)
+    self.actionButton:SetLabel(source == "mock" and "Preview Only" or label)
     self.selectedAction = source == "mock" and nil or action
+    self.actionButton:SetEnabled(source ~= "mock" and enabled == true)
 
-    if source == "mock" or not enabled then
-        self.actionButton:Disable()
-    else
-        self.actionButton:Enable()
-    end
-
-    self.actionHint:SetText(selectedObjective.description or "")
+    UI.SetText(self.actionHint, selectedObjective.description or "")
 end

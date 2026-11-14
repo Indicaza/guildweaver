@@ -80,9 +80,11 @@ local function zone(env, instance)
     env:advance(2)
 end
 
--- The first pull: the run timer starts here (see dungeon_timer_spec).
+-- The first pull: the run timer starts here (see dungeon_timer_spec). The
+-- fight ends at once, so the HUD is back in its out-of-combat mode.
 local function pull(env)
     env:dispatch("PLAYER_REGEN_DISABLED")
+    env:dispatch("PLAYER_REGEN_ENABLED")
 end
 
 local function relog(env, gap)
@@ -131,64 +133,97 @@ do
     -- A 0.5 install saved { expanded = true, width, height }.
     GuildweaverDB.ui = { dungeonHud = { enabled = true, expanded = true, width = 300, height = 90, point = "CENTER", relativePoint = "CENTER", x = 5, y = 6 } }
     equal(hud.Mode(), "expanded", "0.5 expanded becomes expanded mode")
-    equal(GuildweaverDB.ui.dungeonHud.sizes.compact.width, 300, "0.5 size kept for compact")
+    equal(GuildweaverDB.ui.dungeonHud.sizes, nil, "old fixed sizes are dropped")
+    equal(GuildweaverDB.ui.dungeonHud.collapseInCombat, true, "collapse in combat by default")
     hud:SetMode("compact")
 
     zone(env, SM)
-    pull(env)
     truthy(hud.visible, "HUD shows inside")
-    equal(#hud.lines, 4, "compact: title, time/bosses/deaths, XP, PB")
+    equal(#hud.lines, 2, "compact with nothing to show yet: title and clock line only")
     contains(hud.lines, "Scarlet Monastery (Normal)")
     contains(hud.lines, "Bosses 0/3")
-    contains(hud.lines, "PB: none yet")
+    for _, line in ipairs(hud.lines) do
+        truthy(not line:find("PB: none yet", 1, true), "no PB placeholder")
+        truthy(not line:find("-/h", 1, true), "no XP/hour placeholder")
+    end
+    equal(hud.Mode(), "compact")
+    equal(hud.SummaryText(addon.DungeonSessions.Current()), nil, "no numbers line before there are numbers")
+    truthy(not hud.summaryRow.shown, "and no empty row for it")
 
     hud:SetMode("minimized")
     equal(#hud.lines, 1, "minimized is one line")
     contains(hud.lines, "Bosses 0/3")
+    truthy(not hud.clockRow.shown and not hud.header.shown, "minimized: just the clock")
     hud:CycleMode()
     equal(hud.Mode(), "compact")
     hud:CycleMode()
     equal(hud.Mode(), "expanded")
-    contains(hud.lines, "Wallet change", "expanded labels the wallet")
-    contains(hud.lines, "(not profit)")
-    contains(hud.lines, "Inside")
+    truthy(hud.footer.shown, "expanded shows End run")
+    truthy(hud.splitButton.shown, "and Split")
     hud:CycleMode()
     equal(hud.Mode(), "minimized", "cycle wraps")
     equal(GuildweaverDB.ui.dungeonHud.mode, "minimized", "mode is saved")
     SlashCmdList.GUILDWEAVER("dungeon mode full")
     equal(hud.Mode(), "expanded")
 
-    -- Drag and resize: whatever the frame reports is saved for this mode.
+    -- Wallet change appears, labelled, once there is one.
+    env.money = env.money + 12345
+    env:dispatch("PLAYER_MONEY")
+    contains(hud.lines, "Wallet change +1g 23s (not profit)", "expanded labels the wallet")
+    contains(hud.lines, "Inside")
+
+    -- Drag: saved as the top-left corner when the frame reports one.
     local frame = hud.frame
-    frame.GetPoint = function() return "TOPLEFT", nil, "TOPLEFT", 40, -50 end
-    frame.GetSize = function() return 280.6, 210.2 end
+    frame.GetLeft = function() return 812.4 end
+    frame.GetTop = function() return 640.6 end
     frame:GetScript("OnDragStop")(frame)
     local saved = GuildweaverDB.ui.dungeonHud
     equal(saved.point, "TOPLEFT")
-    equal(saved.x, 40)
-    equal(saved.y, -50)
-    equal(saved.sizes.expanded.width, 280, "resize saved for expanded")
-    equal(saved.sizes.expanded.height, 210)
-    equal(saved.sizes.compact.width, 300, "compact size untouched")
+    equal(saved.relativePoint, "BOTTOMLEFT")
+    equal(saved.x, 812)
+    equal(saved.y, 641)
+
+    -- Locked: dragging does nothing.
+    local moved = 0
+    frame.StartMoving = function() moved = moved + 1 end
+    hud:SetLocked(true)
+    frame:GetScript("OnDragStart")(frame)
+    equal(moved, 0, "a locked HUD does not move")
+    hud:SetLocked(false)
+    frame:GetScript("OnDragStart")(frame)
+    equal(moved, 1, "unlocked it moves")
+
+    -- Scale keeps the top-left corner where it was on screen.
+    hud:SetScale(1.3)
+    equal(saved.scale, 1.3)
+    equal(saved.x, math.floor(812 / 1.3 + 0.5), "x rescaled")
 
     -- Survives a reload.
     local env2, addon2 = relog(env, 3)
     equal(addon2.DungeonHud.Mode(), "expanded", "mode after reload")
-    equal(GuildweaverDB.ui.dungeonHud.sizes.expanded.width, 280, "size after reload")
+    equal(GuildweaverDB.ui.dungeonHud.scale, 1.3, "scale after reload")
+    equal(GuildweaverDB.ui.dungeonHud.point, "TOPLEFT", "position after reload")
     truthy(addon2.DungeonHud.visible, "HUD back after reload inside the instance")
     addon2.DungeonHud:ResetPosition()
     equal(GuildweaverDB.ui.dungeonHud.point, "TOPRIGHT", "reset position")
+    equal(GuildweaverDB.ui.dungeonHud.scale, 1, "reset scale")
     equal(GuildweaverDB.ui.dungeonHud.mode, "expanded", "reset keeps the mode")
 
-    -- Redraws only when the text changes.
+    -- Redraws only when the text changes; the clock ticks once a second
+    -- without a full layout.
+    addon2.DungeonSessions.StartTimer()
     local before = addon2.DungeonHud.redraws or 0
     addon2.DungeonHud:Refresh()
     addon2.DungeonHud:Refresh()
     equal(addon2.DungeonHud.redraws or 0, before, "same second, same text: no redraw")
-    env2:advance(1)
+    local layouts = 0
+    local layout = addon2.DungeonHud.Layout
+    addon2.DungeonHud.Layout = function(...) layouts = layouts + 1; return layout(...) end
+    env2:advance(2)
     truthy((addon2.DungeonHud.redraws or 0) > before, "the clock redraws once a second")
+    equal(layouts, 0, "a clock tick lays nothing out")
+    addon2.DungeonHud.Layout = layout
 end
-
 -- Live XP across a level-up, exit and re-entry, deaths -----------------------
 do
     resetWorld()

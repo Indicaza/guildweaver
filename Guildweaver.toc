@@ -55,7 +55,11 @@ Systems/MobLootCapture.lua
 Systems/AuctionCapture.lua
 Systems/Quests.lua
 Telemetry/Compatibility.lua
+UI/Theme.lua
+UI/Widgets.lua
+UI/Prefs.lua
 UI/QuestLog.lua
 UI/DungeonHud.lua
 UI/MainFrame.lua
+UI/MinimapButton.lua
 Core.lua

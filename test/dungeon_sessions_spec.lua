@@ -443,8 +443,9 @@ do
     addon.DungeonHud:ToggleExpanded()
     equal(GuildweaverDB.ui.dungeonHud.expanded, true, "expanded is saved")
     equal(GuildweaverDB.ui.dungeonHud.enabled, true, "enabled is saved")
-    local lines = addon.DungeonHud.lines
-    truthy(table.concat(lines, "\n"):find("/h", 1, true), "details show XP/hour")
+    local lines = table.concat(addon.DungeonHud.lines, "\n")
+    truthy(not lines:find("/h", 1, true), "no XP/hour before there is one (no -/h placeholder)")
+    truthy(not lines:find("PB", 1, true), "no personal-best line without a best")
     SlashCmdList.GUILDWEAVER("dungeon split Big Boss")
     equal(active(addon).splits[1].name, "Big Boss", "slash split keeps the name's case")
     SlashCmdList.GUILDWEAVER("dungeon hud off")

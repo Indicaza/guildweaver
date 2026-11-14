@@ -157,6 +157,22 @@ function GW.FarmingSessions.Context()
     return run and { sessionId = run.sessionId, mode = run.mode } or nil
 end
 
+-- What the dashboard shows about the open run; nil when none. Read-only:
+-- it brings the elapsed time up to date but never publishes.
+function GW.FarmingSessions.Status()
+    if not run then
+        return nil
+    end
+    accountTime()
+    return {
+        mode = run.mode,
+        startedAt = run.startedAt,
+        durationSeconds = run.durationSeconds,
+        afkSeconds = run.afkAvailable and run.afkSeconds or nil,
+        gatheringCount = run.gatheringCount,
+    }
+end
+
 function GW.FarmingSessions.RecordGather(discipline)
     if run and run.mode == "automatic" and clock() - run.lastGatherClock > GAP_SECONDS then
         finish("gap", true)
