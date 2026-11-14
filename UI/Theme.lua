@@ -15,6 +15,11 @@ local Theme = GW.Theme
 Theme.MEDIA = "Interface\\AddOns\\Guildweaver\\Media\\"
 Theme.EMBLEM = Theme.MEDIA .. "Emblem"
 Theme.WHITE = "Interface\\Buttons\\WHITE8X8"
+-- A 32x32 feathered corner (alpha only): the soft edge of the paper shadow.
+Theme.SHADOW = Theme.MEDIA .. "Shadow"
+-- A 256x256 tileable stone grain, laid at very low alpha over panels.
+Theme.GRAIN = Theme.MEDIA .. "Grain"
+Theme.GRAIN_SIZE = 256
 
 Theme.colors = {
     -- Surfaces, darkest to lightest.
@@ -45,6 +50,7 @@ Theme.colors = {
 -- role = { font kind, size, flags }
 Theme.fontRoles = {
     brand = { "heading", 15 },
+    pageTitle = { "heading", 16 },
     title = { "heading", 13 },
     heading = { "heading", 11 },
     caps = { "body", 10 },
@@ -136,7 +142,8 @@ function Theme.Skin(frame, background, border, borderAlpha)
     local skin = rawget(frame, "gwSkin")
     if not skin then
         skin = {}
-        skin.bg = frame:CreateTexture(nil, "BACKGROUND", nil, -8)
+        -- Sublevel -7: the paper shadow (-8) lies under it, the grain (-6) over it.
+        skin.bg = frame:CreateTexture(nil, "BACKGROUND", nil, -7)
         skin.bg:SetAllPoints(frame)
         skin.edges = {}
         local function edge(a1, a2, horizontal)
@@ -172,14 +179,90 @@ function Theme.SetBackground(frame, background, alpha)
     if skin then Theme.Fill(skin.bg, background, alpha) end
 end
 
--- A soft drop shadow a few pixels outside a window.
-function Theme.Shadow(frame, size)
-    size = size or 6
-    local shadow = frame:CreateTexture(nil, "BACKGROUND", nil, -8)
-    shadow:SetPoint("TOPLEFT", frame, "TOPLEFT", -size, size)
-    shadow:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", size, -size)
-    Theme.Fill(shadow, "shadow")
-    return shadow
+-- The shadow of a sheet of paper lifted slightly off the table: a
+-- Gaussian falloff (Media/Shadow.tga, one feathered corner) drawn as a
+-- nine-slice around the frame, nudged down a few pixels, reaching further
+-- and darker under the lower edge than above it. The corner is mirrored
+-- with texture coordinates; the edges stretch its innermost row or column.
+-- scale shrinks it for small popups. Returns the textures.
+local SHADOW = { offset = 3, top = 12, side = 16, bottom = 26, topAlpha = 0.32, bottomAlpha = 0.55 }
+Theme.SHADOW_SPEC = SHADOW
+
+local function shadeVertical(texture, top, bottom)
+    if type(texture.SetGradient) == "function" and type(Globals.CreateColor) == "function" then
+        -- VERTICAL: the first colour is the bottom.
+        if pcall(texture.SetGradient, texture, "VERTICAL", Globals.CreateColor(0, 0, 0, bottom), Globals.CreateColor(0, 0, 0, top)) then
+            return
+        end
+    end
+    pcall(texture.SetVertexColor, texture, 0, 0, 0, (top + bottom) / 2)
+end
+
+function Theme.PaperShadow(frame, scale)
+    scale = scale or 1
+    local off, top, side, bottom = SHADOW.offset * scale, SHADOW.top * scale, SHADOW.side * scale, SHADOW.bottom * scale
+    local at, ab = SHADOW.topAlpha, SHADOW.bottomAlpha
+    local inner = 31 / 32
+    local pieces = {}
+    local function add(coords, alpha, place)
+        local texture = frame:CreateTexture(nil, "BACKGROUND", nil, -8)
+        pcall(texture.SetTexture, texture, Theme.SHADOW)
+        pcall(texture.SetTexCoord, texture, coords[1], coords[2], coords[3], coords[4])
+        place(texture)
+        if alpha then pcall(texture.SetVertexColor, texture, 0, 0, 0, alpha) end
+        table.insert(pieces, texture)
+    end
+    -- Corners: the texture's (1,1) is the frame's corner.
+    add({ 0, 1, 0, 1 }, at, function(t) t:SetSize(side, top); t:SetPoint("BOTTOMRIGHT", frame, "TOPLEFT", 0, -off) end)
+    add({ 1, 0, 0, 1 }, at, function(t) t:SetSize(side, top); t:SetPoint("BOTTOMLEFT", frame, "TOPRIGHT", 0, -off) end)
+    add({ 0, 1, 1, 0 }, ab, function(t) t:SetSize(side, bottom); t:SetPoint("TOPRIGHT", frame, "BOTTOMLEFT", 0, -off) end)
+    add({ 1, 0, 1, 0 }, ab, function(t) t:SetSize(side, bottom); t:SetPoint("TOPLEFT", frame, "BOTTOMRIGHT", 0, -off) end)
+    -- Top and bottom edges.
+    add({ inner, 1, 0, 1 }, at, function(t)
+        t:SetHeight(top)
+        t:SetPoint("BOTTOMLEFT", frame, "TOPLEFT", 0, -off)
+        t:SetPoint("BOTTOMRIGHT", frame, "TOPRIGHT", 0, -off)
+    end)
+    add({ inner, 1, 1, 0 }, ab, function(t)
+        t:SetHeight(bottom)
+        t:SetPoint("TOPLEFT", frame, "BOTTOMLEFT", 0, -off)
+        t:SetPoint("TOPRIGHT", frame, "BOTTOMRIGHT", 0, -off)
+    end)
+    -- Side edges, darkening towards the bottom.
+    add({ 0, 1, inner, 1 }, nil, function(t)
+        t:SetWidth(side)
+        t:SetPoint("TOPRIGHT", frame, "TOPLEFT", 0, -off)
+        t:SetPoint("BOTTOMRIGHT", frame, "BOTTOMLEFT", 0, -off)
+        shadeVertical(t, at, ab)
+    end)
+    add({ 1, 0, inner, 1 }, nil, function(t)
+        t:SetWidth(side)
+        t:SetPoint("TOPLEFT", frame, "TOPRIGHT", 0, -off)
+        t:SetPoint("BOTTOMLEFT", frame, "BOTTOMRIGHT", 0, -off)
+        shadeVertical(t, at, ab)
+    end)
+    -- Under the frame: only the strip the offset uncovers is ever seen.
+    local under = frame:CreateTexture(nil, "BACKGROUND", nil, -8)
+    under:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -off)
+    under:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, -off)
+    pcall(under.SetColorTexture, under, 0, 0, 0, ab)
+    table.insert(pieces, under)
+    return pieces
+end
+
+-- A faint stone grain over a surface of a known size, tiled. Its alpha is
+-- very low: it should be felt more than seen.
+function Theme.Grain(frame, width, height, alpha, inset)
+    inset = inset or 1
+    local texture = frame:CreateTexture(nil, "BACKGROUND", nil, -6)
+    texture:SetPoint("TOPLEFT", frame, "TOPLEFT", inset, -inset)
+    texture:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -inset, inset)
+    if not pcall(texture.SetTexture, texture, Theme.GRAIN, "REPEAT", "REPEAT") then
+        pcall(texture.SetTexture, texture, Theme.GRAIN)
+    end
+    pcall(texture.SetTexCoord, texture, 0, (width or Theme.GRAIN_SIZE) / Theme.GRAIN_SIZE, 0, (height or Theme.GRAIN_SIZE) / Theme.GRAIN_SIZE)
+    pcall(texture.SetAlpha, texture, alpha or 0.07)
+    return texture
 end
 
 -- A one-pixel rule.

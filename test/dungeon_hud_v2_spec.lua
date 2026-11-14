@@ -147,8 +147,10 @@ do
         truthy(not line:find("-/h", 1, true), "no XP/hour placeholder")
     end
     equal(hud.Mode(), "compact")
-    equal(hud.SummaryText(addon.DungeonSessions.Current()), nil, "no numbers line before there are numbers")
-    truthy(not hud.summaryRow.shown, "and no empty row for it")
+    local xpRate, walletRate = hud.Rates(addon.DungeonSessions.Current())
+    equal(xpRate, nil, "no XP/hr before five minutes")
+    equal(walletRate, nil, "no Wallet/hr before five minutes")
+    truthy(not hud.ratesRow.shown, "and no empty row for them")
 
     hud:SetMode("minimized")
     equal(#hud.lines, 1, "minimized is one line")

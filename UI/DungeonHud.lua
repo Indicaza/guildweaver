@@ -4,11 +4,14 @@ local _, GW = ...
 -- open, hides everywhere else. Three modes:
 --   minimized  the clock with a status light, and an expand button
 --   compact    (default) the dungeon, the clock with Start/Pause/Resume,
---              boss progress, one line of useful numbers, the objective
---   expanded   everything in compact plus Split, the boss faces, inside
---              time, deaths, XP, XP/hour, the wallet change (labelled, not
---              profit), the personal best and pace, splits, objectives and
---              End run
+--              round boss frames, XP/hr and Wallet/hr, the objective
+--   expanded   everything in compact plus Split, inside time, deaths, XP,
+--              XP/hr, the wallet change and Wallet/hr (labelled: coin, not
+--              item value or profit), the personal best and pace, splits,
+--              objectives and End run
+-- Boss frames: gold ring and greyed face when defeated, red ring for the
+-- fight, an empty socket for each boss still ahead. Names come only from
+-- the client (a kill, a split named after the target); none are guessed.
 -- Nothing is shown that has no value yet: no "-/h", no "PB: none yet".
 --
 -- In combat it collapses to minimized by default and returns to the
@@ -39,23 +42,27 @@ local DEFAULTS = {
 local SCALES = { 0.85, 1, 1.15, 1.3 }
 local MAX_SPLITS = 6
 local MAX_OBJECTIVES = 3
-local MAX_PIPS = 12
-local MAX_STATS = 6
+local MAX_BOSSES = 12
+local MAX_STATS = 8
 local PAD = 10
+-- Boss frame diameter per mode, and the gap between frames.
+local FACE_SIZES = { compact = 18, expanded = 22 }
 local FACE = 22
-local FACE_GAP = 5
+local FACE_GAP = 4
+-- Room for the "2/4" count at the end of the boss row.
+local BOSS_LABEL = 30
 -- A full refresh this often while visible, for numbers that change with
 -- time alone (XP/hour). Everything else follows run events.
 local FULL_REFRESH_TICKS = 15
 local TEXTURES = {
     mask = "Interface\\CharacterFrame\\TempPortraitAlphaMask",
     boss = "Interface\\TargetingFrame\\UI-TargetingFrame-Skull",
-    split = "Interface\\Icons\\Ability_Rogue_Sprint",
+    split = "Interface\\Icons\\INV_Misc_PocketWatch_01",
     bar = "Interface\\Buttons\\WHITE8X8",
 }
--- Theme colour per timer state and per face ring.
+-- Theme colour per timer state and per boss-frame ring.
 local STATE_COLORS = { ready = "textMuted", running = "text", paused = "warn", cleared = "gold" }
-local RING_COLORS = { boss = "gold", split = "info", engaged = "bad" }
+local RING_COLORS = { boss = "gold", split = "info", engaged = "bad", pending = "borderStrong" }
 local GLYPH = { close = "\195\151", less = "\226\128\147", more = "+", dot = "\194\183" }
 
 Hud.MODES = MODES
@@ -229,23 +236,39 @@ local function pbText(run, colour)
     return Hud.FormatDuration(run.pb.seconds or run.pb.durationSeconds) .. (pace and ("  " .. pace) or "")
 end
 
--- The compact line of numbers: deaths when there were some, XP/hour when
--- it is known (else XP gained). Nil when there is nothing worth showing.
-function Hud.SummaryText(run)
-    local parts = {}
-    if (run.deaths or 0) > 0 then
-        table.insert(parts, run.deaths .. (run.deaths == 1 and " death" or " deaths"))
-    end
-    local rate = rateText(run)
-    if rate then
-        table.insert(parts, (rate:gsub("/h$", " XP/h")))
-    elseif run.xpGained and run.xpGained > 0 and not run.atLevelCap then
-        table.insert(parts, "+" .. commas(run.xpGained) .. " XP")
-    end
-    if #parts == 0 then
+-- Wallet change per hour of the run's elapsed time, in copper. This is the
+-- money that actually moved (looted coin, vendor sales, minus repairs and
+-- purchases): it is not the value of items looted and not profit. Nil until
+-- five minutes have passed (as XP/hour) or while the wallet has not moved.
+function Hud.WalletPerHour(run)
+    local net, seconds = run and run.netCopper, run and tonumber(run.durationSeconds) or 0
+    if net == nil or net == 0 or seconds < 300 then
         return nil
     end
-    return table.concat(parts, "  " .. GLYPH.dot .. "  ")
+    return math.floor(net * 3600 / seconds + 0.5)
+end
+
+-- "+12g", "+4g 20s", "+35s", "-80c": an hourly rate without the noise.
+function Hud.FormatRate(copper)
+    if copper == nil then return nil end
+    local sign = copper < 0 and "-" or "+"
+    copper = math.abs(copper)
+    local gold, silver = math.floor(copper / 10000), math.floor(copper / 100) % 100
+    if gold >= 100 or (gold > 0 and silver == 0) then
+        return sign .. commas(gold) .. "g"
+    elseif gold > 0 then
+        return string.format("%s%dg %ds", sign, gold, silver)
+    elseif silver > 0 then
+        return sign .. silver .. "s"
+    end
+    return sign .. (copper % 100) .. "c"
+end
+
+-- The compact HUD's rate row: XP/hr on the left, Wallet/hr on the right.
+-- Each is nil when it has no value yet.
+function Hud.Rates(run)
+    local xp = (not run.atLevelCap and run.xpPerHour) and commas(run.xpPerHour) or nil
+    return xp, Hud.FormatRate(Hud.WalletPerHour(run))
 end
 
 -- The run as text lines, for /gw dungeon and tests. Only what has a value.
@@ -304,21 +327,26 @@ end
 function Hud.Stats(run)
     local stats = {
         { "Inside", Hud.FormatDuration(run.insideSeconds or run.durationSeconds) },
-        { "Deaths", tostring(run.deaths or 0), (run.deaths or 0) > 0 and "warn" or nil },
     }
+    if (run.deaths or 0) > 0 then
+        table.insert(stats, { "Deaths", tostring(run.deaths), "warn" })
+    end
     local xp = xpText(run)
     if xp then
         local levels = (run.levelUps or 0) > 0 and (" " .. GLYPH.dot .. " " .. run.levelUps .. " lvl") or ""
         table.insert(stats, { "XP", xp .. levels })
     end
-    local rate = rateText(run)
-    if rate then
-        table.insert(stats, { "XP / hour", commas(run.xpPerHour) })
+    local xpRate, walletRate = Hud.Rates(run)
+    if xpRate then
+        table.insert(stats, { "XP/hr", xpRate })
     end
-    local wallet = Hud.FormatMoney(run.netCopper)
-    if wallet then
-        table.insert(stats, { "Wallet", wallet, run.netCopper < 0 and "bad" or (run.netCopper > 0 and "good" or nil),
-            "Wallet change during the run: loot, vendors and repairs. Not profit." })
+    if run.netCopper and run.netCopper ~= 0 then
+        table.insert(stats, { "Wallet", Hud.FormatMoney(run.netCopper), run.netCopper < 0 and "bad" or "good",
+            "Wallet change during the run: coin looted, vendor sales, minus repairs and purchases. Not item value, not profit." })
+    end
+    if walletRate then
+        table.insert(stats, { "Wallet/hr", walletRate, nil,
+            "Wallet change per hour of the run. Items looted are not counted until sold." })
     end
     if run.pb then
         table.insert(stats, { "Best", Hud.FormatDuration(run.pb.seconds or run.pb.durationSeconds), nil,
@@ -327,9 +355,9 @@ function Hud.Stats(run)
     return stats
 end
 
--- The face row: one entry per checkpoint (a boss kill or a split), the boss
--- being fought, then one per boss the lockout still lists. The frame draws
--- faces only for kills, splits and the fight; the rest are progress pips.
+-- The boss frames: one per checkpoint (a boss kill or a split), the boss
+-- being fought, then one empty frame per boss the lockout still lists.
+-- Nothing is named that the client did not name.
 function Hud.Portraits(run)
     local entries = {}
     for _, split in ipairs(run and run.splits or {}) do
@@ -340,7 +368,7 @@ function Hud.Portraits(run)
     end
     if run and run.bossesTotal then
         local remaining = run.bossesTotal - (run.bossesDefeated or 0) - (run.engaged and 1 or 0)
-        for index = 1, math.min(MAX_PIPS, remaining) do
+        for index = 1, math.min(MAX_BOSSES, remaining) do
             table.insert(entries, { id = "pending:" .. index, kind = "pending" })
         end
     end
@@ -415,6 +443,11 @@ function Hud.ShowTooltip(circle)
     if not entry then
         return
     end
+    if entry.kind == "pending" then
+        -- The client names a boss only once it is fought: nothing is guessed.
+        UI.ShowTooltip(circle.frame, "Boss ahead", { "Not defeated yet." }, "ANCHOR_TOP")
+        return
+    end
     local what = entry.kind == "boss" and "Defeated" or (entry.kind == "split" and "Split" or "Fighting since")
     UI.ShowTooltip(circle.frame, entry.name or "Boss", { what .. (entry.at and (" at " .. Hud.FormatDuration(entry.at)) or "") }, "ANCHOR_TOP")
 end
@@ -464,8 +497,23 @@ local function setPortrait(circle, unit, fallback)
     return false
 end
 
-local function paintCircle(circle, entry)
-    Theme.Tint(circle.ring, RING_COLORS[entry.kind] or "borderStrong")
+-- A boss not reached yet: an empty dark socket in a faint ring. No icon,
+-- no question mark.
+local function setEmpty(circle)
+    if circle.icon ~= "empty" then
+        circle.icon = "empty"
+        local rgb = Theme.colors.bgInset
+        pcall(circle.portrait.SetColorTexture, circle.portrait, rgb[1], rgb[2], rgb[3], 1)
+    end
+end
+
+-- Defeated: gold ring, the face greyed. Fighting: red ring, full colour.
+-- Ahead: a faint ring around an empty socket. Splits: a blue ring.
+local function paintCircle(circle, entry, size)
+    circle.frame:SetSize(size, size)
+    Theme.Tint(circle.ring, RING_COLORS[entry.kind] or "borderStrong", entry.kind == "pending" and 0.8 or 1)
+    pcall(circle.portrait.SetDesaturated, circle.portrait, entry.kind == "boss")
+    pcall(circle.portrait.SetAlpha, circle.portrait, entry.kind == "boss" and 0.8 or 1)
     circle.entry = entry
 end
 
@@ -482,7 +530,7 @@ function Hud:circleFor(id)
     end
     self.circles = self.circles or {}
     self.pool = self.pool or {}
-    local circle = self.circles[id] or table.remove(self.pool) or newCircle(self.faces)
+    local circle = self.circles[id] or table.remove(self.pool) or newCircle(self.bossRow)
     self.circles[id] = circle
     return circle
 end
@@ -577,22 +625,22 @@ function Hud:RefreshEngaged(force)
     updateHealth(unit)
 end
 
--- Lays the faces out left to right (expanded only): kills, splits and the
--- fight. The oldest scroll off first, so the fight and the latest kills
--- always fit. Returns the row's height, 0 when there is nothing to show.
+-- Lays the boss frames out left to right (compact and expanded): kills and
+-- splits, the fight, then an empty frame per boss still ahead. When they do
+-- not fit, frames ahead go first, then the oldest kills, so the fight and
+-- the latest kills always show. Returns the row's height, 0 when empty.
 function Hud:RefreshRow(run, mode, width)
-    local row = self.faces
+    local row = self.bossRow
     if not row then
         return 0
     end
-    local entries = {}
-    if mode == "expanded" then
-        for _, entry in ipairs(Hud.Portraits(run)) do
-            if entry.kind ~= "pending" then table.insert(entries, entry) end
-        end
+    local size = FACE_SIZES[mode] or FACE
+    local entries = mode == "minimized" and {} or Hud.Portraits(run)
+    local available = math.max(size, (width or WIDTHS[mode] or WIDTHS.expanded) - PAD * 2 - BOSS_LABEL)
+    local fit = math.max(1, math.floor((available + FACE_GAP) / (size + FACE_GAP)))
+    while #entries > fit and entries[#entries].kind == "pending" do
+        table.remove(entries)
     end
-    local available = math.max(FACE, (width or WIDTHS.expanded) - PAD * 2)
-    local fit = math.max(1, math.floor((available + FACE_GAP) / (FACE + FACE_GAP)))
     while #entries > fit do
         table.remove(entries, 1)
     end
@@ -609,58 +657,45 @@ function Hud:RefreshRow(run, mode, width)
             circle = self.engaged
         else
             circle = self:circleFor(entry.id)
-            if not circle.hasFace and not circle.icon then
+            if entry.kind == "pending" then
+                setEmpty(circle)
+            elseif not circle.hasFace and (not circle.icon or circle.icon == "empty") then
                 setPortrait(circle, unitFor(entry.name), entry.kind == "boss" and TEXTURES.boss or TEXTURES.split)
             end
         end
-        paintCircle(circle, entry)
+        paintCircle(circle, entry, size)
         circle.frame:ClearAllPoints()
         circle.frame:SetPoint("LEFT", row, "LEFT", x, 0)
         circle.frame:Show()
         used[circle] = true
-        x = x + FACE + FACE_GAP
+        x = x + size + FACE_GAP
     end
-    for _, circle in pairs(self.circles or {}) do
-        if not used[circle] then circle.frame:Hide() end
-    end
-    if self.engaged and not used[self.engaged] then
-        if mode == "expanded" or not (run and run.engaged) then
-            resetCircle(self.engaged)
-            table.insert(self.pool, self.engaged)
-            self.engaged = nil
-        else
-            self.engaged.frame:Hide()
+    for id, circle in pairs(self.circles or {}) do
+        if not used[circle] then
+            if id:find("^pending:") then
+                -- Frames ahead are cheap: back to the pool.
+                resetCircle(circle)
+                table.insert(self.pool, circle)
+                self.circles[id] = nil
+            else
+                circle.frame:Hide()
+            end
         end
     end
+    if self.engaged and not used[self.engaged] then
+        resetCircle(self.engaged)
+        table.insert(self.pool, self.engaged)
+        self.engaged = nil
+    end
+    local progress = Hud.BossProgress(run)
+    setText(self.bossLabel, "bossLabel", progress.total and (progress.defeated .. "/" .. progress.total)
+        or (progress.defeated > 0 and tostring(progress.defeated) or ""))
     if #entries == 0 then
         row:Hide()
         return 0
     end
-    row:Show()
-    return FACE
-end
-
--- The pips: one per boss in the lockout, gold when down, red for the fight.
-function Hud:RefreshPips(run, width)
-    local progress = Hud.BossProgress(run)
-    local total = progress.total and math.min(MAX_PIPS, progress.total) or 0
-    setText(self.bossLabel, "bossLabel", progress.total and (progress.defeated .. " / " .. progress.total .. " bosses")
-        or (progress.defeated .. (progress.defeated == 1 and " boss down" or " bosses down")))
-    local available = (width or WIDTHS.compact) - PAD * 2 - 84
-    local pipWidth = total > 0 and math.max(5, math.min(18, math.floor((available + 3) / total) - 3)) or 0
-    for index, pip in ipairs(self.pips) do
-        if index <= total then
-            pip:ClearAllPoints()
-            pip:SetPoint("LEFT", self.progressRow, "LEFT", (index - 1) * (pipWidth + 3), 0)
-            pip:SetWidth(pipWidth)
-            local color = index <= progress.defeated and "gold"
-                or (progress.engaged and index == progress.defeated + 1 and "bad") or "borderStrong"
-            Theme.Fill(pip, color)
-            pip:Show()
-        else
-            pip:Hide()
-        end
-    end
+    row.gwHeight = size
+    return size
 end
 
 -- Frame ---------------------------------------------------------------------------
@@ -836,31 +871,29 @@ function Hud:Create()
     bar:Hide()
     self.healthBar = bar
 
-    -- Boss progress pips.
-    local progressRow = row(frame, 14)
-    self.progressRow = progressRow
-    self.pips = {}
-    for index = 1, MAX_PIPS do
-        local pip = progressRow:CreateTexture(nil, "ARTWORK")
-        pip:SetHeight(4)
-        pip:Hide()
-        self.pips[index] = pip
-    end
-    self.bossLabel = UI.Text(progressRow, "small", "textMuted", "RIGHT")
-    self.bossLabel:SetPoint("RIGHT", progressRow, "RIGHT", 0, 0)
+    -- Boss frames, with the count at the end of the row.
+    local bossRow = row(frame, FACE_SIZES.compact)
+    self.bossRow = bossRow
+    self.bossLabel = UI.Text(bossRow, "small", "textMuted", "RIGHT")
+    self.bossLabel:SetPoint("RIGHT", bossRow, "RIGHT", 0, 0)
 
-    -- Compact: one line of numbers.
-    local summaryRow = row(frame, 16)
-    self.summaryRow = summaryRow
-    self.summary = UI.Text(summaryRow, "label", "text")
-    self.summary:SetPoint("LEFT", summaryRow, "LEFT", 0, 0)
-    self.summary:SetPoint("RIGHT", summaryRow, "RIGHT", 0, 0)
-    pcall(self.summary.SetWordWrap, self.summary, false)
+    -- Compact: XP/hr on the left, Wallet/hr on the right.
+    local ratesRow = row(frame, 16)
+    self.ratesRow = ratesRow
+    self.xpRate = UI.Text(ratesRow, "label", "text")
+    self.xpRate:SetPoint("LEFT", ratesRow, "LEFT", 0, 0)
+    self.walletRate = UI.Text(ratesRow, "label", "text", "RIGHT")
+    self.walletRate:SetPoint("RIGHT", ratesRow, "RIGHT", 0, 0)
+    ratesRow:EnableMouse(true)
+    ratesRow:SetScript("OnEnter", function(current)
+        UI.ShowTooltip(current, "Rates per hour of the run", {
+            "XP/hr: experience gained per hour since you entered.",
+            "Wallet/hr: coin looted and vendor sales minus repairs and purchases, per hour. Items you loot count only once sold; this is not profit.",
+        }, "ANCHOR_BOTTOM")
+    end)
+    ratesRow:SetScript("OnLeave", UI.HideTooltip)
 
-    -- Expanded: faces, the stat grid, pace, splits, objectives.
-    local faces = row(frame, FACE)
-    self.faces = faces
-    self.row = faces
+    -- Expanded: the stat grid, pace, splits, objectives.
     local statsRow = row(frame, 16 * math.ceil(MAX_STATS / 2))
     self.statsRow = statsRow
     self.stats = {}
@@ -930,7 +963,7 @@ function Hud:Create()
     self.optionsButton = UI.Button(footer, "Options", { width = 64, height = 20, variant = "ghost", onClick = openSettings })
     self.optionsButton:SetPoint("RIGHT", footer, "RIGHT", 0, 0)
 
-    self.rows = { header, clockRow, stateRow, progressRow, summaryRow, faces, statsRow, paceRow,
+    self.rows = { header, clockRow, stateRow, bossRow, ratesRow, statsRow, paceRow,
         self.splitList, self.objectiveList, hintRow, footer }
 
     watchEvents(self)
@@ -966,14 +999,16 @@ function Hud:Paint(run, mode)
     setText(self.state, "state", stateText)
     Theme.Tint(self.state, run.engaged and "bad" or (state == "paused" and "warn" or (state == "cleared" and "gold" or "textMuted")))
 
-    has.progress = knowsBosses(run)
-    if has.progress then
-        self:RefreshPips(run, WIDTHS[mode])
-    end
+    has.progress = knowsBosses(run) or #(run.splits or {}) > 0 or run.engaged ~= nil
 
-    local summary = mode == "compact" and Hud.SummaryText(run) or nil
-    has.summary = summary ~= nil
-    setText(self.summary, "summary", summary)
+    if mode == "compact" then
+        local xp, wallet = Hud.Rates(run)
+        local faint = Theme.Hex("textFaint")
+        setText(self.xpRate, "xpRate", xp and (faint .. "XP/hr|r  " .. xp) or "")
+        setText(self.walletRate, "walletRate", wallet and (faint .. "Wallet/hr|r  "
+            .. Theme.Colorize(wallet, wallet:sub(1, 1) == "-" and "bad" or "goldBright")) or "")
+        has.rates = xp ~= nil or wallet ~= nil
+    end
 
     if mode == "expanded" then
         local stats = Hud.Stats(run)
@@ -1073,21 +1108,15 @@ function Hud:Layout(mode, has)
         self.moreButton:SetPoint("RIGHT", self.lessButton, "LEFT", -1, 0)
     end
     pcall(self.title.SetWidth, self.title, width - PAD * 2 - (mode == "expanded" and 110 or 56))
-    local visible = {
-        self.header, self.clockRow,
-        has.state and self.stateRow or nil,
-        has.progress and self.progressRow or nil,
-    }
-    local list = {}
-    for index = 1, 4 do
-        if visible[index] then table.insert(list, visible[index]) end
+    local list = { self.header, self.clockRow }
+    if has.state then table.insert(list, self.stateRow) end
+    if has.progress and self:RefreshRow(self.run, mode, width) > 0 then
+        table.insert(list, self.bossRow)
     end
     if mode == "compact" then
-        if has.summary then table.insert(list, self.summaryRow) end
+        if has.rates then table.insert(list, self.ratesRow) end
         if has.pace then table.insert(list, self.paceRow) end
     else
-        local faceHeight = self:RefreshRow(self.run, mode, width)
-        if faceHeight > 0 then table.insert(list, self.faces) end
         table.insert(list, self.statsRow)
         if has.pace then table.insert(list, self.paceRow) end
         if has.splits then table.insert(list, self.splitList) end
@@ -1118,9 +1147,6 @@ function Hud:Layout(mode, has)
     self.timerButton:SetPoint("RIGHT", self.clockRow, "RIGHT", 0, 0)
     self.splitButton:ClearAllPoints()
     self.splitButton:SetPoint("RIGHT", self.timerButton, "LEFT", -4, 0)
-    if not has.progress then
-        for _, pip in ipairs(self.pips) do pip:Hide() end
-    end
     frame:SetSize(width, -y + 8)
 end
 

@@ -216,13 +216,13 @@ do
     main.frame.header:GetScript("OnDragStop")(main.frame.header)
     equal(GuildweaverDB.ui.mainFrame.point, "TOPLEFT")
     equal(GuildweaverDB.ui.mainFrame.x, 120)
-    main:Select("quests")
+    main:Select("dungeon")
 
     -- Reload: the last view and position are kept.
     local _, addon2 = relog(env)
     equal(GuildweaverDB.ui.mainFrame.x, 120, "position after reload")
     addon2.MainFrame:Open()
-    equal(addon2.MainFrame.current, "quests", "last view after reload")
+    equal(addon2.MainFrame.current, "dungeon", "last view after reload")
     addon2.MainFrame:ResetPosition()
     equal(GuildweaverDB.ui.mainFrame.point, "CENTER", "reset position")
     SlashCmdList.GUILDWEAVER("reset")
@@ -242,12 +242,20 @@ do
     truthy(dungeon.recentEmpty.shown, "empty recent runs say so")
     local farming = main.views.farming
     equal(farming.card.state.gwText, "Not timing")
-    equal(farming.lastCatch.gwText, "No fishing recorded this session.")
+    truthy(farming.fishingEmpty.shown, "fishing says it has nothing yet")
+    truthy(not farming.fishingStats[1].shown, "instead of three zeros")
+    equal(farming.card.clock.gwText, "", "no 0:00 when nothing is timed")
     local overview = main.views.overview
     main:Select("overview")
     equal(overview.cards.dungeon.main.gwText, "No run open")
-    truthy(addon.QuestLog.frame, "the quest log is inside the dashboard")
-    equal(addon.QuestLog.actionButton:GetLabel(), "Preview Only", "preview quests cannot be acted on")
+    -- Guild Quests is hidden for this release: not in the sidebar, not built,
+    -- and asking for it opens the overview. The quest system still runs.
+    truthy(main.nav.quests == nil, "no Guild Quests in the sidebar")
+    truthy(addon.QuestLog.frame == nil, "the quest log is not built")
+    equal(main:Select("quests"), "overview", "the quests view falls back to the overview")
+    truthy(main.views.overview.cards.quests == nil, "no quests card")
+    truthy(addon.Quests.GetQuests("available"), "the quest data is still there")
+    for _, entry in ipairs(main.NAV) do truthy(entry.key ~= "quests", "nav has no quests") end
     -- Advanced diagnostics are tucked away until asked for.
     main:Select("sync")
     local sync = main.views.sync
@@ -265,7 +273,7 @@ do
     equal(card.button:GetLabel(), "Start timed run")
     click(card.button)
     equal(addon.FarmingSessions.Context().mode, "manual", "Start begins a timed run")
-    equal(card.button:GetLabel(), "Stop & save run")
+    equal(card.button:GetLabel(), "Stop & save")
     equal(card.state.gwText, "Timing a run")
     env:advance(65)
     truthy(card.clock.gwText == "1:05" or card.clock.gwText == "1:04", "the elapsed time ticks while open: " .. tostring(card.clock.gwText))
@@ -448,6 +456,54 @@ do
     click(button)
     env:advance(2)
     equal(env.reloads, 1, "the second click syncs (a checkpoint, then the reload)")
+end
+
+-- Compact HUD rates: XP/hr left, Wallet/hr right, labelled, only when real -------
+do
+    local env, addon = boot()
+    local hud, sessions = addon.DungeonHud, addon.DungeonSessions
+    zone(env, SM)
+    local xp, wallet = hud.Rates(sessions.Current())
+    equal(xp, nil, "no XP/hr at entry")
+    equal(wallet, nil, "no Wallet/hr at entry")
+    truthy(not hud.ratesRow.shown, "no rates row yet")
+    env.serverTime = env.serverTime + 600
+    env:advance(600)
+    world.xp = 4000
+    env:dispatch("PLAYER_XP_UPDATE", "player")
+    env.money = env.money + 50000
+    env:dispatch("PLAYER_MONEY")
+    local run = sessions.Current()
+    xp, wallet = hud.Rates(run)
+    truthy(xp and xp:find("%d"), "XP/hr after ten minutes: " .. tostring(xp))
+    truthy(wallet and wallet:sub(1, 1) == "+", "Wallet/hr after ten minutes: " .. tostring(wallet))
+    equal(hud.WalletPerHour(run), math.floor(50000 * 3600 / run.durationSeconds + 0.5), "wallet change per hour of the run")
+    truthy(hud.ratesRow.shown, "the rates row shows in compact")
+    truthy(hud.shown.xpRate:find("XP/hr", 1, true), "XP/hr labelled")
+    truthy(hud.shown.walletRate:find("Wallet/hr", 1, true), "labelled wallet, never 'gold earned'")
+    truthy(not hud.shown.walletRate:lower():find("earned", 1, true) and not hud.shown.walletRate:lower():find("profit", 1, true))
+    -- Rate formatting.
+    equal(hud.FormatRate(1234567), "+123g")
+    equal(hud.FormatRate(43000), "+4g 30s")
+    equal(hud.FormatRate(50000), "+5g")
+    equal(hud.FormatRate(3500), "+35s")
+    equal(hud.FormatRate(-80), "-80c")
+    -- A wallet that has not moved gives no rate rather than "+0c".
+    env.money = env.money - 50000
+    env:dispatch("PLAYER_MONEY")
+    equal(select(2, hud.Rates(sessions.Current())), nil, "no Wallet/hr while the wallet is back where it started")
+    -- Minimal stays tiny: no boss frames, no rates.
+    hud:SetMode("minimized")
+    truthy(not hud.ratesRow.shown and not hud.bossRow.shown, "minimal shows only the clock")
+    hud:SetMode("compact")
+    -- Boss frames: a socket per boss ahead, no names invented.
+    local tooltip = _G.GameTooltip
+    local lines = {}
+    tooltip.SetOwner = function() end
+    tooltip.ClearLines = function() lines = {} end
+    tooltip.AddLine = function(_, text) table.insert(lines, text) end
+    hud.circles["pending:1"].frame:GetScript("OnEnter")()
+    equal(lines[1], "Boss ahead", "an unknown boss is not named")
 end
 
 print("ui overhaul tests passed")

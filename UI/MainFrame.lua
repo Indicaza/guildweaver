@@ -4,10 +4,11 @@ local _, GW = ...
 --   Overview     what each module is doing, one card each
 --   Dungeons     the open run and its timer, recent runs, objectives
 --   Farming      the timed farming run, this session's fishing
---   Guild Quests the quest log (QuestLog.lua)
---   Sync & Data  what is collected, when it reaches the bridge, Sync now,
---                and an Advanced section for diagnostics
+--   Sync & Data  what is waiting for the bridge, Sync now, and an Advanced
+--                section for diagnostics
 --   Settings     the minimap button, the dungeon HUD, the window
+-- Guild Quests (QuestLog.lua) is built but not shown while QUESTS_ENABLED
+-- is false; the quest system itself keeps running.
 -- Built on first open, not at login. While open it updates live numbers
 -- once a second; closed, it does nothing at all.
 GW.MainFrame = GW.MainFrame or {}
@@ -21,15 +22,30 @@ local HEADER = 44
 local SIDEBAR = 168
 local PAD = 20
 local CONTENT_WIDTH = WIDTH - SIDEBAR - PAD * 2
+-- Every dashboard button is this tall; widths come in two sizes.
+local BUTTON_HEIGHT = 22
+local BUTTON_WIDE, BUTTON_NARROW = 124, 88
+local DOT = "\194\183"
+
+-- The first guild-facing release leaves Guild Quests out of the window.
+Main.QUESTS_ENABLED = false
 
 local NAV = {
     { key = "overview", label = "Overview" },
     { key = "dungeon", label = "Dungeons" },
     { key = "farming", label = "Farming" },
-    { key = "quests", label = "Guild Quests" },
+    { key = "quests", label = "Guild Quests", enabled = function() return Main.QUESTS_ENABLED end },
     { key = "sync", label = "Sync & Data" },
 }
-Main.NAV = NAV
+
+local function visibleNav()
+    local list = {}
+    for _, entry in ipairs(NAV) do
+        if not entry.enabled or entry.enabled() then table.insert(list, entry) end
+    end
+    return list
+end
+Main.NAV = visibleNav()
 
 local Views = {}
 Main.Views = Views
@@ -51,23 +67,32 @@ local function clockTime(timestamp)
     return ok and text or nil
 end
 
-local function dayTime(timestamp)
+local function shortDate(timestamp)
     timestamp = tonumber(timestamp)
-    if not timestamp or type(Globals.date) ~= "function" then return nil end
-    local ok, text = pcall(Globals.date, "%b %d, %H:%M", timestamp)
+    if not timestamp or timestamp <= 0 or type(Globals.date) ~= "function" then return nil end
+    local ok, text = pcall(Globals.date, "%b %d", timestamp)
     return ok and text or nil
 end
 
--- A page title and a one-line explanation at the top of a view.
+local function stateColor(state)
+    return state == "paused" and "warn" or (state == "ready" and "textMuted" or (state == "cleared" and "gold" or "text"))
+end
+
+-- A page title, and an optional one-line note under it. Returns the y
+-- offset where the view's content starts.
 local function pageHeader(view, title, subtitle)
-    view.title = UI.Text(view, "title", "goldBright")
+    view.title = UI.Text(view, "pageTitle", "goldBright")
     view.title:SetPoint("TOPLEFT", view, "TOPLEFT", 0, 0)
     view.title:SetText(title)
+    if not subtitle then
+        return -34
+    end
     view.subtitle = UI.Text(view, "label", "textMuted")
-    view.subtitle:SetPoint("TOPLEFT", view.title, "BOTTOMLEFT", 0, -5)
+    view.subtitle:SetPoint("TOPLEFT", view.title, "BOTTOMLEFT", 0, -6)
     view.subtitle:SetPoint("RIGHT", view, "RIGHT", 0, 0)
     pcall(view.subtitle.SetWordWrap, view.subtitle, false)
     view.subtitle:SetText(subtitle)
+    return -52
 end
 
 local function paragraph(parent, role, color, width)
@@ -96,8 +121,29 @@ end
 
 local function farmingLabel()
     local context = GW.FarmingSessions.Context()
-    return context and context.mode == "manual" and "Stop & save run" or "Start timed run"
+    return context and context.mode == "manual" and "Stop & save" or "Start timed run"
 end
+
+local function gathers(count)
+    return count .. (count == 1 and " gather" or " gathers")
+end
+
+-- Recent runs ------------------------------------------------------------------------
+
+-- How a finished run ended, in a word, and its colour.
+local function outcome(entry)
+    local status = entry.status
+    if status == "completed" then
+        if entry.completionBasis == "manual" then return "Finished", "text" end
+        return "Cleared", "good"
+    elseif status == "abandoned" then
+        return "Left early", "textFaint"
+    elseif status == "interrupted" then
+        return "Interrupted", "textFaint"
+    end
+    return tostring(status or ""), "textFaint"
+end
+Main.Outcome = outcome
 
 -- Overview ---------------------------------------------------------------------------
 
@@ -107,105 +153,114 @@ local function dungeonSummary()
         local state = hud().DisplayState(run)
         local detail = hud().StateText(run)
         if run.bossesTotal or (run.bossesDefeated or 0) > 0 then
-            detail = "Bosses " .. run.bossesDefeated .. (run.bossesTotal and ("/" .. run.bossesTotal) or "") .. "  " .. Theme.Hex("textFaint") .. "\194\183|r  " .. detail
+            detail = "Bosses " .. run.bossesDefeated .. (run.bossesTotal and ("/" .. run.bossesTotal) or "") .. "  " .. Theme.Colorize(DOT, "textFaint") .. "  " .. detail
         end
         return run.name, hud().ClockText(run), state, detail
     end
     local last = sessions().History()[1]
     if last then
-        return "No run open", nil, nil, "Last: " .. tostring(last.name or "Instance") .. ", " .. duration(last.timerSeconds or last.durationSeconds) .. ", " .. tostring(last.status)
+        local word = outcome(last)
+        return "No run open", nil, nil, "Last: " .. tostring(last.name or "Instance") .. "  " .. Theme.Colorize(DOT, "textFaint") .. "  "
+            .. duration(last.timerSeconds or last.durationSeconds) .. "  " .. Theme.Colorize(DOT, "textFaint") .. "  " .. word
     end
     return "No run open", nil, nil, "Tracking starts when you enter a dungeon or raid."
-end
-
-local function questCounts()
-    local quests = GW.Quests
-    local available, mine = #quests.GetQuests("available"), #quests.GetQuests("my")
-    local _, source = quests.GetSource()
-    return available, mine, source
 end
 
 Views.overview = {
     build = function(view)
         local ok, name = pcall(Globals.UnitName, "player")
         name = ok and type(name) == "string" and name or nil
-        pageHeader(view, name and ("Welcome back, " .. name) or "Welcome back",
-            "Guildweaver records your play in the background and keeps your guild's records current.")
-        local cardWidth, cardHeight = (CONTENT_WIDTH - 12) / 2, 132
-        local function card(index, key, heading)
+        local top = pageHeader(view, name and ("Welcome back, " .. name) or "Welcome back")
+        local cardWidth, cardHeight = (CONTENT_WIDTH - 12) / 2, 128
+        view.cards = {}
+        local function card(key, heading, width, height)
             local frame = UI.Card(view, function() Main:Select(key) end)
-            frame:SetSize(cardWidth, cardHeight)
-            frame:SetPoint("TOPLEFT", view, "TOPLEFT", ((index - 1) % 2) * (cardWidth + 12), -56 - math.floor((index - 1) / 2) * (cardHeight + 12))
+            frame:SetSize(width, height)
             frame.heading = UI.Text(frame, "heading", "gold")
-            frame.heading:SetPoint("TOPLEFT", frame, "TOPLEFT", 14, -14)
+            frame.heading:SetPoint("TOPLEFT", frame, "TOPLEFT", 16, -14)
             frame.heading:SetText(string.upper(heading))
             frame.more = UI.Text(frame, "small", "textFaint", "RIGHT")
-            frame.more:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -14, -14)
+            frame.more:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -16, -14)
             frame.more:SetText("Open \226\128\186")
             frame.main = UI.Text(frame, "title", "text")
             frame.main:SetPoint("TOPLEFT", frame.heading, "BOTTOMLEFT", 0, -14)
-            frame.main:SetPoint("RIGHT", frame, "RIGHT", -14, 0)
+            frame.main:SetPoint("RIGHT", frame, "RIGHT", -16, 0)
             pcall(frame.main.SetWordWrap, frame.main, false)
             frame.value = UI.Text(frame, "clockMid", "text", "RIGHT")
-            frame.value:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -14, -38)
-            frame.detail = paragraph(frame, "small", "textMuted", cardWidth - 28)
+            frame.value:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -16, -38)
+            frame.detail = UI.Text(frame, "small", "textMuted")
             frame.detail:SetPoint("TOPLEFT", frame.main, "BOTTOMLEFT", 0, -8)
+            frame.detail:SetPoint("RIGHT", frame, "RIGHT", -16, 0)
+            pcall(frame.detail.SetWordWrap, frame.detail, false)
             view.cards[key] = frame
             return frame
         end
-        view.cards = {}
-        card(1, "dungeon", "Dungeons")
-        local farming = card(2, "farming", "Farming")
-        farming.button = UI.Button(farming, farmingLabel(), { width = 128, height = 22, variant = "primary",
+        local dungeon = card("dungeon", "Dungeons", cardWidth, cardHeight)
+        dungeon:SetPoint("TOPLEFT", view, "TOPLEFT", 0, top)
+        local farming = card("farming", "Farming", cardWidth, cardHeight)
+        farming:SetPoint("TOPLEFT", dungeon, "TOPRIGHT", 12, 0)
+        farming.button = UI.Button(farming, farmingLabel(), { width = BUTTON_WIDE, height = BUTTON_HEIGHT, variant = "primary",
             onClick = function() Main:ToggleFarming() end })
-        farming.button:SetPoint("BOTTOMLEFT", farming, "BOTTOMLEFT", 14, 14)
-        card(3, "quests", "Guild Quests")
-        local sync = card(4, "sync", "Sync & Data")
-        -- A status light before "Collecting".
+        farming.button:SetPoint("BOTTOMLEFT", farming, "BOTTOMLEFT", 16, 14)
+        -- Sync & Data: one line across the bottom of the overview.
+        local sync = card("sync", "Sync & Data", CONTENT_WIDTH, 74)
+        sync:SetPoint("TOPLEFT", dungeon, "BOTTOMLEFT", 0, -12)
         sync.main:ClearAllPoints()
-        sync.main:SetPoint("TOPLEFT", sync.heading, "BOTTOMLEFT", 15, -14)
+        sync.main:SetPoint("TOPLEFT", sync.heading, "BOTTOMLEFT", 15, -12)
         sync.dot = UI.Dot(sync, 8)
         sync.dot:SetPoint("RIGHT", sync.main, "LEFT", -7, 0)
         sync.dot:SetStatus("good")
+        sync.detail:ClearAllPoints()
+        sync.detail:SetPoint("LEFT", sync.main, "RIGHT", 14, -1)
+        sync.detail:SetPoint("RIGHT", sync, "RIGHT", -16, 0)
+        if Main.QUESTS_ENABLED then
+            local quests = card("quests", "Guild Quests", CONTENT_WIDTH, 74)
+            quests:SetPoint("TOPLEFT", sync, "BOTTOMLEFT", 0, -12)
+        end
     end,
     refresh = function(view)
         local cards = view.cards
         local title, clock, state, detail = dungeonSummary()
         UI.SetText(cards.dungeon.main, title)
         UI.SetText(cards.dungeon.value, clock or "")
-        Theme.Tint(cards.dungeon.value, state == "paused" and "warn" or (state == "ready" and "textMuted" or (state == "cleared" and "gold" or "text")))
+        Theme.Tint(cards.dungeon.value, stateColor(state))
         UI.SetText(cards.dungeon.detail, detail)
 
         local status = GW.FarmingSessions.Status()
         local measuring = status and status.mode == "manual"
-        UI.SetText(cards.farming.main, measuring and "Timing a run" or "Automatic estimates")
+        UI.SetText(cards.farming.main, measuring and "Timing a run" or "Not timing")
         UI.SetText(cards.farming.value, measuring and duration(status.durationSeconds) or "")
-        UI.SetText(cards.farming.detail, measuring and (status.gatheringCount .. " gathers so far.")
-            or (status and (status.gatheringCount .. " gathers in the current estimate.") or "Time a run yourself for exact hours."))
+        UI.SetText(cards.farming.detail, (status and status.gatheringCount > 0) and (gathers(status.gatheringCount) .. (measuring and " so far" or " in the current estimate"))
+            or (measuring and "Gather something to count it." or "Time a run for exact hours."))
         cards.farming.button:SetLabel(farmingLabel())
         cards.farming.button:SetVariant(measuring and "secondary" or "primary")
 
-        local available, mine, source = questCounts()
-        UI.SetText(cards.quests.main, available .. " available  " .. Theme.Hex("textFaint") .. "\194\183|r  " .. mine .. " yours")
-        UI.SetText(cards.quests.detail, source == "live" and "Synced with your guild." or "Preview data until your guild's quests sync.")
-
         UI.SetText(cards.sync.main, "Collecting")
-        UI.SetText(cards.sync.detail, "Your data reaches the bridge when WoW saves: on /reload or logout.")
+        local waiting = GW.Store.GetTelemetryStatus().count
+        UI.SetText(cards.sync.detail, waiting == 0 and "Everything has reached the bridge."
+            or (waiting .. (waiting == 1 and " update goes" or " updates go") .. " out on your next /reload or logout."))
+    end,
+    tick = function(view)
+        local run = sessions().Current()
+        if run then UI.SetText(view.cards.dungeon.value, hud().ClockText(run)) end
+        local status = GW.FarmingSessions.Status()
+        if status and status.mode == "manual" then UI.SetText(view.cards.farming.value, duration(status.durationSeconds)) end
     end,
 }
-Views.overview.tick = Views.overview.refresh
 
 -- Dungeons ---------------------------------------------------------------------------
 
-local MAX_RECENT = 6
+local MAX_RECENT = 5
 local MAX_OBJECTIVE_ROWS = 6
+local RECENT_ROW = 32
+local OBJECTIVE_ROW = 22
 
 Views.dungeon = {
     build = function(view)
-        pageHeader(view, "Dungeons", "Runs are tracked automatically in dungeons and raids. The timer starts on your first pull.")
+        local top = pageHeader(view, "Dungeons", "Tracked automatically in dungeons and raids. The timer starts on your first pull.")
         local run = UI.Card(view)
-        run:SetPoint("TOPLEFT", view, "TOPLEFT", 0, -54)
-        run:SetSize(CONTENT_WIDTH, 128)
+        run:SetPoint("TOPLEFT", view, "TOPLEFT", 0, top)
+        run:SetSize(CONTENT_WIDTH, 116)
         view.runCard = run
         run.name = UI.Text(run, "title", "gold")
         run.name:SetPoint("TOPLEFT", run, "TOPLEFT", 16, -14)
@@ -215,23 +270,23 @@ Views.dungeon = {
         run.clock:SetPoint("TOPLEFT", run.name, "BOTTOMLEFT", 0, -10)
         run.state = UI.Text(run, "label", "textMuted")
         run.state:SetPoint("LEFT", run.clock, "RIGHT", 12, -2)
-        run.detail = UI.Text(run, "label", "text")
-        run.detail:SetPoint("TOPLEFT", run.clock, "BOTTOMLEFT", 0, -8)
-        run.detail:SetPoint("RIGHT", run, "RIGHT", -16, 0)
+        run.detail = UI.Text(run, "label", "textMuted")
+        run.detail:SetPoint("BOTTOMLEFT", run, "BOTTOMLEFT", 16, 14)
+        run.detail:SetPoint("RIGHT", run, "RIGHT", -(BUTTON_NARROW + 32), 0)
         pcall(run.detail.SetWordWrap, run.detail, false)
-        run.timer = UI.Button(run, "Start", { width = 84, height = 24, variant = "primary", onClick = function()
+        run.timer = UI.Button(run, "Start", { width = BUTTON_NARROW, height = BUTTON_HEIGHT, variant = "primary", onClick = function()
             sessions().ToggleTimer()
             Main:RefreshView()
         end })
-        run.timer:SetPoint("TOPRIGHT", run, "TOPRIGHT", -16, -16)
-        run.split = UI.Button(run, "Split", { width = 84, height = 24, tooltip = "Split",
+        run.timer:SetPoint("TOPRIGHT", run, "TOPRIGHT", -16, -14)
+        run.split = UI.Button(run, "Split", { width = BUTTON_NARROW, height = BUTTON_HEIGHT, tooltip = "Split",
             tooltipLines = { "Marks a checkpoint now, named after your target when it is an NPC." },
             onClick = function()
                 sessions().Split()
                 Main:RefreshView()
             end })
         run.split:SetPoint("TOPRIGHT", run.timer, "BOTTOMRIGHT", 0, -6)
-        run.finish = UI.ConfirmButton(run, "End run", "Click to end", { width = 84, height = 24,
+        run.finish = UI.ConfirmButton(run, "End run", "Click to end", { width = BUTTON_NARROW, height = BUTTON_HEIGHT,
             tooltip = "End run", tooltipLines = { "Saves the run as completed and closes it. Pause only stops the clock." },
             onClick = function()
                 if sessions().Finish() then
@@ -240,76 +295,92 @@ Views.dungeon = {
                 Main:RefreshView()
             end })
         run.finish:SetPoint("TOPRIGHT", run.split, "BOTTOMRIGHT", 0, -6)
-        run.hud = UI.Button(run, "Show HUD", { width = 96, height = 24, variant = "ghost", onClick = function()
+        run.hud = UI.Button(run, "Show HUD", { width = BUTTON_NARROW, height = BUTTON_HEIGHT, variant = "ghost", onClick = function()
             local tracker = hud()
             if tracker.IsEnabled() and not tracker.IsHiddenForRun() then tracker:SetEnabled(false) else tracker:ShowNow() end
             Main:RefreshView()
         end })
-        run.hud:SetPoint("RIGHT", run.timer, "LEFT", -8, 0)
 
         -- Recent runs and objectives, side by side.
-        local columnWidth = (CONTENT_WIDTH - 20) / 2
+        local columnWidth = (CONTENT_WIDTH - 24) / 2
         local recent = UI.SectionHeader(view, "Recent runs")
         recent:SetPoint("TOPLEFT", run, "BOTTOMLEFT", 0, -18)
         recent:SetWidth(columnWidth)
         view.recentRows = {}
         for index = 1, MAX_RECENT do
             local line = UI.CreateFrame("Frame", view)
-            line:SetSize(columnWidth, 20)
-            line:SetPoint("TOPLEFT", recent, "BOTTOMLEFT", 0, -10 - (index - 1) * 21)
+            line:SetSize(columnWidth, RECENT_ROW - 2)
+            line:SetPoint("TOPLEFT", recent, "BOTTOMLEFT", 0, -8 - (index - 1) * RECENT_ROW)
             line.name = UI.Text(line, "label", "text")
-            line.name:SetPoint("LEFT", line, "LEFT", 0, 0)
-            line.name:SetPoint("RIGHT", line, "RIGHT", -96, 0)
+            line.name:SetPoint("TOPLEFT", line, "TOPLEFT", 0, -1)
+            line.name:SetPoint("RIGHT", line, "RIGHT", -76, 0)
             pcall(line.name.SetWordWrap, line.name, false)
-            line.value = UI.Text(line, "small", "textMuted", "RIGHT")
-            line.value:SetPoint("RIGHT", line, "RIGHT", 0, 0)
+            line.when = UI.Text(line, "small", "textFaint")
+            line.when:SetPoint("TOPLEFT", line.name, "BOTTOMLEFT", 0, -2)
+            line.time = UI.Text(line, "label", "text", "RIGHT")
+            line.time:SetPoint("TOPRIGHT", line, "TOPRIGHT", 0, -1)
+            line.outcome = UI.Text(line, "small", "textFaint", "RIGHT")
+            line.outcome:SetPoint("TOPRIGHT", line.time, "BOTTOMRIGHT", 0, -2)
             view.recentRows[index] = line
         end
         view.recentEmpty = UI.Text(view, "label", "textFaint")
-        view.recentEmpty:SetPoint("TOPLEFT", recent, "BOTTOMLEFT", 0, -12)
-        view.recentEmpty:SetText("Finished runs will appear here.")
+        view.recentEmpty:SetPoint("TOPLEFT", recent, "BOTTOMLEFT", 0, -10)
+        view.recentEmpty:SetText("No finished runs yet.")
 
         local objectives = UI.SectionHeader(view, "Objectives")
-        objectives:SetPoint("TOPLEFT", run, "BOTTOMLEFT", columnWidth + 20, -18)
+        objectives:SetPoint("TOPLEFT", run, "BOTTOMLEFT", columnWidth + 24, -18)
         objectives:SetWidth(columnWidth)
+        view.objectivesHeader = objectives
         view.objectiveRows = {}
         for index = 1, MAX_OBJECTIVE_ROWS do
             local line = UI.CreateFrame("Button", view)
-            line:SetSize(columnWidth, 20)
-            line:SetPoint("TOPLEFT", objectives, "BOTTOMLEFT", 0, -10 - (index - 1) * 21)
+            line:SetSize(columnWidth, OBJECTIVE_ROW - 2)
+            line:SetPoint("TOPLEFT", objectives, "BOTTOMLEFT", 0, -8 - (index - 1) * OBJECTIVE_ROW)
+            -- A small square box: empty while open, gold when done.
+            line.box = UI.CreateFrame("Frame", line)
+            line.box:SetSize(10, 10)
+            line.box:SetPoint("LEFT", line, "LEFT", 1, 0)
+            Theme.Skin(line.box, "bgInset", "borderStrong")
             line.text = UI.Text(line, "label", "text")
-            line.text:SetPoint("LEFT", line, "LEFT", 0, 0)
-            line.text:SetPoint("RIGHT", line, "RIGHT", -24, 0)
+            line.text:SetPoint("LEFT", line.box, "RIGHT", 8, 0)
+            line.text:SetPoint("RIGHT", line, "RIGHT", -22, 0)
             pcall(line.text.SetWordWrap, line.text, false)
             line.remove = UI.IconButton(line, "\195\151", { size = 18, tooltip = "Remove", onClick = function()
                 GW.DungeonObjectives.Remove(line.index)
                 Main:RefreshView()
             end })
             line.remove:SetPoint("RIGHT", line, "RIGHT", 0, 0)
+            line.index = 0
             pcall(line.RegisterForClicks, line, "LeftButtonUp")
             line:SetScript("OnClick", function(self)
                 local objective = GW.DungeonObjectives.List()[self.index]
                 if objective then GW.DungeonObjectives.SetDone(self.index, not objective.done) end
                 Main:RefreshView()
             end)
-            line:SetScript("OnEnter", function(self) UI.ShowTooltip(self, "Objective", { "Click to mark done or open again." }) end)
+            line:SetScript("OnEnter", function(self)
+                UI.ShowTooltip(self, "Objective", { self.boss and "Completes when the client reports this boss's kill. Click to tick it yourself."
+                    or "Click to tick it off or open it again." })
+            end)
             line:SetScript("OnLeave", UI.HideTooltip)
             view.objectiveRows[index] = line
         end
-        view.objectiveInput = UI.Input(view, columnWidth - 52, function(box, text)
-            local added = GW.DungeonObjectives.Add(text)
-            if added then box:SetText("") end
-            box:ClearFocus()
-            Main:RefreshView()
-        end)
-        view.objectiveAdd = UI.Button(view, "Add", { width = 46, height = 22, onClick = function()
-            local box = view.objectiveInput
+        local function add(box)
             local added = GW.DungeonObjectives.Add(box:GetText())
             if added then box:SetText("") end
             box:ClearFocus()
             Main:RefreshView()
-        end })
-        view.objectivesHeader = objectives
+        end
+        view.objectiveInput = UI.Input(view, columnWidth - BUTTON_NARROW / 2 - 14, function(box) add(box) end)
+        view.objectivePlaceholder = UI.Text(view.objectiveInput, "label", "textFaint")
+        view.objectivePlaceholder:SetPoint("LEFT", view.objectiveInput, "LEFT", 7, 0)
+        view.objectivePlaceholder:SetText("Add an objective")
+        view.objectiveInput:HookScript("OnEditFocusGained", function() view.objectivePlaceholder:Hide() end)
+        view.objectiveInput:HookScript("OnEditFocusLost", function(box)
+            local ok, text = pcall(box.GetText, box)
+            UI.SetShown(view.objectivePlaceholder, not ok or type(text) ~= "string" or text == "")
+        end)
+        view.objectiveAdd = UI.Button(view, "Add", { width = BUTTON_NARROW / 2 + 8, height = BUTTON_HEIGHT,
+            onClick = function() add(view.objectiveInput) end })
     end,
     refresh = function(view)
         local card = view.runCard
@@ -320,18 +391,19 @@ Views.dungeon = {
             UI.SetText(card.difficulty, run.difficultyName or "")
             UI.SetText(card.clock, tracker.ClockText(run))
             local state = tracker.DisplayState(run)
-            Theme.Tint(card.clock, state == "paused" and "warn" or (state == "ready" and "textMuted" or (state == "cleared" and "gold" or "text")))
+            Theme.Tint(card.clock, stateColor(state))
             UI.SetText(card.state, tracker.StateText(run))
+            -- Only numbers that mean something: no "Deaths 0".
             local parts = {}
             if run.bossesTotal or (run.bossesDefeated or 0) > 0 then
                 table.insert(parts, "Bosses " .. run.bossesDefeated .. (run.bossesTotal and ("/" .. run.bossesTotal) or ""))
             end
-            table.insert(parts, "Deaths " .. (run.deaths or 0))
-            if run.xpPerHour and not run.atLevelCap then table.insert(parts, tracker.Commas(run.xpPerHour) .. " XP/h") end
-            local wallet = tracker.FormatMoney(run.netCopper)
-            if wallet then table.insert(parts, "Wallet " .. wallet) end
-            if not run.inside then table.insert(parts, Theme.Colorize("outside: continues if you go back in", "textFaint")) end
-            UI.SetText(card.detail, table.concat(parts, "   "))
+            if (run.deaths or 0) > 0 then table.insert(parts, run.deaths .. (run.deaths == 1 and " death" or " deaths")) end
+            local xpRate, walletRate = tracker.Rates(run)
+            if xpRate then table.insert(parts, xpRate .. " XP/hr") end
+            if walletRate then table.insert(parts, walletRate .. " wallet/hr") end
+            if not run.inside then table.insert(parts, "outside: continues if you go back in") end
+            UI.SetText(card.detail, table.concat(parts, "  " .. Theme.Colorize(DOT, "textFaint") .. "  "))
             card.timer:SetLabel(tracker.TimerButtonText(run))
             card.timer:SetVariant(state == "running" and "secondary" or "primary")
             card.timer:Show()
@@ -342,7 +414,7 @@ Views.dungeon = {
             UI.SetText(card.difficulty, "")
             UI.SetText(card.clock, "")
             UI.SetText(card.state, "")
-            UI.SetText(card.detail, "Enter a dungeon or raid to start one. " .. Theme.Colorize("/gw dungeon new", "text") .. " starts over after a reset.")
+            UI.SetText(card.detail, "After a reset, " .. Theme.Colorize("/gw dungeon new", "text") .. " starts a fresh run.")
             card.timer:Hide()
             card.split:Hide()
             card.finish:Hide()
@@ -353,7 +425,7 @@ Views.dungeon = {
         if run then
             card.hud:SetPoint("RIGHT", card.timer, "LEFT", -8, 0)
         else
-            card.hud:SetPoint("TOPRIGHT", card, "TOPRIGHT", -16, -16)
+            card.hud:SetPoint("TOPRIGHT", card, "TOPRIGHT", -16, -14)
         end
 
         local history = sessions().History()
@@ -361,9 +433,17 @@ Views.dungeon = {
             local entry = history[index]
             if entry then
                 UI.SetText(line.name, tostring(entry.name or "Instance"))
-                local status = tostring(entry.status or "")
-                UI.SetText(line.value, duration(entry.timerSeconds or entry.durationSeconds) .. "  "
-                    .. Theme.Colorize(status, status == "completed" and "good" or "textFaint"))
+                local bosses = entry.bossesTotal and (entry.bossesDefeated or 0) .. "/" .. entry.bossesTotal .. " bosses"
+                    or ((entry.bossesDefeated or 0) > 0 and (entry.bossesDefeated .. " bosses") or nil)
+                local date = shortDate(entry.startedAt)
+                local meta = {}
+                if date then table.insert(meta, date) end
+                if bosses then table.insert(meta, bosses) end
+                UI.SetText(line.when, table.concat(meta, "  " .. DOT .. "  "))
+                UI.SetText(line.time, duration(entry.timerSeconds or entry.durationSeconds))
+                local word, color = outcome(entry)
+                UI.SetText(line.outcome, word)
+                Theme.Tint(line.outcome, color)
                 line:Show()
             else
                 line:Hide()
@@ -377,20 +457,22 @@ Views.dungeon = {
             local objective = list[index]
             if index <= count then
                 line.index = index
-                local mark = Theme.Colorize("\194\183", objective.done and "good" or "gold")
-                UI.SetText(line.text, mark .. "  " .. (objective.done and Theme.Colorize(objective.text, "textFaint") or objective.text)
-                    .. (objective.boss and Theme.Colorize("  boss", "textFaint") or ""))
+                line.boss = objective.boss ~= nil
+                Theme.SetBackground(line.box, objective.done and "gold" or "bgInset")
+                Theme.SetBorder(line.box, objective.done and "gold" or "borderStrong")
+                UI.SetText(line.text, objective.done and Theme.Colorize(objective.text, "textFaint") or tostring(objective.text))
                 line:Show()
             else
                 line:Hide()
             end
         end
+        local room = #list < GW.DungeonObjectives.MAX and count < MAX_OBJECTIVE_ROWS
         view.objectiveInput:ClearAllPoints()
-        view.objectiveInput:SetPoint("TOPLEFT", view.objectivesHeader, "BOTTOMLEFT", 0, -10 - count * 21)
+        view.objectiveInput:SetPoint("TOPLEFT", view.objectivesHeader, "BOTTOMLEFT", 0, -10 - count * OBJECTIVE_ROW)
         view.objectiveAdd:ClearAllPoints()
         view.objectiveAdd:SetPoint("LEFT", view.objectiveInput, "RIGHT", 6, 0)
-        UI.SetShown(view.objectiveInput, #list < GW.DungeonObjectives.MAX and count < MAX_OBJECTIVE_ROWS)
-        UI.SetShown(view.objectiveAdd, #list < GW.DungeonObjectives.MAX and count < MAX_OBJECTIVE_ROWS)
+        UI.SetShown(view.objectiveInput, room)
+        UI.SetShown(view.objectiveAdd, room)
     end,
     tick = function(view)
         local run = sessions().Current()
@@ -402,24 +484,23 @@ Views.dungeon = {
 
 Views.farming = {
     build = function(view)
-        pageHeader(view, "Farming", "Gathering is grouped into runs automatically. Time a run yourself for exact hours.")
+        local top = pageHeader(view, "Farming", "Gathering is grouped into runs automatically. Time a run for exact hours.")
         local card = UI.Card(view)
-        card:SetPoint("TOPLEFT", view, "TOPLEFT", 0, -54)
-        card:SetSize(CONTENT_WIDTH, 132)
+        card:SetPoint("TOPLEFT", view, "TOPLEFT", 0, top)
+        card:SetSize(CONTENT_WIDTH, 116)
         view.card = card
         card.state = UI.Text(card, "title", "gold")
         card.state:SetPoint("TOPLEFT", card, "TOPLEFT", 16, -14)
         card.clock = UI.Text(card, "clock", "text")
         card.clock:SetPoint("TOPLEFT", card.state, "BOTTOMLEFT", 0, -10)
         card.detail = UI.Text(card, "label", "textMuted")
-        card.detail:SetPoint("TOPLEFT", card.clock, "BOTTOMLEFT", 0, -8)
+        card.detail:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 16, 14)
         card.detail:SetPoint("RIGHT", card, "RIGHT", -16, 0)
-        card.button = UI.Button(card, farmingLabel(), { width = 140, height = 26, variant = "primary",
+        pcall(card.detail.SetWordWrap, card.detail, false)
+        card.button = UI.Button(card, farmingLabel(), { width = BUTTON_WIDE, height = BUTTON_HEIGHT, variant = "primary",
+            tooltip = "Timed run", tooltipLines = { "Travel, combat and waiting count; AFK time is noted apart. A /reload or logout ends the run." },
             onClick = function() Main:ToggleFarming() end })
-        card.button:SetPoint("TOPRIGHT", card, "TOPRIGHT", -16, -16)
-        card.note = paragraph(card, "small", "textFaint", CONTENT_WIDTH - 32)
-        card.note:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 16, 12)
-        card.note:SetText("Travel, combat and waiting count; AFK time is noted separately. A /reload or logout ends the run, so offline time never counts.")
+        card.button:SetPoint("TOPRIGHT", card, "TOPRIGHT", -16, -14)
 
         local fishing = UI.SectionHeader(view, "Fishing this session")
         fishing:SetPoint("TOPLEFT", card, "BOTTOMLEFT", 0, -20)
@@ -428,46 +509,51 @@ Views.farming = {
         local labels = { "Casts", "Catches", "From pools" }
         for index, label in ipairs(labels) do
             local stat = UI.Stat(view, label, 120)
-            stat:SetPoint("TOPLEFT", fishing, "BOTTOMLEFT", (index - 1) * 130, -12)
+            stat:SetPoint("TOPLEFT", fishing, "BOTTOMLEFT", (index - 1) * 132, -12)
             view.fishingStats[index] = stat
         end
         view.lastCatch = UI.Text(view, "label", "textMuted")
-        view.lastCatch:SetPoint("TOPLEFT", fishing, "BOTTOMLEFT", 0, -56)
+        view.lastCatch:SetPoint("TOPLEFT", fishing, "BOTTOMLEFT", 0, -58)
         view.lastCatch:SetPoint("RIGHT", view, "RIGHT", 0, 0)
         pcall(view.lastCatch.SetWordWrap, view.lastCatch, false)
-        view.syncNote = paragraph(view, "small", "textFaint")
-        view.syncNote:SetPoint("BOTTOMLEFT", view, "BOTTOMLEFT", 0, 4)
-        view.syncNote:SetText("Saved runs and catches reach the website after /reload or logout.")
+        view.fishingEmpty = UI.Text(view, "label", "textFaint")
+        view.fishingEmpty:SetPoint("TOPLEFT", fishing, "BOTTOMLEFT", 0, -10)
+        view.fishingEmpty:SetText("No fishing yet this session.")
     end,
     refresh = function(view)
         local card = view.card
         local status = GW.FarmingSessions.Status()
         local measuring = status and status.mode == "manual"
         UI.SetText(card.state, measuring and "Timing a run" or (status and "Estimating from your gathering" or "Not timing"))
-        UI.SetText(card.clock, measuring and duration(status.durationSeconds) or (status and duration(status.durationSeconds) or "0:00"))
+        -- No "0:00" when nothing is being timed.
+        UI.SetText(card.clock, status and duration(status.durationSeconds) or "")
         Theme.Tint(card.clock, measuring and "text" or "textMuted")
         local detail
         if status then
-            detail = status.gatheringCount .. (status.gatheringCount == 1 and " gather" or " gathers")
-                .. (status.afkSeconds and status.afkSeconds > 0 and ("   AFK " .. duration(status.afkSeconds)) or "")
-                .. (measuring and "" or "   (automatic: first to last harvest)")
+            local parts = { gathers(status.gatheringCount) }
+            if status.afkSeconds and status.afkSeconds > 0 then table.insert(parts, "AFK " .. duration(status.afkSeconds)) end
+            if not measuring then table.insert(parts, "estimated: first to last harvest") end
+            detail = table.concat(parts, "  " .. Theme.Colorize(DOT, "textFaint") .. "  ")
         else
-            detail = "Herbs, ore, skins and fish are grouped into runs automatically."
+            detail = "Herbs, ore, skins and fish are grouped into runs on their own."
         end
         UI.SetText(card.detail, detail)
         card.button:SetLabel(farmingLabel())
         card.button:SetVariant(measuring and "secondary" or "primary")
 
         local stats = GW.FishingCapture and GW.FishingCapture.Stats and GW.FishingCapture.Stats() or {}
+        local fished = (stats.casts or 0) > 0 or (stats.catches or 0) > 0
         view.fishingStats[1]:SetValue(tostring(stats.casts or 0))
         view.fishingStats[2]:SetValue(tostring(stats.catches or 0))
         view.fishingStats[3]:SetValue(tostring(stats.poolCatches or 0))
+        for _, stat in ipairs(view.fishingStats) do UI.SetShown(stat, fished) end
+        UI.SetShown(view.fishingEmpty, not fished)
         local last = stats.last
         if last then
             local place = tostring(last.zone or "unknown zone") .. (last.subzone and (" - " .. tostring(last.subzone)) or "")
             UI.SetText(view.lastCatch, "Last catch: " .. tostring(last.sourceName or "open water") .. ", " .. place)
         else
-            UI.SetText(view.lastCatch, (stats.casts or 0) > 0 and "" or "No fishing recorded this session.")
+            UI.SetText(view.lastCatch, "")
         end
     end,
     tick = function(view)
@@ -476,19 +562,20 @@ Views.farming = {
     end,
 }
 
--- Guild Quests -----------------------------------------------------------------------
+-- Guild Quests (hidden while QUESTS_ENABLED is false) ------------------------------
 
 Views.quests = {
     build = function(view)
-        pageHeader(view, "Guild Quests", "Quests your guild posts on its website. Join an objective to take it on.")
+        local top = pageHeader(view, "Guild Quests", "Quests your guild posts on its website. Join an objective to take it on.")
         local holder = UI.CreateFrame("Frame", view)
-        holder:SetPoint("TOPLEFT", view, "TOPLEFT", 0, -50)
+        holder:SetPoint("TOPLEFT", view, "TOPLEFT", 0, top + 2)
         holder:SetPoint("BOTTOMRIGHT", view, "BOTTOMRIGHT", 0, 0)
         GW.QuestLog:Initialize(holder)
     end,
     refresh = function()
         GW.QuestLog:Refresh()
     end,
+    enabled = function() return Main.QUESTS_ENABLED end,
 }
 
 -- Sync & Data ------------------------------------------------------------------------
@@ -505,10 +592,10 @@ local ADVANCED = {
 Views.sync = {
     build = function(view)
         view.showAdvanced = false
-        pageHeader(view, "Sync & Data", "Character, professions, inventory, dungeons, farming and market sightings are recorded as you play.")
+        local top = pageHeader(view, "Sync & Data")
         local card = UI.Card(view)
-        card:SetPoint("TOPLEFT", view, "TOPLEFT", 0, -54)
-        card:SetSize(CONTENT_WIDTH, 150)
+        card:SetPoint("TOPLEFT", view, "TOPLEFT", 0, top)
+        card:SetSize(CONTENT_WIDTH, 112)
         view.card = card
         card.dot = UI.Dot(card, 9)
         card.dot:SetPoint("TOPLEFT", card, "TOPLEFT", 16, -19)
@@ -517,14 +604,14 @@ Views.sync = {
         card.state:SetPoint("LEFT", card.dot, "RIGHT", 8, 0)
         card.state:SetText("Collecting automatically")
         card.lines = {}
-        for index = 1, 3 do
+        for index = 1, 2 do
             local line = UI.Text(card, "label", "textMuted")
             line:SetPoint("TOPLEFT", card, "TOPLEFT", 16, -42 - (index - 1) * 19)
-            line:SetPoint("RIGHT", card, "RIGHT", -160, 0)
+            line:SetPoint("RIGHT", card, "RIGHT", -(BUTTON_WIDE + 32), 0)
             pcall(line.SetWordWrap, line, false)
             card.lines[index] = line
         end
-        card.sync = UI.ConfirmButton(card, "Sync now", "Reload to sync", { width = 132, height = 26, variant = "primary",
+        card.sync = UI.ConfirmButton(card, "Sync now", "Reload to sync", { width = BUTTON_WIDE, height = BUTTON_HEIGHT, variant = "primary",
             tooltip = "Sync now", tooltipLines = { "Saves a checkpoint and reloads your interface so WoW writes it to disk for the bridge.",
                 "A timed farming run ends; an open dungeon run continues." },
             onClick = function()
@@ -536,45 +623,40 @@ Views.sync = {
                     GW.Print("Telemetry checkpoint unavailable.")
                 end
             end })
-        card.sync:SetPoint("TOPRIGHT", card, "TOPRIGHT", -16, -16)
-        card.note = paragraph(card, "small", "textFaint", CONTENT_WIDTH - 32)
+        card.sync:SetPoint("TOPRIGHT", card, "TOPRIGHT", -16, -14)
+        card.note = UI.Text(card, "small", "textFaint")
         card.note:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 16, 12)
-        card.note:SetText("WoW writes addon data to disk only on /reload or logout; the Guildweaver Bridge then sends it on its own. Sync now does that immediately by reloading your interface.")
+        card.note:SetText("WoW saves addon data on /reload or logout; the bridge sends it from there.")
 
         local advanced = UI.SectionHeader(view, "Advanced")
         advanced:SetPoint("TOPLEFT", card, "BOTTOMLEFT", 0, -20)
         advanced:SetWidth(CONTENT_WIDTH)
-        view.advancedToggle = UI.Button(view, "Show", { width = 60, height = 20, variant = "ghost", onClick = function()
+        view.advancedToggle = UI.Button(view, "Show", { width = BUTTON_NARROW / 2 + 16, height = BUTTON_HEIGHT, variant = "ghost", onClick = function()
             view.showAdvanced = not view.showAdvanced
             Main:RefreshView()
         end })
         view.advancedToggle:SetPoint("TOPRIGHT", card, "BOTTOMRIGHT", 0, -16)
         view.advancedNote = UI.Text(view, "small", "textFaint")
         view.advancedNote:SetPoint("TOPLEFT", advanced, "BOTTOMLEFT", 0, -10)
-        view.advancedNote:SetText("Diagnostics print to your chat window. Nothing here changes what is collected.")
+        view.advancedNote:SetText("Diagnostics print to chat. Nothing here changes what is collected.")
         view.advancedButtons = {}
         local buttonWidth = (CONTENT_WIDTH - 20) / 3
         for index, entry in ipairs(ADVANCED) do
-            local button = UI.Button(view, entry[1], { width = buttonWidth, height = 24, tooltip = entry[1], tooltipLines = { entry[3] },
+            local button = UI.Button(view, entry[1], { width = buttonWidth, height = BUTTON_HEIGHT, tooltip = entry[1], tooltipLines = { entry[3] },
                 onClick = function() Globals.SlashCmdList.GUILDWEAVER(entry[2]) end })
-            button:SetPoint("TOPLEFT", advanced, "BOTTOMLEFT", ((index - 1) % 3) * (buttonWidth + 10), -32 - math.floor((index - 1) / 3) * 30)
+            button:SetPoint("TOPLEFT", advanced, "BOTTOMLEFT", ((index - 1) % 3) * (buttonWidth + 10), -32 - math.floor((index - 1) / 3) * (BUTTON_HEIGHT + 8))
             view.advancedButtons[index] = button
         end
     end,
     refresh = function(view)
         local card = view.card
         local status = GW.Store.GetTelemetryStatus()
-        UI.SetText(card.lines[1], status.count == 0 and "Nothing waiting: the bridge has everything."
-            or (status.count .. (status.count == 1 and " update waits" or " updates wait") .. " for the next save"))
+        UI.SetText(card.lines[1], status.count == 0 and "Everything has reached the bridge."
+            or (status.count .. (status.count == 1 and " update waits" or " updates wait") .. " for the next save."))
         local _, startedAt = GW.Store.GetCaptureSession()
         local started = clockTime(startedAt)
-        UI.SetText(card.lines[2], started and ("Recording since " .. started .. " this session") or "Recording this session")
-        local snapshot = GW.Quests.GetSnapshot and GW.Quests.GetSnapshot() or nil
-        local _, source = GW.Quests.GetSource()
-        local updated = snapshot and dayTime(snapshot.updatedAt)
-        UI.SetText(card.lines[3], source == "live" and ("Guild quests last synced " .. (updated or "from the bridge")) or "Guild quests: not synced yet (preview data)")
-        local blocked = inCombat()
-        card.sync:SetEnabled(not blocked)
+        UI.SetText(card.lines[2], started and ("Recording since " .. started .. ".") or "Recording this session.")
+        card.sync:SetEnabled(not inCombat())
         view.advancedToggle:SetLabel(view.showAdvanced and "Hide" or "Show")
         UI.SetShown(view.advancedNote, view.showAdvanced)
         for _, button in ipairs(view.advancedButtons) do
@@ -590,7 +672,7 @@ local SCALE_CHOICES = { { 0.85, "S" }, { 1, "M" }, { 1.15, "L" }, { 1.3, "XL" } 
 
 Views.settings = {
     build = function(view)
-        pageHeader(view, "Settings", "Choose what Guildweaver shows. None of these settings stop data collection.")
+        local top = pageHeader(view, "Settings", "None of these settings stop data collection.")
         local columnWidth = (CONTENT_WIDTH - 28) / 2
         local tracker = hud()
         view.controls = {}
@@ -601,14 +683,14 @@ Views.settings = {
 
         -- Left column: general, then data collection.
         local general = UI.SectionHeader(view, "General")
-        general:SetPoint("TOPLEFT", view, "TOPLEFT", 0, -56)
+        general:SetPoint("TOPLEFT", view, "TOPLEFT", 0, top - 4)
         general:SetWidth(columnWidth)
         local minimap = add(UI.Toggle(view, "Minimap button", "Click to open, right-click for actions",
             function() return not Prefs.MinimapHidden() end,
             function(value) Prefs.SetMinimapHidden(not value) end, columnWidth))
         minimap:SetPoint("TOPLEFT", general, "BOTTOMLEFT", 0, -12)
         view.minimapToggle = minimap
-        local reset = UI.Button(view, "Reset window position", { width = 170, height = 22, onClick = function() Main:ResetPosition() end })
+        local reset = UI.Button(view, "Reset window position", { width = BUTTON_WIDE + 36, height = BUTTON_HEIGHT, onClick = function() Main:ResetPosition() end })
         reset:SetPoint("TOPLEFT", minimap, "BOTTOMLEFT", 0, -10)
 
         local data = UI.SectionHeader(view, "Data collection")
@@ -622,11 +704,11 @@ Views.settings = {
         always:SetText("Always on")
         local explain = paragraph(view, "small", "textMuted", columnWidth)
         explain:SetPoint("TOPLEFT", dot, "BOTTOMLEFT", 0, -10)
-        explain:SetText("Hiding the HUD or this window never pauses recording. Dungeon runs, farming and everything else are recorded either way, so your guild's records stay complete.")
+        explain:SetText("Hiding the HUD or this window never pauses recording, so your guild's records stay complete.")
 
         -- Right column: the dungeon HUD.
         local hudHeader = UI.SectionHeader(view, "Dungeon HUD")
-        hudHeader:SetPoint("TOPLEFT", view, "TOPLEFT", columnWidth + 28, -56)
+        hudHeader:SetPoint("TOPLEFT", view, "TOPLEFT", columnWidth + 28, top - 4)
         hudHeader:SetWidth(columnWidth)
         local enabled = add(UI.Toggle(view, "Show in dungeons", "Runs are recorded even when hidden",
             function() return tracker.IsEnabled() end,
@@ -645,22 +727,19 @@ Views.settings = {
         view.lockToggle = lock
         local mode = add(UI.SettingRow(view, "View", nil, UI.Segmented(view, MODE_CHOICES,
             function() return tracker.Mode() end,
-            function(value) tracker:SetMode(value) end, { segmentWidth = 58 }), columnWidth))
+            function(value) tracker:SetMode(value) end, { segmentWidth = 58, height = BUTTON_HEIGHT }), columnWidth))
         mode:SetPoint("TOPLEFT", lock, "BOTTOMLEFT", 0, -10)
         view.modeChoice = mode.control
         local scale = add(UI.SettingRow(view, "Size", nil, UI.Segmented(view, SCALE_CHOICES,
             function() return tracker.Scale() end,
-            function(value) tracker:SetScale(value) end, { segmentWidth = 36 }), columnWidth))
+            function(value) tracker:SetScale(value) end, { segmentWidth = 36, height = BUTTON_HEIGHT }), columnWidth))
         scale:SetPoint("TOPLEFT", mode, "BOTTOMLEFT", 0, -10)
         view.scaleChoice = scale.control
-        local resetHud = UI.Button(view, "Reset HUD position", { width = 150, height = 22, onClick = function()
+        local resetHud = UI.Button(view, "Reset HUD position", { width = BUTTON_WIDE + 16, height = BUTTON_HEIGHT, onClick = function()
             tracker:ResetPosition()
             Main:RefreshView()
         end })
         resetHud:SetPoint("TOPLEFT", scale, "BOTTOMLEFT", 0, -14)
-        local hint = UI.Text(view, "small", "textFaint")
-        hint:SetPoint("TOPLEFT", resetHud, "BOTTOMLEFT", 0, -10)
-        hint:SetText("Drag the HUD to move it; right-click it to change the view.")
     end,
     refresh = function(view)
         for _, control in ipairs(view.controls) do
@@ -732,7 +811,7 @@ function Main:Build()
     local version = UI.Text(frame.header, "small", "textFaint")
     version:SetPoint("LEFT", frame.title, "RIGHT", 8, -1)
     version:SetText("v" .. tostring(GW.version or ""))
-    self.settingsButton = UI.Button(frame.header, "Settings", { width = 76, height = 24, variant = "ghost",
+    self.settingsButton = UI.Button(frame.header, "Settings", { width = BUTTON_NARROW - 10, height = BUTTON_HEIGHT, variant = "ghost",
         onClick = function() Main:Select("settings") end })
     self.settingsButton:SetPoint("RIGHT", frame.closeButton, "LEFT", -6, 0)
 
@@ -740,16 +819,17 @@ function Main:Build()
     sidebar:SetPoint("TOPLEFT", frame, "TOPLEFT", 1, -(HEADER + 1))
     sidebar:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 1, 1)
     sidebar:SetWidth(SIDEBAR)
-    local sidebarBg = sidebar:CreateTexture(nil, "BACKGROUND")
+    local sidebarBg = sidebar:CreateTexture(nil, "BACKGROUND", nil, -7)
     sidebarBg:SetAllPoints(sidebar)
     Theme.Fill(sidebarBg, "bgInset")
+    Theme.Grain(sidebar, SIDEBAR, HEIGHT - HEADER, 0.05, 0)
     local divider = sidebar:CreateTexture(nil, "BORDER")
     divider:SetPoint("TOPRIGHT", sidebar, "TOPRIGHT", 0, 0)
     divider:SetPoint("BOTTOMRIGHT", sidebar, "BOTTOMRIGHT", 0, 0)
     divider:SetWidth(1)
     Theme.Fill(divider, "border")
     self.nav = {}
-    for index, entry in ipairs(NAV) do
+    for index, entry in ipairs(visibleNav()) do
         self.nav[entry.key] = navButton(sidebar, entry, index)
     end
     self.nav.settings = navButton(sidebar, { key = "settings", label = "Settings" }, 1)
@@ -781,6 +861,12 @@ function Main:Build()
     return frame
 end
 
+-- A view the window may show: hidden modules fall back to the overview.
+local function available(key)
+    local spec = Views[key]
+    return spec ~= nil and (not spec.enabled or spec.enabled())
+end
+
 function Main:View(key)
     local spec = Views[key]
     if not spec then return nil end
@@ -797,7 +883,7 @@ end
 
 -- Shows a view; the last one (except Settings) is remembered.
 function Main:Select(key)
-    if not Views[key] then key = "overview" end
+    if not available(key) then key = "overview" end
     self:Build()
     local view = self:View(key)
     if not view then return nil end
