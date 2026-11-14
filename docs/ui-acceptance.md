@@ -58,6 +58,17 @@ Enter any 5-player dungeon.
 - [ ] `/reload` inside the dungeon: same run, same mode, same position, same scale. `/reload` in combat: the HUD comes back collapsed and expands after combat.
 - [ ] End run (click twice) closes the run; it appears under Dashboard → Dungeons → Recent runs.
 
+## Boss tracking (Excavation Site: Wetlands, Blackfathom Deeps)
+
+Run each once and keep the chat lines from `/gw dungeon bosses` (copy them into the PR or an issue):
+
+- [ ] Right after entering: `/gw dungeon bosses`. Note the instance ID and difficulty, the lockout total, whether the lockout encounter list is available and what it names, and whether the Encounter Journal portrait path applies (do boss frames show real portraits before any pull?).
+- [ ] After each boss: `/gw dungeon bosses` again. Note each `boss_kill id=… name via …` line. Every boss should appear once even when both ENCOUNTER_END and BOSS_KILL fire (the duplicates count goes up instead).
+- [ ] Blackfathom Deeps: after Aku'mai dies the timer stops, the HUD says "Cleared · timer stopped", and diagnostics say "Final boss recognised: Aku'mai … by name only". Leaving ends the run as "Cleared (unverified)" in Recent runs. Send the Aku'mai encounter ID from the diagnostics so the registry can mark it observed (then it becomes a verified clear).
+- [ ] Excavation Site: Wetlands: note which boss died last and the encounter IDs of all four (3480 Saltspine and 3481 Shadetooth are known). Until the final boss is recorded in the registry the run completes only on a full clear or `/gw dungeon finish` ("Finished by you").
+- [ ] A dungeon not in the registry (e.g. The Stockade): still completes on a full clear as before.
+- [ ] Hover each boss frame: kills and the current fight show the boss name; bosses ahead show a name only if the client provided one, otherwise "Boss ahead". No question marks; no Lua errors (`/console scriptErrors 1`).
+
 ## Performance spot-check
 
 - [ ] `/gw perf` before and after a dungeon: no new collector shows large worst times; the HUD adds no visible hitching in combat.

@@ -130,12 +130,16 @@ end
 
 -- Recent runs ------------------------------------------------------------------------
 
--- How a finished run ended, in a word, and its colour.
+-- How a finished run ended, in a word or two, and its colour. Only boss
+-- evidence earns "Cleared"; the player's own word is labelled as such.
 local function outcome(entry)
-    local status = entry.status
+    local status, basis = entry.status, entry.completionBasis
     if status == "completed" then
-        if entry.completionBasis == "manual" then return "Finished", "text" end
-        return "Cleared", "good"
+        if basis == "lockout" or basis == "encounters" then return "Full clear", "good" end
+        if basis == "final_boss" then return "Cleared", "good" end
+        if basis == "final_boss_unconfirmed" then return "Cleared (unverified)", "gold" end
+        if basis == "manual" then return "Finished by you", "text" end
+        return "Completed", "text"
     elseif status == "abandoned" then
         return "Left early", "textFaint"
     elseif status == "interrupted" then
@@ -144,6 +148,22 @@ local function outcome(entry)
     return tostring(status or ""), "textFaint"
 end
 Main.Outcome = outcome
+
+-- Runs worth a line in the quick list: not the zero-length interrupted or
+-- abandoned stubs a disconnect leaves. History itself keeps them.
+local function listedRuns(history, max)
+    local list = {}
+    for _, entry in ipairs(history) do
+        local empty = (entry.status == "interrupted" or entry.status == "abandoned")
+            and (tonumber(entry.timerSeconds) or 0) == 0 and (tonumber(entry.bossesDefeated) or 0) == 0
+        if not empty then
+            table.insert(list, entry)
+            if #list >= max then break end
+        end
+    end
+    return list
+end
+Main.ListedRuns = listedRuns
 
 -- Overview ---------------------------------------------------------------------------
 
@@ -157,7 +177,7 @@ local function dungeonSummary()
         end
         return run.name, hud().ClockText(run), state, detail
     end
-    local last = sessions().History()[1]
+    local last = listedRuns(sessions().History(), 1)[1]
     if last then
         local word = outcome(last)
         return "No run open", nil, nil, "Last: " .. tostring(last.name or "Instance") .. "  " .. Theme.Colorize(DOT, "textFaint") .. "  "
@@ -260,19 +280,24 @@ Views.dungeon = {
         local top = pageHeader(view, "Dungeons", "Tracked automatically in dungeons and raids. The timer starts on your first pull.")
         local run = UI.Card(view)
         run:SetPoint("TOPLEFT", view, "TOPLEFT", 0, top)
-        run:SetSize(CONTENT_WIDTH, 116)
+        run:SetSize(CONTENT_WIDTH, 96)
         view.runCard = run
+        -- The buttons take a 2x2 block on the right; the text keeps clear of it.
+        local textWidth = CONTENT_WIDTH - 32 - (BUTTON_NARROW * 2 + 6) - 16
         run.name = UI.Text(run, "title", "gold")
-        run.name:SetPoint("TOPLEFT", run, "TOPLEFT", 16, -14)
-        run.difficulty = UI.Text(run, "small", "textFaint")
-        run.difficulty:SetPoint("LEFT", run.name, "RIGHT", 8, -1)
+        run.name:SetPoint("TOPLEFT", run, "TOPLEFT", 16, -13)
+        run.name:SetWidth(textWidth)
+        pcall(run.name.SetWordWrap, run.name, false)
+        run.difficulty = run.name
         run.clock = UI.Text(run, "clock", "text")
-        run.clock:SetPoint("TOPLEFT", run.name, "BOTTOMLEFT", 0, -10)
+        run.clock:SetPoint("TOPLEFT", run, "TOPLEFT", 16, -34)
         run.state = UI.Text(run, "label", "textMuted")
         run.state:SetPoint("LEFT", run.clock, "RIGHT", 12, -2)
+        run.state:SetPoint("RIGHT", run, "LEFT", 16 + textWidth, 0)
+        pcall(run.state.SetWordWrap, run.state, false)
         run.detail = UI.Text(run, "label", "textMuted")
-        run.detail:SetPoint("BOTTOMLEFT", run, "BOTTOMLEFT", 16, 14)
-        run.detail:SetPoint("RIGHT", run, "RIGHT", -(BUTTON_NARROW + 32), 0)
+        run.detail:SetPoint("BOTTOMLEFT", run, "BOTTOMLEFT", 16, 12)
+        run.detail:SetWidth(textWidth)
         pcall(run.detail.SetWordWrap, run.detail, false)
         run.timer = UI.Button(run, "Start", { width = BUTTON_NARROW, height = BUTTON_HEIGHT, variant = "primary", onClick = function()
             sessions().ToggleTimer()
@@ -285,7 +310,7 @@ Views.dungeon = {
                 sessions().Split()
                 Main:RefreshView()
             end })
-        run.split:SetPoint("TOPRIGHT", run.timer, "BOTTOMRIGHT", 0, -6)
+        run.split:SetPoint("RIGHT", run.timer, "LEFT", -6, 0)
         run.finish = UI.ConfirmButton(run, "End run", "Click to end", { width = BUTTON_NARROW, height = BUTTON_HEIGHT,
             tooltip = "End run", tooltipLines = { "Saves the run as completed and closes it. Pause only stops the clock." },
             onClick = function()
@@ -294,7 +319,7 @@ Views.dungeon = {
                 end
                 Main:RefreshView()
             end })
-        run.finish:SetPoint("TOPRIGHT", run.split, "BOTTOMRIGHT", 0, -6)
+        run.finish:SetPoint("TOPRIGHT", run.timer, "BOTTOMRIGHT", 0, -6)
         run.hud = UI.Button(run, "Show HUD", { width = BUTTON_NARROW, height = BUTTON_HEIGHT, variant = "ghost", onClick = function()
             local tracker = hud()
             if tracker.IsEnabled() and not tracker.IsHiddenForRun() then tracker:SetEnabled(false) else tracker:ShowNow() end
@@ -387,8 +412,7 @@ Views.dungeon = {
         local run = sessions().Current()
         local tracker = hud()
         if run then
-            UI.SetText(card.name, run.name or "Instance")
-            UI.SetText(card.difficulty, run.difficultyName or "")
+            UI.SetText(card.name, tostring(run.name or "Instance") .. (run.difficultyName and ("  " .. Theme.Colorize(run.difficultyName, "textFaint")) or ""))
             UI.SetText(card.clock, tracker.ClockText(run))
             local state = tracker.DisplayState(run)
             Theme.Tint(card.clock, stateColor(state))
@@ -411,7 +435,6 @@ Views.dungeon = {
             card.finish:Show()
         else
             UI.SetText(card.name, "No run open")
-            UI.SetText(card.difficulty, "")
             UI.SetText(card.clock, "")
             UI.SetText(card.state, "")
             UI.SetText(card.detail, "After a reset, " .. Theme.Colorize("/gw dungeon new", "text") .. " starts a fresh run.")
@@ -423,12 +446,12 @@ Views.dungeon = {
         card.hud:SetLabel(shown and "Hide HUD" or "Show HUD")
         card.hud:ClearAllPoints()
         if run then
-            card.hud:SetPoint("RIGHT", card.timer, "LEFT", -8, 0)
+            card.hud:SetPoint("RIGHT", card.finish, "LEFT", -6, 0)
         else
             card.hud:SetPoint("TOPRIGHT", card, "TOPRIGHT", -16, -14)
         end
 
-        local history = sessions().History()
+        local history = listedRuns(sessions().History(), MAX_RECENT)
         for index, line in ipairs(view.recentRows) do
             local entry = history[index]
             if entry then
@@ -811,9 +834,6 @@ function Main:Build()
     local version = UI.Text(frame.header, "small", "textFaint")
     version:SetPoint("LEFT", frame.title, "RIGHT", 8, -1)
     version:SetText("v" .. tostring(GW.version or ""))
-    self.settingsButton = UI.Button(frame.header, "Settings", { width = BUTTON_NARROW - 10, height = BUTTON_HEIGHT, variant = "ghost",
-        onClick = function() Main:Select("settings") end })
-    self.settingsButton:SetPoint("RIGHT", frame.closeButton, "LEFT", -6, 0)
 
     local sidebar = UI.CreateFrame("Frame", frame)
     sidebar:SetPoint("TOPLEFT", frame, "TOPLEFT", 1, -(HEADER + 1))
@@ -893,7 +913,6 @@ function Main:Select(key)
     for navKey, button in pairs(self.nav) do
         button:SetSelected(navKey == key)
     end
-    self.settingsButton:SetActive(key == "settings")
     self.current = key
     if key ~= "settings" then
         Prefs.SetLastView(key)

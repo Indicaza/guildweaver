@@ -224,6 +224,8 @@ SlashCmdList.GUILDWEAVER = function(message)
         elseif action == "reset" then
             hud:ResetPosition()
             GW.Print("Dungeon HUD position reset.")
+        elseif action == "bosses" then
+            for _, line in ipairs(sessions.Diagnostics()) do GW.Print(line) end
         else
             local run = sessions.Current()
             if run then
@@ -231,7 +233,7 @@ SlashCmdList.GUILDWEAVER = function(message)
             else
                 GW.Print("No dungeon run is open. Runs start when you enter a dungeon or raid.")
             end
-            GW.Print("/gw dungeon start|stop (the timer also starts on your first pull), /gw dungeon split [name], /gw dungeon finish, /gw dungeon hud on|off, /gw dungeon mode [min|compact|full], /gw dungeon pb, /gw dungeon reset. Objectives: /gw obj.")
+            GW.Print("/gw dungeon start|stop (the timer also starts on your first pull), /gw dungeon split [name], /gw dungeon finish, /gw dungeon hud on|off, /gw dungeon mode [min|compact|full], /gw dungeon pb, /gw dungeon reset, /gw dungeon bosses (what the run knows about its bosses). Objectives: /gw obj.")
         end
         return
     end

@@ -221,6 +221,26 @@ local function readLockProgress()
     return total, complete
 end
 
+-- The lockout's own encounter list, where the client has
+-- GetInstanceLockTimeRemainingEncounter: each boss's name and whether it is
+-- down. Evidence only (diagnostics, boss names in the HUD); it never adds a
+-- kill. Nil without the API or without a lockout.
+local function readLockEncounters(total)
+    if type(Globals.GetInstanceLockTimeRemainingEncounter) ~= "function" or not total then
+        return nil
+    end
+    local list = {}
+    for index = 1, math.min(total, 20) do
+        local ok, name, _, killed = call(Globals.GetInstanceLockTimeRemainingEncounter, index)
+        name = ok and text(name, 60) or nil
+        if not name then
+            break
+        end
+        list[index] = { name = name, killed = scalar(killed) == true }
+    end
+    return #list > 0 and list or nil
+end
+
 -- Run state -------------------------------------------------------------------
 
 local function activeRun(characterId)
@@ -426,9 +446,13 @@ local function refreshBosses(run)
     if total then
         run.bosses.total = total
         run.bosses.lockComplete = complete
+        run.bosses.lockEncounters = readLockEncounters(total) or run.bosses.lockEncounters
     end
 end
 
+-- Every encounter the lockout lists is down: a full clear. The lockout's
+-- total counts optional encounters too, so this alone misses clears that
+-- skipped one (see the final-boss rule below).
 local function bossesDone(run)
     local bosses = run.bosses
     if not bosses.total then
@@ -438,7 +462,17 @@ local function bossesDone(run)
     return complete >= bosses.total
 end
 
--- What proved a clear: the lockout's own count, or the encounter events.
+-- The dungeon is done: a full clear, or its final boss (from the boss
+-- registry, Data/DungeonBosses.lua) reported dead by the client.
+local function isComplete(run)
+    return bossesDone(run) or run.bosses.finalBoss ~= nil
+end
+Sessions.IsComplete = isComplete
+
+-- What proved a clear, strongest first: the lockout's own count, every
+-- encounter's kill event, the final boss by encounter ID ("final_boss"),
+-- the final boss by name only ("final_boss_unconfirmed"), the player's
+-- word ("manual"), or nothing.
 local function completionBasis(run, status, endReason)
     if status ~= "completed" then
         return "none"
@@ -450,10 +484,26 @@ local function completionBasis(run, status, endReason)
     if bosses.total and (bosses.defeated or 0) >= bosses.total then
         return "encounters"
     end
+    if bosses.finalBoss and bosses.finalBoss.proof then
+        return bosses.finalBoss.proof
+    end
     if endReason == "manual_finish" then
         return "manual"
     end
     return "none"
+end
+Sessions.CompletionBasis = completionBasis
+
+-- The completion block of the payload: the basis, and for a final-boss
+-- clear which boss proved it and how sure the registry is of it.
+local function completionFor(run, status, endReason)
+    local basis = completionBasis(run, status, endReason)
+    local final = run.bosses.finalBoss
+    if (basis == "final_boss" or basis == "final_boss_unconfirmed") and final then
+        return { basis = basis, finalBoss = { encounterId = final.encounterId, name = final.name, confidence = final.confidence },
+            registryVersion = GW.DungeonBosses and GW.DungeonBosses.VERSION or nil }
+    end
+    return { basis = basis }
 end
 
 local function newRun(character, instance)
@@ -576,7 +626,7 @@ local function payloadFor(run, status, endReason)
         timeline = timeline,
         timelineTruncated = run.timelineTruncated == true or nil,
         checkpoints = points,
-        completion = { basis = completionBasis(run, status, endReason) },
+        completion = completionFor(run, status, endReason),
         -- The timed run: ready, running or stopped, and what started and
         -- stopped it. Checkpoints carry timerAt next to their elapsed at.
         timer = {
@@ -637,8 +687,10 @@ local function eligibleTimer(timer)
 end
 
 local function notePb(dungeon, run, status, endReason)
+    -- A full clear, or an observed final boss matched by encounter ID. Never
+    -- a name-only match, a hand-finished or a partial run.
     local basis = completionBasis(run, status, endReason)
-    if basis ~= "lockout" and basis ~= "encounters" then
+    if basis ~= "lockout" and basis ~= "encounters" and basis ~= "final_boss" then
         return false
     end
     local key = instanceKey(run.instance)
@@ -741,7 +793,11 @@ local function finish(characterId, status, endReason, options)
 end
 
 local function statusWhenLeft(run)
-    return bossesDone(run) and "completed" or "abandoned"
+    return isComplete(run) and "completed" or "abandoned"
+end
+
+local function completeReason(run)
+    return bossesDone(run) and "all_bosses_defeated" or "final_boss_defeated"
 end
 
 local function boundActive(dungeon)
@@ -777,7 +833,7 @@ local function sweepStale(exceptId)
         if id ~= exceptId and run then
             if run.suspended and now - (tonumber(run.lastActiveAt) or 0) > REENTRY_SECONDS then
                 local reason = run.inside and "logout_not_resumed" or "left_instance"
-                local status = run.inside and "interrupted" or statusWhenLeft(run)
+                local status = isComplete(run) and "completed" or (run.inside and "interrupted" or statusWhenLeft(run))
                 finish(id, status, reason, { stale = true, atLeave = not run.inside })
             end
         end
@@ -825,8 +881,10 @@ local function leave(run)
     run.leftDurationSeconds = run.durationSeconds
     run.leftTimerSeconds = timerOf(run).seconds
     addEvent(run, "leave")
-    if bossesDone(run) then
-        finish(run.characterId, "completed", "all_bosses_defeated", { atLeave = true })
+    -- A finished dungeon ends when the player walks out; until then loot and
+    -- the walk back still belong to the run.
+    if isComplete(run) then
+        finish(run.characterId, "completed", completeReason(run), { atLeave = true })
         return
     end
     scheduleSweep()
@@ -844,7 +902,7 @@ function Sessions.Evaluate(reason)
     -- A run resumed after logout must not count the offline gap.
     if run and run.suspended then
         if serverNow() - (tonumber(run.lastActiveAt) or 0) > REENTRY_SECONDS then
-            local status = run.inside and "interrupted" or statusWhenLeft(run)
+            local status = isComplete(run) and "completed" or (run.inside and "interrupted" or statusWhenLeft(run))
             finish(characterId, status, run.inside and "logout_not_resumed" or "left_instance",
                 { stale = true, atLeave = not run.inside })
             run = nil
@@ -860,7 +918,7 @@ function Sessions.Evaluate(reason)
     if instance then
         if run and not sameInstance(run.instance, instance) then
             accountTime(run)
-            local status = run.inside and "abandoned" or statusWhenLeft(run)
+            local status = isComplete(run) and "completed" or (run.inside and "abandoned" or statusWhenLeft(run))
             finish(characterId, status, "entered_other_instance", { atLeave = not run.inside })
             run = nil
         end
@@ -952,10 +1010,20 @@ local function recordKill(run, id, name, source)
     end
     run.engaged = nil
     refreshBosses(run)
-    if bossesDone(run) and not run.completeMarked then
+    -- The final boss, when the registry knows it. Only the client's own kill
+    -- events get here, never a manual split.
+    local registry = GW.DungeonBosses
+    if registry and registry.FinalBossProof and not bosses.finalBoss then
+        local proof, entry = registry.FinalBossProof(run.instance and run.instance.instanceId, id, name)
+        if proof then
+            bosses.finalBoss = { encounterId = id, name = name, proof = proof, confidence = entry.confidence, at = now, source = source }
+        end
+    end
+    if isComplete(run) and not run.completeMarked then
         run.completeMarked = true
-        addEvent(run, "complete")
-        -- The clear is in: the last boss stops the clock.
+        addEvent(run, "complete", { reason = bossesDone(run) and "all_bosses" or bosses.finalBoss.proof })
+        -- The dungeon is done: the clock stops; the run stays open for loot
+        -- until the player leaves.
         stopTimer(run, "complete")
     end
     local objectives = GW.DungeonObjectives
@@ -1258,7 +1326,72 @@ function Sessions.Current()
         -- checkpoint; nil when nothing matched yet.
         pace = pace,
         objective = GW.DungeonObjectives and GW.DungeonObjectives.Current and GW.DungeonObjectives.Current(run.characterId) or nil,
+        -- Boss evidence for the HUD's boss frames.
+        instanceId = run.instance and run.instance.instanceId,
+        lockEncounters = run.bosses.lockEncounters,
+        finalBoss = run.bosses.finalBoss and { encounterId = run.bosses.finalBoss.encounterId, name = run.bosses.finalBoss.name,
+            proof = run.bosses.finalBoss.proof } or nil,
+        complete = isComplete(run),
     }
+end
+
+-- What the open run knows about its bosses and why it is or is not done,
+-- as chat lines. Only on request (/gw dungeon bosses); nothing is logged.
+function Sessions.Diagnostics()
+    local run = currentRun()
+    if not run then
+        return { "No dungeon run is open. Enter a dungeon or raid, then /gw dungeon bosses." }
+    end
+    refreshBosses(run)
+    local bosses, instance = run.bosses, run.instance or {}
+    local lines = {}
+    local function add(line) table.insert(lines, line) end
+    add(string.format("%s: instance %s, difficulty %s (%s).", tostring(instance.name), tostring(instance.instanceId),
+        tostring(instance.difficultyId), tostring(instance.difficultyName)))
+    local total, complete = readLockProgress()
+    add(string.format("Lockout: %s encounters, %s complete%s.", tostring(total or "no"), tostring(complete or "-"),
+        type(Globals.GetInstanceLockTimeRemaining) == "function" and "" or " (GetInstanceLockTimeRemaining missing)"))
+    if type(Globals.GetInstanceLockTimeRemainingEncounter) ~= "function" then
+        add("Lockout encounter list: GetInstanceLockTimeRemainingEncounter is not available.")
+    elseif bosses.lockEncounters then
+        for index, entry in ipairs(bosses.lockEncounters) do
+            add(string.format("  lockout %d: %s%s", index, entry.name, entry.killed and " (down)" or ""))
+        end
+    else
+        add("Lockout encounter list: empty.")
+    end
+    add(string.format("Encounter events: %s. Kills recorded: %d, duplicates ignored: %d.",
+        run.encounterEvents and "seen" or "none yet", bosses.defeated or 0, bosses.duplicatesIgnored or 0))
+    for _, entry in ipairs(run.timeline or {}) do
+        if entry.kind == "boss_kill" or entry.kind == "encounter_start" or entry.kind == "encounter_failed" then
+            add(string.format("  %s %s id=%s %s via %s", Sessions.FormatOffset and Sessions.FormatOffset(entry.at) or tostring(entry.at),
+                entry.kind, tostring(entry.encounterId or "-"), tostring(entry.name or "?"), tostring(entry.source or "-")))
+        end
+    end
+    local registry = GW.DungeonBosses
+    local definition = registry and registry.For and registry.For(instance.instanceId)
+    add(definition and string.format("Boss registry v%d: %d known encounter(s) here.", registry.VERSION, #definition.encounters)
+        or "Boss registry: nothing known for this instance; completion needs a full clear.")
+    if bosses.finalBoss then
+        add(string.format("Final boss recognised: %s (id %s), %s.", tostring(bosses.finalBoss.name), tostring(bosses.finalBoss.encounterId or "-"),
+            bosses.finalBoss.proof == "final_boss" and "verified by encounter ID" or "by name only: completion is unconfirmed"))
+    else
+        add("Final boss: not recognised" .. (definition and " yet." or " (no definition)."))
+    end
+    if isComplete(run) then
+        add("Status: complete (" .. (bossesDone(run) and "every lockout encounter down" or "final boss") .. "); the run ends when you leave.")
+    elseif bosses.total then
+        add(string.format("Status: not complete: %d of %d lockout encounters down and no known final boss killed.",
+            math.max(bosses.defeated or 0, bosses.lockComplete or 0), bosses.total))
+    else
+        add("Status: not complete: no lockout total and no known final boss killed.")
+    end
+    return lines
+end
+
+function Sessions.FormatOffset(seconds)
+    seconds = math.max(0, math.floor(tonumber(seconds) or 0))
+    return string.format("%d:%02d", math.floor(seconds / 60), seconds % 60)
 end
 
 -- The personal best for a character in an instance at a difficulty, or nil.

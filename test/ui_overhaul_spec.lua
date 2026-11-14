@@ -196,8 +196,9 @@ do
             if key ~= entry.key then truthy(not view.shown, key .. " hidden while " .. entry.key .. " is open") end
         end
     end
-    click(main.settingsButton)
-    equal(main.current, "settings", "header Settings button")
+    truthy(main.settingsButton == nil, "no duplicate Settings button in the header")
+    click(main.nav.settings)
+    equal(main.current, "settings", "Settings from the sidebar")
     equal(GuildweaverDB.ui.dashboard.view, "sync", "Settings is not remembered as the last view")
     main:Select("farming")
     SlashCmdList.GUILDWEAVER("")
