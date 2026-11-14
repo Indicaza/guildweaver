@@ -88,6 +88,9 @@ jobs:
             cp "$line" "dist/Guildweaver/$line"
           done < Guildweaver.toc
 
+          # Art the client loads by path (the minimap and window emblem).
+          cp -R Media dist/Guildweaver/Media
+
           cat > dist/Guildweaver/Data/BridgeInbox.generated.lua <<'EOF'
           local _, GW = ...
 

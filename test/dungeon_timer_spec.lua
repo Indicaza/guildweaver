@@ -132,7 +132,7 @@ do
     equal(run.timerSeconds, 0)
     equal(hud.StateText(run), "Starts on your first pull")
     contains(hud.lines, "0:00 ready", "the clock shows the state")
-    equal(hud.shown.timerButton, "Start", "the button offers Start")
+    equal(hud.timerButton:GetLabel(), "Start", "the button offers Start")
     wait(env, 60)
     run = sessions.Current()
     equal(run.timerSeconds, 0, "waiting before the first pull is not timed")
@@ -141,9 +141,12 @@ do
     pull(env)
     equal(timer(addon).state, "running", "the first pull starts the timer")
     equal(timer(addon).startedBy, "combat")
-    equal(hud.shown.timerButton, "Stop")
+    equal(hud.timerButton:GetLabel(), "Pause", "a running timer offers Pause")
     wait(env, 100)
     equal(sessions.Current().timerSeconds, 100, "timed from the pull")
+    -- Between run events only the clock text ticks, from the last timer.
+    truthy(hud.shown.clock == "1:40" or hud.shown.clock == "1:39", "the clock ticks: " .. tostring(hud.shown.clock))
+    hud:Refresh()
     contains(hud.lines, "1:40 ")
 
     -- Stop by the button; combat does not restart a timer stopped by hand.
@@ -154,8 +157,9 @@ do
     pull(env)
     equal(timer(addon).state, "stopped", "a pull never restarts a stopped timer")
     equal(sessions.Current().timerSeconds, 100, "a stopped timer holds")
-    contains(hud.lines, "1:40 stopped")
-    equal(hud.StateText(sessions.Current()), "Stopped. Start resumes")
+    contains(hud.lines, "1:40 paused")
+    truthy(hud.StateText(sessions.Current()):find("^Paused"), "paused, not ended")
+    equal(hud.timerButton:GetLabel(), "Resume", "a paused timer offers Resume")
 
     -- Start and stop by slash command.
     SlashCmdList.GUILDWEAVER("dungeon start")
@@ -190,7 +194,7 @@ do
     equal(run.timer.state, "stopped", "the clear stops the timer")
     equal(run.timer.stoppedBy, "complete")
     equal(run.timerSeconds, 155)
-    equal(hud.StateText(run), "Clear. Timer stopped")
+    truthy(hud.StateText(run):find("^Cleared"), "the clear is shown")
     wait(env2, 30)
     equal(sessions.Current().timerSeconds, 155, "nothing after the clear is timed")
     equal(sessions.StopTimer(), false, "already stopped")
@@ -248,12 +252,16 @@ do
     local env, addon = boot()
     local hud, sessions = addon.DungeonHud, addon.DungeonSessions
     zone(env, SM)
+    hud:SetMode("expanded")
     local entries = hud.Portraits(sessions.Current())
-    equal(#entries, 3, "one dim circle per boss the lockout lists")
+    equal(#entries, 3, "one entry per boss the lockout lists")
     equal(entries[1].kind, "pending")
-    equal(#hud.rowEntries, 3, "the row shows them")
-    equal(hud.circles["pending:1"].icon, hud.TEXTURES.pending)
-    truthy(not hud.circles["pending:1"].hasFace)
+    equal(#hud.rowEntries, 0, "no placeholder faces for bosses still up")
+    truthy(hud.circles["pending:1"] == nil, "no question-mark circles")
+    local progress = hud.BossProgress(sessions.Current())
+    equal(progress.total, 3, "progress pips: three bosses")
+    equal(progress.defeated, 0)
+    truthy(hud.progressRow.shown, "the pips show")
 
     -- A boss fight: its circle takes the boss frame's face and health.
     env:dispatch("ENCOUNTER_START", 1, "Houndmaster Loksey", 1, 5)
@@ -318,12 +326,15 @@ do
     SlashCmdList.GUILDWEAVER("dungeon split Stairs")
     equal(sessions.Current().splits[4].name, "Stairs")
 
-    -- The row never grows past what fits: oldest kills go first, dim circles before them.
-    GuildweaverDB.ui.dungeonHud.sizes.compact = { width = 120, height = 100 }
-    hud:Refresh()
-    truthy(#hud.rowEntries <= 3, "a narrow frame shows fewer circles")
+    -- The row never grows past what fits: the oldest go first.
+    hud:RefreshRow(sessions.Current(), "expanded", 80)
+    truthy(#hud.rowEntries <= 2, "a narrow row shows fewer faces")
     equal(hud.rowEntries[#hud.rowEntries].id, "split:stairs", "the newest stays")
-    hud:ResetPosition()
+    hud:Refresh()
+    -- Compact draws no faces at all, only the pips.
+    hud:SetMode("compact")
+    truthy(not hud.faces.shown, "no faces in compact")
+    hud:SetMode("expanded")
 
     -- Tooltip on a circle.
     local tooltip = _G.GameTooltip
