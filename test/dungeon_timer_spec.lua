@@ -256,12 +256,14 @@ do
     local entries = hud.Portraits(sessions.Current())
     equal(#entries, 3, "one entry per boss the lockout lists")
     equal(entries[1].kind, "pending")
-    equal(#hud.rowEntries, 0, "no placeholder faces for bosses still up")
-    truthy(hud.circles["pending:1"] == nil, "no question-mark circles")
+    equal(#hud.rowEntries, 3, "a boss frame per boss the lockout lists")
+    equal(hud.circles["pending:1"].icon, "empty", "bosses ahead are empty sockets, no question mark")
+    truthy(not hud.circles["pending:1"].hasFace)
     local progress = hud.BossProgress(sessions.Current())
-    equal(progress.total, 3, "progress pips: three bosses")
+    equal(progress.total, 3, "three bosses")
     equal(progress.defeated, 0)
-    truthy(hud.progressRow.shown, "the pips show")
+    truthy(hud.bossRow.shown, "the boss frames show")
+    equal(hud.shown.bossLabel, "0/3", "with the count")
 
     -- A boss fight: its circle takes the boss frame's face and health.
     env:dispatch("ENCOUNTER_START", 1, "Houndmaster Loksey", 1, 5)
@@ -327,14 +329,16 @@ do
     equal(sessions.Current().splits[4].name, "Stairs")
 
     -- The row never grows past what fits: the oldest go first.
-    hud:RefreshRow(sessions.Current(), "expanded", 80)
-    truthy(#hud.rowEntries <= 2, "a narrow row shows fewer faces")
-    equal(hud.rowEntries[#hud.rowEntries].id, "split:stairs", "the newest stays")
+    hud:RefreshRow(sessions.Current(), "expanded", 110)
+    truthy(#hud.rowEntries <= 2, "a narrow row shows fewer frames")
+    equal(hud.rowEntries[#hud.rowEntries].id, "split:stairs", "the newest stays: frames ahead and old kills go first")
     hud:Refresh()
-    -- Compact draws no faces at all, only the pips.
+    -- Compact shows the same frames, smaller.
     hud:SetMode("compact")
-    truthy(not hud.faces.shown, "no faces in compact")
+    truthy(hud.bossRow.shown, "boss frames in compact")
+    equal(hud.bossRow.gwHeight, 18, "smaller in compact")
     hud:SetMode("expanded")
+    equal(hud.bossRow.gwHeight, 22)
 
     -- Tooltip on a circle.
     local tooltip = _G.GameTooltip
@@ -357,9 +361,10 @@ do
 
     -- Minimized: no row, the clock and Start/Stop stay.
     hud:SetMode("minimized")
+    truthy(not hud.bossRow.shown, "no boss frames when minimized")
     equal(#hud.lines, 1)
     contains(hud.lines, "Bosses 0/3")
-    truthy(not hud.row.shown, "no row when minimized")
+    truthy(not hud.bossRow.shown, "no row when minimized")
     hud:SetMode("compact")
 end
 
