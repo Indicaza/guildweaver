@@ -257,7 +257,7 @@ do
     equal(#entries, 3, "one entry per boss the lockout lists")
     equal(entries[1].kind, "pending")
     equal(#hud.rowEntries, 3, "a boss frame per boss the lockout lists")
-    equal(hud.circles["pending:1"].icon, "empty", "bosses ahead are empty sockets, no question mark")
+    equal(hud.circles["pending:1"].icon, hud.TEXTURES.boss, "bosses ahead: a faint skull, no question mark")
     truthy(not hud.circles["pending:1"].hasFace)
     local progress = hud.BossProgress(sessions.Current())
     equal(progress.total, 3, "three bosses")

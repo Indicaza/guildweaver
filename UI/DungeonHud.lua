@@ -360,19 +360,130 @@ end
 -- Nothing is named that the client did not name.
 function Hud.Portraits(run)
     local entries = {}
+    local known = Hud.KnownBosses(run)
+    local taken = {}
+    local function displayFor(encounterId, name)
+        for _, boss in ipairs(known) do
+            if (encounterId and boss.encounterId == encounterId) or (name and boss.name and string.lower(boss.name) == string.lower(name)) then
+                taken[boss] = true
+                return boss.displayId
+            end
+        end
+        return nil
+    end
     for _, split in ipairs(run and run.splits or {}) do
-        table.insert(entries, { id = split.id, name = split.name, kind = split.kind == "boss_kill" and "boss" or "split", at = split.at })
+        local kind = split.kind == "boss_kill" and "boss" or "split"
+        local encounterId = split.id and tonumber(tostring(split.id):match("^boss:(%d+)$")) or nil
+        table.insert(entries, { id = split.id, name = split.name, kind = kind, at = split.at,
+            displayId = kind == "boss" and displayFor(encounterId, split.name) or nil })
     end
     if run and run.engaged then
-        table.insert(entries, { id = "engaged", name = run.engaged.name, kind = "engaged", at = run.engaged.since })
+        table.insert(entries, { id = "engaged", name = run.engaged.name, kind = "engaged", at = run.engaged.since,
+            displayId = displayFor(run.engaged.encounterId, run.engaged.name) })
     end
     if run and run.bossesTotal then
+        -- Bosses ahead take the names (and art) the client gave for bosses
+        -- not yet down, in the client's order; the rest stay unnamed.
+        local ahead = {}
+        for _, boss in ipairs(known) do
+            if not taken[boss] and not boss.killed then table.insert(ahead, boss) end
+        end
         local remaining = run.bossesTotal - (run.bossesDefeated or 0) - (run.engaged and 1 or 0)
         for index = 1, math.min(MAX_BOSSES, remaining) do
-            table.insert(entries, { id = "pending:" .. index, kind = "pending" })
+            local boss = ahead[index]
+            table.insert(entries, { id = "pending:" .. index, kind = "pending", name = boss and boss.name or nil,
+                displayId = boss and boss.displayId or nil })
         end
     end
     return entries
+end
+
+-- Encounter Journal ------------------------------------------------------------------
+
+-- The journal's bosses for the instance the player is in, where the client
+-- has the Encounter Journal API: name, encounter ID and creature display ID.
+-- Read once per instance, never in combat (it selects an instance in the
+-- journal), and cached; false when the client has no journal for it.
+local journal = {}
+Hud.journal = journal
+
+local function call(fn, ...)
+    if type(fn) ~= "function" then return false end
+    return pcall(fn, ...)
+end
+
+local function plain(value)
+    if value == nil or (Globals.issecretvalue and Globals.issecretvalue(value)) then return nil end
+    return value
+end
+
+function Hud.JournalBosses(instanceId)
+    instanceId = tonumber(instanceId)
+    if not instanceId then return nil end
+    if journal[instanceId] ~= nil then
+        return journal[instanceId] or nil
+    end
+    local G = Globals
+    if type(G.EJ_GetInstanceForMap) ~= "function" or type(G.EJ_SelectInstance) ~= "function"
+        or type(G.EJ_GetEncounterInfoByIndex) ~= "function" or not (G.C_Map and type(G.C_Map.GetBestMapForUnit) == "function") then
+        journal[instanceId] = false
+        return nil
+    end
+    local okCombat, fighting = call(G.InCombatLockdown)
+    if okCombat and fighting then
+        return nil -- try again out of combat
+    end
+    local okMap, uiMap = call(G.C_Map.GetBestMapForUnit, "player")
+    local okInstance, journalInstance = call(G.EJ_GetInstanceForMap, okMap and plain(uiMap) or nil)
+    journalInstance = okInstance and tonumber(plain(journalInstance)) or nil
+    if not journalInstance or journalInstance == 0 then
+        journal[instanceId] = false
+        return nil
+    end
+    call(G.EJ_SelectInstance, journalInstance)
+    local list = {}
+    for index = 1, 20 do
+        local ok, name, _, journalEncounter, _, _, _, dungeonEncounter, mapInstance = call(G.EJ_GetEncounterInfoByIndex, index, journalInstance)
+        name = ok and plain(name) or nil
+        if type(name) ~= "string" then break end
+        mapInstance = tonumber(plain(mapInstance))
+        if not mapInstance or mapInstance == instanceId then
+            local displayId = nil
+            local okCreature, _, _, _, displayInfo = call(G.EJ_GetCreatureInfo, 1, tonumber(plain(journalEncounter)))
+            if okCreature then displayId = tonumber(plain(displayInfo)) end
+            table.insert(list, { name = name, encounterId = tonumber(plain(dungeonEncounter)), displayId = displayId, source = "journal" })
+        end
+    end
+    journal[instanceId] = #list > 0 and list or false
+    return journal[instanceId] or nil
+end
+
+-- Every boss the client (or the verified registry) names for this run, in
+-- order: the journal first, else the lockout's encounter list. Each says
+-- whether it is down. Nothing here is invented: a boss nobody named is
+-- simply not in the list.
+function Hud.KnownBosses(run)
+    if not run then return {} end
+    local list = {}
+    local journalList = Hud.JournalBosses(run.instanceId)
+    local lockout = run.lockEncounters
+    local registry = GW.DungeonBosses
+    local killedNames, killedIds = {}, {}
+    for _, split in ipairs(run.splits or {}) do
+        if split.kind == "boss_kill" then
+            if split.name then killedNames[string.lower(split.name)] = true end
+            local id = split.id and tonumber(tostring(split.id):match("^boss:(%d+)$"))
+            if id then killedIds[id] = true end
+        end
+    end
+    local source = journalList or lockout or {}
+    for _, boss in ipairs(source) do
+        local name = boss.name
+        local killed = boss.killed == true or (boss.encounterId and killedIds[boss.encounterId]) or (name and killedNames[string.lower(name)]) or false
+        local displayId = boss.displayId or (registry and registry.DisplayId and registry.DisplayId(run.instanceId, boss.encounterId, name)) or nil
+        table.insert(list, { name = name, encounterId = boss.encounterId, displayId = displayId, killed = killed })
+    end
+    return list
 end
 
 -- Units ---------------------------------------------------------------------------
@@ -444,8 +555,8 @@ function Hud.ShowTooltip(circle)
         return
     end
     if entry.kind == "pending" then
-        -- The client names a boss only once it is fought: nothing is guessed.
-        UI.ShowTooltip(circle.frame, "Boss ahead", { "Not defeated yet." }, "ANCHOR_TOP")
+        -- Named only when the client named it (journal or lockout).
+        UI.ShowTooltip(circle.frame, entry.name or "Boss ahead", { "Not defeated yet." }, "ANCHOR_TOP")
         return
     end
     local what = entry.kind == "boss" and "Defeated" or (entry.kind == "split" and "Split" or "Fighting since")
@@ -479,7 +590,7 @@ end
 
 -- Draws the unit's face into the circle. The last face stays when the unit
 -- is gone; the fallback icon shows when none was ever seen.
-local function setPortrait(circle, unit, fallback)
+local function setPortrait(circle, unit, fallback, displayId)
     if unit and type(Globals.SetPortraitTexture) == "function" then
         if pcall(Globals.SetPortraitTexture, circle.portrait, unit) then
             circle.hasFace = true
@@ -489,6 +600,19 @@ local function setPortrait(circle, unit, fallback)
             return true
         end
     end
+    -- A creature display ID from the journal or the verified registry.
+    if displayId and not circle.hasFace and circle.display ~= displayId
+        and type(Globals.SetPortraitTextureFromCreatureDisplayID) == "function" then
+        if pcall(Globals.SetPortraitTextureFromCreatureDisplayID, circle.portrait, displayId) then
+            circle.display = displayId
+            circle.icon = nil
+            pcall(circle.portrait.SetTexCoord, circle.portrait, 0, 1, 0, 1)
+            return true
+        end
+    end
+    if circle.display and not circle.hasFace then
+        return true
+    end
     if not circle.hasFace and circle.icon ~= fallback then
         circle.icon = fallback
         pcall(circle.portrait.SetTexture, circle.portrait, fallback)
@@ -497,28 +621,21 @@ local function setPortrait(circle, unit, fallback)
     return false
 end
 
--- A boss not reached yet: an empty dark socket in a faint ring. No icon,
--- no question mark.
-local function setEmpty(circle)
-    if circle.icon ~= "empty" then
-        circle.icon = "empty"
-        local rgb = Theme.colors.bgInset
-        pcall(circle.portrait.SetColorTexture, circle.portrait, rgb[1], rgb[2], rgb[3], 1)
-    end
-end
-
 -- Defeated: gold ring, the face greyed. Fighting: red ring, full colour.
--- Ahead: a faint ring around an empty socket. Splits: a blue ring.
+-- Ahead: a faint ring, the boss's own portrait dimmed when the client gave
+-- one, else a faint skull. Splits: a blue ring.
 local function paintCircle(circle, entry, size)
     circle.frame:SetSize(size, size)
     Theme.Tint(circle.ring, RING_COLORS[entry.kind] or "borderStrong", entry.kind == "pending" and 0.8 or 1)
-    pcall(circle.portrait.SetDesaturated, circle.portrait, entry.kind == "boss")
-    pcall(circle.portrait.SetAlpha, circle.portrait, entry.kind == "boss" and 0.8 or 1)
+    local art = circle.hasFace or circle.display ~= nil
+    pcall(circle.portrait.SetDesaturated, circle.portrait, entry.kind == "boss" or (entry.kind == "pending" and not art))
+    local alpha = entry.kind == "boss" and 0.8 or (entry.kind == "pending" and (art and 0.6 or 0.3) or 1)
+    pcall(circle.portrait.SetAlpha, circle.portrait, alpha)
     circle.entry = entry
 end
 
 local function resetCircle(circle)
-    circle.hasFace, circle.unit, circle.icon, circle.entry, circle.name = false, nil, nil, nil, nil
+    circle.hasFace, circle.unit, circle.icon, circle.entry, circle.name, circle.display = false, nil, nil, nil, nil, nil
     circle.frame:Hide()
 end
 
@@ -655,12 +772,15 @@ function Hud:RefreshRow(run, mode, width)
                 resetCircle(self.engaged)
             end
             circle = self.engaged
+            if not circle.hasFace and entry.displayId then
+                setPortrait(circle, nil, TEXTURES.boss, entry.displayId)
+            end
         else
             circle = self:circleFor(entry.id)
             if entry.kind == "pending" then
-                setEmpty(circle)
-            elseif not circle.hasFace and (not circle.icon or circle.icon == "empty") then
-                setPortrait(circle, unitFor(entry.name), entry.kind == "boss" and TEXTURES.boss or TEXTURES.split)
+                setPortrait(circle, nil, TEXTURES.boss, entry.displayId)
+            elseif not circle.hasFace then
+                setPortrait(circle, unitFor(entry.name), entry.kind == "boss" and TEXTURES.boss or TEXTURES.split, entry.displayId)
             end
         end
         paintCircle(circle, entry, size)
