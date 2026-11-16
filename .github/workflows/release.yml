@@ -78,6 +78,7 @@ jobs:
             [[ "$line" == '#'* ]] && continue
             [[ "$line" == 'Data/BridgeInbox.generated.lua' ]] && continue
             [[ "$line" == 'Data/BridgeAcks.generated.lua' ]] && continue
+            [[ "$line" == 'Data/BridgeLoot.generated.lua' ]] && continue
 
             if [[ ! -f "$line" ]]; then
               echo "Guildweaver.toc references missing source file: $line"
@@ -107,6 +108,15 @@ jobs:
               schemaVersion = 1,
               telemetry = {},
           }
+          EOF
+
+          # No wishlist yet: the bridge writes the real file. This one must
+          # carry no data, so a freshly installed build never replaces the
+          # last wishlist the add-on saved (Systems/LootSync.lua).
+          cat > dist/Guildweaver/Data/BridgeLoot.generated.lua <<'EOF'
+          local _, GW = ...
+
+          GW.BridgeLoot = nil
           EOF
 
           # Validate the packaged addon, not just the repository checkout. This is
@@ -157,6 +167,7 @@ jobs:
           test -s dist/release.json
           test -s dist/Guildweaver/Data/BridgeInbox.generated.lua
           test -s dist/Guildweaver/Data/BridgeAcks.generated.lua
+          test -s dist/Guildweaver/Data/BridgeLoot.generated.lua
           test -s dist/Guildweaver/Telemetry/Domain.lua
 
       - name: Replace edge release

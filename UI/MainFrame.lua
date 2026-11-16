@@ -696,6 +696,8 @@ Views.sync = {
 
 local MODE_CHOICES = { { "minimized", "Minimal" }, { "compact", "Compact" }, { "expanded", "Detailed" } }
 local SCALE_CHOICES = { { 0.85, "S" }, { 1, "M" }, { 1.15, "L" }, { 1.3, "XL" } }
+-- Estimated auction value (copper) a Bind-on-Equip item needs for a gold alert.
+local BOE_CHOICES = { { 50000, "5g" }, { 100000, "10g" }, { 250000, "25g" }, { 500000, "50g" }, { 1000000, "100g" } }
 
 Views.settings = {
     build = function(view)
@@ -767,6 +769,31 @@ Views.settings = {
             Main:RefreshView()
         end })
         resetHud:SetPoint("TOPLEFT", scale, "BOTTOMLEFT", 0, -14)
+
+        -- Loot alerts, across the bottom: what glows in Need/Greed rolls.
+        -- Laid out upwards from the bottom edge so it always fits.
+        local alerts = GW.LootAlerts
+        local function lootPref(key)
+            return function() return alerts.Prefs()[key] ~= false end, function(value) alerts.Prefs()[key] = value == true end
+        end
+        local right = columnWidth + 28
+        local sound = add(UI.Toggle(view, "Chime", nil, lootPref("sound")))
+        sound:SetWidth(columnWidth)
+        sound:SetPoint("BOTTOMLEFT", view, "BOTTOMLEFT", 0, 0)
+        local threshold = add(UI.SettingRow(view, "BoE from", nil, UI.Segmented(view, BOE_CHOICES,
+            function() return alerts.Threshold() end,
+            function(value) alerts.Prefs().boeThreshold = value end, { segmentWidth = 36, height = BUTTON_HEIGHT }), columnWidth))
+        threshold:SetPoint("BOTTOMLEFT", view, "BOTTOMLEFT", right, 0)
+        local wishlist = add(UI.Toggle(view, "Wishlist items (purple)", nil, lootPref("wishlist")))
+        wishlist:SetWidth(columnWidth)
+        wishlist:SetPoint("BOTTOMLEFT", sound, "TOPLEFT", 0, 6)
+        local boe = add(UI.Toggle(view, "Valuable BoE items (gold)", nil, lootPref("boe")))
+        boe:SetWidth(columnWidth)
+        boe:SetPoint("BOTTOMLEFT", threshold, "TOPLEFT", 0, 6)
+        local loot = UI.SectionHeader(view, "Loot alerts")
+        loot:SetPoint("BOTTOMLEFT", wishlist, "TOPLEFT", 0, 10)
+        loot:SetWidth(CONTENT_WIDTH)
+        view.lootSoundToggle, view.lootWishlistToggle, view.lootBoeToggle, view.lootThreshold = sound, wishlist, boe, threshold.control
     end,
     refresh = function(view)
         for _, control in ipairs(view.controls) do

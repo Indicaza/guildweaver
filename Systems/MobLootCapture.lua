@@ -165,6 +165,12 @@ function GW.MobLootCapture.CaptureNow()
             end
         end
     end
+    -- A Need/Greed roll that follows can name its creature from this
+    -- window, when the item was on exactly one corpse (LootRolls).
+    if GW.LootRolls and GW.LootRolls.NoteLootWindow then
+        for guid, source in pairs(sources) do source.name = names[guid] end
+        pcall(GW.LootRolls.NoteLootWindow, sources)
+    end
     local count = 0
     local dungeon = GW.DungeonSessions
     local dungeonRun = dungeon and dungeon.Context and dungeon.Context() or nil

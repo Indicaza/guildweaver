@@ -10,6 +10,7 @@ Utils/Perf.lua
 Utils/WorkQueue.lua
 Data/BridgeInbox.generated.lua
 Data/BridgeAcks.generated.lua
+Data/BridgeLoot.generated.lua
 Data/Store.lua
 Data/CharacterIdentity.lua
 Data/ItemTelemetry.lua
@@ -54,6 +55,10 @@ Systems/FishingPoolProbe.lua
 Systems/FishingCapture.lua
 Systems/MobLootCapture.lua
 Systems/AuctionCapture.lua
+Systems/LootSync.lua
+Systems/LootAlerts.lua
+Systems/LootRolls.lua
+Systems/LootJournal.lua
 Systems/Quests.lua
 Telemetry/Compatibility.lua
 UI/Theme.lua
@@ -61,6 +66,7 @@ UI/Widgets.lua
 UI/Prefs.lua
 UI/QuestLog.lua
 UI/DungeonHud.lua
+UI/LootAlertUI.lua
 UI/MainFrame.lua
 UI/MinimapButton.lua
 Core.lua

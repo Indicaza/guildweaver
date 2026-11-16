@@ -30,6 +30,7 @@ The first milestone establishes a reliable addon foundation:
 - `/gw sync` (or `/gw capture`) records a checkpoint and reloads the UI so WoW writes it to disk for the bridge now
 - `/gw fishing` prints the fishing casts and catches recorded this session and where the last catch came from
 - `/gw perf` prints capture counts, timings, worst frames, work-queue state and tooltip-scan counts for this session; `/gw perf reset` clears them
+- `/gw loot` shows the wishlist the website sent for this character and the loot alert settings; `/gw loot test` (or `test boe`) previews an alert; `/gw loot wishlist|boe|sound|toast on|off`, `/gw loot sound soft|bell|coin` and `/gw loot threshold <gold>` change them; `/gw loot probe` prints which loot APIs this client has; `/gw loot scan` reads the Encounter Journal's loot for the current dungeon
 - `/gw reset` resets the window position
 - `/gw help` prints command help
 
@@ -39,9 +40,33 @@ The first milestone establishes a reliable addon foundation:
 
 **Dashboard.** One window with a sidebar: **Overview** (a card per module), **Dungeons** (the open run with Start/Pause/Resume, Split and End run, recent runs, objectives), **Farming** (start or stop a timed run, elapsed time and gathers, this session's fishing), **Sync & Data** (what is waiting for the bridge, Sync now, and an Advanced section with the diagnostic commands) and **Settings**. It remembers its position and the last view, closes with Escape, and is built the first time it is opened. While open it updates live numbers once a second; closed it costs nothing. Guild Quests is left out of this release (`MainFrame.QUESTS_ENABLED = false`); the quest log and the quest sync behind it are unchanged and come back by flipping that flag.
 
-**Settings** are grouped by module: the minimap button and window position; the dungeon HUD (show in dungeons, collapse in combat, lock position, default view, size, reset position). Data collection has no switch: hiding the HUD or any window never stops recording.
+**Settings** are grouped by module: the minimap button and window position; the dungeon HUD (show in dungeons, collapse in combat, lock position, default view, size, reset position); loot alerts (wishlist, valuable BoE, the value they start at, the chime). Data collection has no switch: hiding the HUD or any window never stops recording.
 
 The look (blue-black panels, hairline borders, antique gold accents) and the controls live in `UI/Theme.lua` and `UI/Widgets.lua`, shared by every window, the HUD and the launcher. The dashboard and the menu sit on a soft "raised paper" shadow: a Gaussian falloff (`Media/Shadow.tga`, one 32x32 feathered corner, mirrored and stretched into a nine-slice) nudged 3 px down, reaching 12 px above, 16 px to the sides and 26 px below, at 32% alpha above and 55% below. The window and sidebar carry a faint tiled stone grain (`Media/Grain.tga`) at 5-7% alpha. Everything is plain frames and textures with no secure templates and no protected calls. `docs/ui-acceptance.md` is the in-game visual checklist.
+
+## Loot alerts
+
+When a Need/Greed roll starts, Guildweaver looks at the item once and, if it matters to this character, says so: a soft glow around the game's own roll frame, the item on a small strip under the dungeon HUD (which glows too), and one chime.
+
+| Category | Colour | When |
+| --- | --- | --- |
+| Wishlist | purple | The item is on this character's gear wishlist (built on the website: Dungeon runs → Loot & wishlist) |
+| Valuable BoE | gold | The roll says the item does not bind on pickup, and the website's Auction House data gives it a credible, fresh value on this character's own market at or above your threshold (10g by default) |
+| Potential upgrade | blue | Reserved. Nothing raises it yet: whether an item is an upgrade depends on the build |
+
+Wishlist beats Valuable BoE beats Potential upgrade. A wanted BoE glows purple and still shows its estimated value. The estimate is an asking price from the website, not a sale, and is shown with its age.
+
+**One engine.** `Systems/LootAlerts.lua` evaluates an item against a list of rules and returns one alert: every matching reason, the primary one, its colour category, any value, and whether to chime. Presenters (`UI/LootAlertUI.lua`) only read the alert. Colours are in `Theme.alerts` and nowhere else; a new category is one `Register` call and one colour.
+
+**What it never does.** It never rolls, passes or clicks anything, never calls a protected function, and never touches the game's roll frame: the glow is drawn on Guildweaver's own frame placed behind and around it, takes no mouse input and lies outside its edges. When that frame cannot be found (another loot addon replaced it), the Guildweaver notice and the chime still work. An alert means "look at this", never "this is yours".
+
+**Where the data comes from.** The bridge writes `Data/BridgeLoot.generated.lua` (wishlists per character and a short valuable-BoE list per auction house). WoW reads it at login or `/reload` only, so a wishlist edit on the website shows up in game after the next `/reload`. The file is checked field by field and copied into SavedVariables; a missing, damaged or older file changes nothing and the last good copy keeps working offline. The logged-in character is matched by the addon's own id for it, else by name and realm.
+
+**Settings** (Settings → Loot alerts): wishlist alerts, valuable BoE alerts, the BoE value they start at, and the chime. The HUD's mode is never changed and the dashboard is never opened by an alert. With the HUD off screen the notice appears as a small toast near the top of the screen (`/gw loot toast off` leaves only the chime).
+
+**What it reports.** Each roll becomes one `loot_roll` event: the item, the dungeon, and `outcome: offered`. It becomes `won` only when the game's own "You receive loot" line for that item follows; choosing Need is not winning. The creature is named only when this client saw the item on exactly one corpse just before. The corpse's loot window stays its own `mob_loot` observation and bag changes their own inventory stream: an offer, a win and owning are never merged.
+
+**Encounter Journal.** `/gw loot probe` lists which loot APIs the client has. Where the journal exists, `/gw loot scan` (in a dungeon, out of combat, journal window closed) reads each boss's loot list a step at a time on the work queue and sends one `loot_catalog_snapshot`, marked complete only if every item resolved. Scans are manual until the probe has been confirmed in the Forever client.
 
 ## Synchronization
 

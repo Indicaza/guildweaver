@@ -6,3 +6,4 @@ Thumbs.db
 .luacheckcache
 Data/BridgeInbox.generated.lua
 Data/BridgeAcks.generated.lua
+Data/BridgeLoot.generated.lua
