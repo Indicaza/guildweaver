@@ -272,7 +272,8 @@ function Sync.BoeValue(itemId, itemKey, now)
     local active = Sync.Active()
     if not active or not active.matched then return nil, "no_character" end
     if not active.market then return nil, "no_market" end
-    local entry = itemKey and active.market.items[itemKey] or nil
+    -- The key must be this item's own: a value is never read under another id.
+    local entry = itemKey and validKey(itemKey, tonumber(itemId)) and active.market.items[itemKey] or nil
     if not entry then return nil, "not_listed" end
     now = tonumber(now) or serverTime()
     local age = now - entry.observedAt
