@@ -194,7 +194,7 @@ do
     equal(run.timer.state, "stopped", "the clear stops the timer")
     equal(run.timer.stoppedBy, "complete")
     equal(run.timerSeconds, 155)
-    truthy(hud.StateText(run):find("^Cleared"), "the clear is shown")
+    truthy(hud.StateText(run):find("^100%% clear"), "the clear is shown with its class: " .. hud.StateText(run))
     wait(env2, 30)
     equal(sessions.Current().timerSeconds, 155, "nothing after the clear is timed")
     equal(sessions.StopTimer(), false, "already stopped")
