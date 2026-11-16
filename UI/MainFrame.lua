@@ -134,16 +134,20 @@ end
 -- evidence earns "Cleared"; the player's own word is labelled as such.
 local function outcome(entry)
     local status, basis = entry.status, entry.completionBasis
+    if entry.classification then
+        local label = GW.DungeonHud.ClassLabel({ kind = entry.classification, verification = entry.verification })
+        local good = entry.classification ~= "partial" and entry.verification ~= "manual" and entry.verification ~= "unconfirmed"
+        return label, good and "good" or (entry.verification == "unconfirmed" and "gold" or "text")
+    end
+    -- Runs recorded before classification: from their stored evidence.
     if status == "completed" then
-        if basis == "lockout" or basis == "encounters" then return "Full clear", "good" end
-        if basis == "final_boss" then return "Cleared", "good" end
-        if basis == "final_boss_unconfirmed" then return "Cleared (unverified)", "gold" end
+        if basis == "lockout" or basis == "encounters" then return "100% clear", "good" end
+        if basis == "final_boss" then return "Dungeon clear", "good" end
+        if basis == "final_boss_unconfirmed" then return "Dungeon clear (unverified)", "gold" end
         if basis == "manual" then return "Finished by you", "text" end
         return "Completed", "text"
-    elseif status == "abandoned" then
-        return "Left early", "textFaint"
-    elseif status == "interrupted" then
-        return "Interrupted", "textFaint"
+    elseif status == "abandoned" or status == "interrupted" then
+        return "Partial", "text"
     end
     return tostring(status or ""), "textFaint"
 end

@@ -138,7 +138,9 @@ do
     equal(run.finalBoss.proof, "final_boss", "proved by the final boss's encounter ID")
     equal(run.timer.state, "stopped", "the timer stops on the final boss")
     equal(run.timer.stoppedBy, "complete")
-    truthy(hud.StateText(run):find("^Cleared"), "the HUD shows the clear")
+    truthy(hud.StateText(run):find("^Dungeon clear"), "the HUD shows the clear: " .. hud.StateText(run))
+    equal(run.classification.kind, "dungeon_clear", "classified while still inside")
+    equal(run.classification.verification, "verified")
     truthy(run.inside, "the run stays open for loot")
     local stopped = run.timerSeconds
     wait(env, 60)
@@ -157,15 +159,22 @@ do
     equal(payload.completion.finalBoss.confidence, "observed")
     equal(payload.completion.registryVersion, addon.DungeonBosses.VERSION)
     equal(payload.bosses.duplicatesIgnored, 3, "BOSS_KILL after ENCOUNTER_END ignored for each boss")
-    local pb = sessions.PersonalBest(snapshotId(addon), { instanceId = 9001, difficultyId = 1 })
-    truthy(pb, "a verified final-boss clear can set a personal best")
+    equal(payload.classification.kind, "dungeon_clear", "final boss with the optional boss skipped: a dungeon clear")
+    equal(payload.classification.verification, "verified")
+    equal(payload.classification.bossesDefeated, 3)
+    equal(payload.classification.bossesTotal, 4, "raw counts kept")
+    equal(sessions.PersonalBest(snapshotId(addon), { instanceId = 9001, difficultyId = 1 }), nil, "not filed as a 100% clear best")
+    local pb = sessions.PersonalBest(snapshotId(addon), { instanceId = 9001, difficultyId = 1 }, "first_pull", "dungeon_clear")
+    truthy(pb, "a verified final-boss clear sets a dungeon-clear personal best")
     equal(pb.basis, "final_boss")
-    equal(addon.MainFrame.Outcome({ status = "completed", completionBasis = "final_boss" }), "Cleared")
+    equal(addon.MainFrame.Outcome({ status = "completed", completionBasis = "final_boss" }), "Dungeon clear", "older history entry")
+    equal(addon.MainFrame.Outcome(sessions.History()[1]), "Dungeon clear")
 end
 
 -- Full clear: every encounter down ------------------------------------------------
 do
     local env, addon = boot()
+    local sessions = addon.DungeonSessions
     zone(env, HOLLOW)
     pull(env)
     for index, boss in ipairs({ { 901, "Gatekeeper" }, { 902, "Brood Mother" }, { 903, "Hidden Hermit" } }) do
@@ -182,7 +191,9 @@ do
     equal(payload.endReason, "all_bosses_defeated")
     truthy(payload.completion.basis == "encounters" or payload.completion.basis == "lockout", "a full clear keeps its stronger basis")
     equal(payload.completion.finalBoss, nil, "no final-boss block on a full clear")
-    equal(addon.MainFrame.Outcome({ status = "completed", completionBasis = payload.completion.basis }), "Full clear")
+    equal(addon.MainFrame.Outcome({ status = "completed", completionBasis = payload.completion.basis }), "100% clear")
+    equal(payload.classification.kind, "hundred_clear", "every encounter, optional included")
+    truthy(sessions.PersonalBest(snapshotId(addon), { instanceId = 9001, difficultyId = 1 }), "100% clears keep the original PB key")
 end
 
 -- No encounter events at all: nothing is assumed ------------------------------------
@@ -207,6 +218,8 @@ do
     local payload = lastPayload(env)
     equal(payload.completion.basis, "manual")
     equal(sessions.PersonalBest(snapshotId(addon), { instanceId = 9001, difficultyId = 1 }), nil, "manual finishes never set a PB")
+    equal(sessions.PersonalBest(snapshotId(addon), { instanceId = 9001, difficultyId = 1 }, "first_pull", "dungeon_clear"), nil)
+    equal(payload.classification.verification, "manual", "manual stays distinguishable")
     equal(addon.MainFrame.Outcome({ status = "completed", completionBasis = "manual" }), "Finished by you")
 end
 
@@ -261,7 +274,10 @@ do
     equal(payload.completion.basis, "final_boss_unconfirmed")
     equal(payload.completion.finalBoss.confidence, "documented")
     equal(sessions.PersonalBest(snapshotId(addon), { instanceId = 48, difficultyId = 1 }), nil, "an unconfirmed clear never sets a PB")
-    equal(addon.MainFrame.Outcome({ status = "completed", completionBasis = "final_boss_unconfirmed" }), "Cleared (unverified)")
+    equal(sessions.PersonalBest(snapshotId(addon), { instanceId = 48, difficultyId = 1 }, "first_pull", "dungeon_clear"), nil)
+    equal(payload.classification.kind, "dungeon_clear")
+    equal(payload.classification.verification, "unconfirmed")
+    equal(addon.MainFrame.Outcome({ status = "completed", completionBasis = "final_boss_unconfirmed" }), "Dungeon clear (unverified)")
 end
 
 -- Death and re-entry before the final boss continue the same run ---------------------
@@ -438,6 +454,75 @@ do
     equal(listed[1].name, "B")
     equal(listed[2].name, "D")
     equal(#history, 4, "history itself is untouched")
+end
+
+-- Partial runs, boss farms and early exits are never failures -----------------------
+do
+    local env, addon = boot()
+    local sessions = addon.DungeonSessions
+    -- Leave early with two bosses down: a partial run, kept and reported.
+    zone(env, HOLLOW)
+    pull(env)
+    wait(env, 300)
+    kill(env, 901, "Gatekeeper")
+    wait(env, 200)
+    kill(env, 902, "Brood Mother")
+    zone(env, nil)
+    wait(env, sessions.REENTRY_SECONDS + 40)
+    local first = lastPayload(env)
+    equal(first.classification.kind, "partial", "one early exit is a partial run, not a farm")
+    equal(first.classification.bossesDefeated, 2)
+    equal(addon.MainFrame.Outcome(sessions.History()[1]), "Partial", "no failure label")
+    -- Back for the same boss within the hour: a boss farm.
+    zone(env, HOLLOW)
+    pull(env)
+    wait(env, 120)
+    kill(env, 901, "Gatekeeper")
+    zone(env, nil)
+    wait(env, sessions.REENTRY_SECONDS + 40)
+    local second = lastPayload(env)
+    truthy(second.runId ~= first.runId, "a separate run")
+    equal(second.classification.kind, "boss_farm", "the same boss again soon after: a boss farm")
+    equal(addon.MainFrame.Outcome(sessions.History()[1]), "Boss farm")
+    -- A different dungeon is never a repeat of this one.
+    zone(env, UNKNOWN)
+    pull(env)
+    wait(env, 120)
+    kill(env, 901, "Gatekeeper")
+    zone(env, nil)
+    wait(env, sessions.REENTRY_SECONDS + 40)
+    equal(lastPayload(env).classification.kind, "partial")
+    -- Pulled but no boss: still a partial run with its time and loot.
+    zone(env, HOLLOW)
+    pull(env)
+    wait(env, 300)
+    zone(env, nil)
+    wait(env, sessions.REENTRY_SECONDS + 40)
+    local empty = lastPayload(env)
+    equal(empty.classification.kind, "partial")
+    equal(empty.classification.bossesDefeated, 0)
+    truthy(empty.durationSeconds >= 300, "kept, not discarded")
+    equal(#payloads(env), 4, "no duplicate runs")
+end
+
+-- A complete standard roster gives a full clear without the optional boss ------------
+do
+    local env, addon = boot()
+    local sessions = addon.DungeonSessions
+    HOLLOW_BOSSES.complete = true
+    zone(env, HOLLOW)
+    pull(env)
+    wait(env, 60)
+    kill(env, 901, "Gatekeeper")
+    wait(env, 60)
+    kill(env, 902, "Brood Mother")
+    wait(env, 60)
+    kill(env, 904, "Warden")
+    equal(sessions.Current().classification.kind, "full_clear", "every standard boss of a complete roster")
+    zone(env, nil)
+    equal(lastPayload(env).classification.kind, "full_clear")
+    truthy(sessions.PersonalBest(snapshotId(addon), { instanceId = 9001, difficultyId = 1 }, "first_pull", "full_clear"), "its own PB group")
+    HOLLOW_BOSSES.complete = nil
 end
 
 print("dungeon boss tracking tests passed")

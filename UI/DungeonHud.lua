@@ -184,11 +184,23 @@ function Hud.StateText(run)
     if state == "ready" then
         return "Starts on your first pull"
     elseif state == "cleared" then
-        return "Cleared " .. GLYPH.dot .. " timer stopped"
+        return Hud.ClassLabel(run.classification) .. " " .. GLYPH.dot .. " timer stopped"
     elseif state == "paused" then
         return "Paused " .. GLYPH.dot .. " the run stays open"
     end
     return "Running"
+end
+
+-- A run's classification in words: what it achieved, and when the proof is
+-- weaker than verified, how. Never a failure word for a partial run.
+local CLASS_LABELS = { hundred_clear = "100% clear", full_clear = "Full clear", dungeon_clear = "Dungeon clear",
+    boss_farm = "Boss farm", partial = "Partial" }
+function Hud.ClassLabel(classification)
+    local kind = classification and classification.kind or "partial"
+    if kind == "dungeon_clear" and classification.verification == "manual" then return "Finished by you" end
+    local label = CLASS_LABELS[kind] or "Partial"
+    if classification and classification.verification == "unconfirmed" then label = label .. " (unverified)" end
+    return label
 end
 
 local function bossText(run)

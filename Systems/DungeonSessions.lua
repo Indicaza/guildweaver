@@ -563,6 +563,9 @@ end
 
 -- The versioned dungeon_run payload. Wallet change is labelled as such: it
 -- includes repairs, vendor sales and anything else, so it is not profit.
+-- Defined below (it reads the run history); payloads use it.
+local classify
+
 local function payloadFor(run, status, endReason)
     local xp = run.xp
     local timer = timerOf(run)
@@ -627,6 +630,9 @@ local function payloadFor(run, status, endReason)
         timelineTruncated = run.timelineTruncated == true or nil,
         checkpoints = points,
         completion = completionFor(run, status, endReason),
+        -- What the run achieved, apart from how it ended (status) and how
+        -- sure that is (verification). See classify.
+        classification = classify(run, status, endReason),
         -- The timed run: ready, running or stopped, and what started and
         -- stopped it. Checkpoints carry timerAt next to their elapsed at.
         timer = {
@@ -686,6 +692,91 @@ local function eligibleTimer(timer)
     return timer.starts == 1 and timer.stoppedBy ~= "manual"
 end
 
+-- The boss kills of a run as stable keys ("id:123" or "name:boss"), for
+-- recognising a boss farm.
+local function killKeys(run)
+    local keys = {}
+    for _, entry in ipairs(checkpoints(run)) do
+        if entry.kind == "boss" and entry.source ~= "manual" then
+            table.insert(keys, entry.encounterId and ("id:" .. entry.encounterId) or ("name:" .. string.lower(tostring(entry.name or "?"))))
+        end
+    end
+    return keys
+end
+
+-- A boss farm: this run is not a clear, and an earlier run of the same
+-- dungeon by the same character, started within the last three hours,
+-- killed at least one of the same bosses. One early exit alone is never a
+-- farm.
+local FARM_WINDOW_SECONDS = 3 * 3600
+local function repeatsEarlierRun(run, keys)
+    local dungeon = store()
+    local key = instanceKey(run.instance)
+    if not dungeon or not key or #keys == 0 then return false end
+    local mine = {}
+    for _, value in ipairs(keys) do mine[value] = true end
+    for _, entry in ipairs(dungeon.history or {}) do
+        if entry.runId ~= run.runId and entry.characterId == run.characterId and entry.instanceKey == key
+            and math.abs((tonumber(run.startedAt) or 0) - (tonumber(entry.startedAt) or 0)) <= FARM_WINDOW_SECONDS then
+            for _, value in ipairs(entry.killKeys or {}) do
+                if mine[value] then return true end
+            end
+        end
+    end
+    return false
+end
+
+-- What a run achieved, from boss evidence only:
+--   hundred_clear  every encounter the lockout lists is down (its total
+--                  counts optional encounters too)
+--   full_clear     every standard boss of a registry roster marked complete
+--                  is down (optional ones excluded)
+--   dungeon_clear  the final boss is down (or the player finished it)
+--   boss_farm      a repeat of a recent run of the same bosses
+--   partial        anything else, including no boss at all
+-- verification: verified (lockout, kill events, an observed final boss),
+-- unconfirmed (final boss by name only), manual (the player's word), none.
+classify = function(run, status, endReason)
+    local bosses = run.bosses
+    local defeated = bosses.defeated or 0
+    local base = { bossesDefeated = defeated, bossesTotal = bosses.total }
+    local function result(kind, verification)
+        base.kind, base.verification = kind, verification
+        return base
+    end
+    if bossesDone(run) then
+        return result("hundred_clear", "verified")
+    end
+    local registry = GW.DungeonBosses
+    local definition = registry and registry.For and registry.For(run.instance and run.instance.instanceId)
+    if definition and definition.complete then
+        local killed = {}
+        for _, value in ipairs(killKeys(run)) do killed[value] = true end
+        local all = true
+        for _, entry in ipairs(definition.encounters) do
+            if entry.role ~= "optional" and not (entry.encounterId and killed["id:" .. entry.encounterId]) then all = false end
+        end
+        if all then return result("full_clear", "verified") end
+    end
+    if bosses.finalBoss then
+        return result("dungeon_clear", bosses.finalBoss.proof == "final_boss" and "verified" or "unconfirmed")
+    end
+    if endReason == "manual_finish" then
+        return result("dungeon_clear", "manual")
+    end
+    if status ~= "open" and repeatsEarlierRun(run, killKeys(run)) then
+        return result("boss_farm", "verified")
+    end
+    return result("partial", "none")
+end
+Sessions.Classify = classify
+
+-- Personal bests are kept per clear type: a dungeon clear (final boss) is
+-- never compared with a 100% clear. 100% clears keep the original key.
+local function pbKind(kind)
+    return kind == "dungeon_clear" and ":dungeon_clear" or (kind == "full_clear" and ":full_clear" or "")
+end
+
 local function notePb(dungeon, run, status, endReason)
     -- A full clear, or an observed final boss matched by encounter ID. Never
     -- a name-only match, a hand-finished or a partial run.
@@ -704,7 +795,7 @@ local function notePb(dungeon, run, status, endReason)
         return false
     end
     dungeon.pbs[run.characterId] = type(dungeon.pbs[run.characterId]) == "table" and dungeon.pbs[run.characterId] or {}
-    key = key .. ":" .. pbBasis(timer)
+    key = key .. ":" .. pbBasis(timer) .. pbKind(classify(run, status, endReason).kind)
     local current = dungeon.pbs[run.characterId][key]
     if current and (tonumber(current.timerSeconds) or math.huge) <= seconds then
         return false
@@ -738,6 +829,9 @@ local function remember(dungeon, run, status, endReason)
         bossesTotal = run.bosses.total,
         instanceKey = instanceKey(run.instance),
         completionBasis = completionBasis(run, status, endReason),
+        classification = classify(run, status, endReason).kind,
+        verification = classify(run, status, endReason).verification,
+        killKeys = killKeys(run),
     })
     while #history > MAX_HISTORY do
         table.remove(history)
@@ -1277,7 +1371,10 @@ function Sessions.Current()
     local timer = timerOf(run)
     local xpGained = xp.available and not xp.atCapAtEntry and xp.gained or nil
     local hours = (run.durationSeconds or 0) / 3600
+    -- Pace against the best of the same clear type: 100% first, else a
+    -- dungeon clear.
     local pb = Sessions.PersonalBest(run.characterId, run.instance, pbBasis(timer))
+        or Sessions.PersonalBest(run.characterId, run.instance, pbBasis(timer), "dungeon_clear")
     local reference = {}
     for _, entry in ipairs(pb and pb.checkpoints or {}) do reference[entry.id] = entry end
     local splits = {}
@@ -1332,6 +1429,7 @@ function Sessions.Current()
         finalBoss = run.bosses.finalBoss and { encounterId = run.bosses.finalBoss.encounterId, name = run.bosses.finalBoss.name,
             proof = run.bosses.finalBoss.proof } or nil,
         complete = isComplete(run),
+        classification = classify(run, "open", nil),
     }
 end
 
@@ -1395,11 +1493,11 @@ function Sessions.FormatOffset(seconds)
 end
 
 -- The personal best for a character in an instance at a difficulty, or nil.
-function Sessions.PersonalBest(characterId, instance, basis)
+function Sessions.PersonalBest(characterId, instance, basis, kind)
     local dungeon = store()
     local key = instanceKey(instance)
     local byCharacter = dungeon and characterId and dungeon.pbs[characterId]
-    return type(byCharacter) == "table" and key and byCharacter[key .. ":" .. (basis or "first_pull")] or nil
+    return type(byCharacter) == "table" and key and byCharacter[key .. ":" .. (basis or "first_pull") .. pbKind(kind)] or nil
 end
 
 function Sessions.History()
