@@ -69,6 +69,25 @@ Run each once and keep the chat lines from `/gw dungeon bosses` (copy them into 
 - [ ] A dungeon not in the registry (e.g. The Stockade): still completes on a full clear as before.
 - [ ] Hover each boss frame: kills and the current fight show the boss name; bosses ahead show a name only if the client provided one, otherwise "Boss ahead". No question marks; no Lua errors (`/console scriptErrors 1`).
 
+## Loot alerts (needs a group and a dungeon)
+
+The fake client cannot prove any of this: roll events, the roll frame's name and the sound ids are the real client's. Start with `/gw loot probe` and paste its lines into the PR or an issue.
+
+- [ ] `/gw loot probe`: `GetLootRollItemInfo` and `GetLootRollItemLink` are listed as present; `START_LOOT_ROLL=yes`, `CANCEL_LOOT_ROLL=yes`, `CHAT_MSG_LOOT=yes`; roll frames `GroupLootFrame1..4` are found; `LOOT_ITEM_SELF` prints the game's "You receive loot" text. Note what is missing.
+- [ ] `/gw loot`: names this character, the number of wanted items and the wishlist revision from the website. After changing the wishlist on the website and waiting a minute, `/reload`: the count and revision follow.
+- [ ] `/gw loot test` and `/gw loot test boe`: a strip appears under the dungeon HUD (or near the top of the screen outside a dungeon) with an icon, the name and "Wishlist · …" in purple or "Valuable BoE · ~25g …" in gold; the HUD has a soft pulsing halo in the same colour; one chime plays. The strip goes away by itself after about nine seconds.
+- [ ] `/gw loot sound soft`, `bell`, `coin`: each plays a short, pleasant sound, audible with sound effects turned low. If one is harsh or silent, note which.
+- [ ] A wishlisted item comes up for a roll: the game's Need/Greed frame gets a soft purple halo around it (not a hard rectangle, nothing drawn over the icon, timer or buttons), the strip names the item, one chime. Need, Greed and Pass all still work and are exactly where they were.
+- [ ] A Bind-on-Equip item worth more than the threshold comes up: gold halo and "~Ng on the AH (age)". A wishlisted BoE: purple halo, and the value is still shown.
+- [ ] A Bind-on-Pickup blue that is not on the wishlist: nothing. An epic with no auction data: nothing.
+- [ ] Two or three rolls at once: each frame has its own halo in its own colour; one chime for the batch; up to three rows on the strip, newest on top.
+- [ ] Choose Need/Greed/Pass, or let the timer run out: that frame's halo is gone at once, the others stay. No halo is ever left on an empty spot or on a frame showing another roll.
+- [ ] In combat: the alert still shows and chimes; the HUD stays in its collapsed mode; no "action blocked" or taint message (`/console taintLog 1`, then check `Logs/taint.log` for Guildweaver).
+- [ ] With another loot addon that replaces the roll frames: no Lua error; the strip and the chime still work.
+- [ ] Win a wishlisted item: after the "You receive loot" line, the same item does not alert again this session. After `/reload` and a sync, the website shows it as acquired.
+- [ ] Settings → Loot alerts: the four controls fit along the bottom of the page without overlapping the columns above at either UI scale, and each one works (turn wishlist off: no purple alerts; change "BoE from": gold alerts follow).
+- [ ] `/gw loot scan` inside a dungeon, out of combat: either "not available on this client", or it reads the bosses and reports how many. Open the Encounter Journal afterwards: your loot filter is as you left it.
+
 ## Performance spot-check
 
 - [ ] `/gw perf` before and after a dungeon: no new collector shows large worst times; the HUD adds no visible hitching in combat.

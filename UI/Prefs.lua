@@ -11,6 +11,8 @@ local Prefs = GW.UiPrefs
 local DEFAULTS = {
     minimap = { hide = false, angle = 215 },
     dashboard = { view = "overview" },
+    -- Loot alerts in Need/Greed rolls. boeThreshold is copper: 10g.
+    lootAlerts = { wishlist = true, boe = true, sound = true, toast = true, chime = "soft", boeThreshold = 100000 },
 }
 Prefs.DEFAULTS = DEFAULTS
 

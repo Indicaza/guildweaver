@@ -286,3 +286,140 @@ function Theme.Accent(parent, width)
     Theme.Fill(texture, "gold", 0.8)
     return texture
 end
+
+-- Loot alerts --------------------------------------------------------------------------
+--
+-- One colour per alert category, here and nowhere else: the roll-frame
+-- glow, the HUD glow and the toast all ask Theme.AlertColor(category).
+-- A new category is a new entry in this table.
+Theme.colors.alertWishlist = { 0.698, 0.455, 1.000, 1 }
+Theme.colors.alertBoe = { 1.000, 0.824, 0.376, 1 }
+Theme.colors.alertUpgrade = { 0.400, 0.682, 1.000, 1 }
+
+Theme.alerts = {
+    wishlist = { color = "alertWishlist", label = "Wishlist" },
+    valuable_boe = { color = "alertBoe", label = "Valuable BoE" },
+    -- Reserved: nothing raises it yet (see Systems/LootAlerts.lua).
+    upgrade = { color = "alertUpgrade", label = "Potential upgrade" },
+}
+
+function Theme.AlertColor(category)
+    local alert = Theme.alerts[category]
+    return Theme.Color(alert and alert.color or "gold")
+end
+
+function Theme.AlertLabel(category)
+    local alert = Theme.alerts[category]
+    return alert and alert.label or tostring(category)
+end
+
+-- A soft halo around a frame: the feathered corner of the paper shadow,
+-- drawn additively in a colour, breathing slowly. It lives on its own
+-- frame (never a child of the frame it surrounds, which may belong to the
+-- game), sits behind it, takes no mouse input and covers nothing: every
+-- piece lies outside the target's edges.
+--
+-- Returns { frame, SetColor(rgb), Attach(target), Pulse(), Stop() }, or nil
+-- where frames cannot be created.
+local HALO = { spread = 14, low = 0.35, high = 0.95, period = 1.1 }
+Theme.HALO_SPEC = HALO
+
+function Theme.Halo(spread)
+    if type(Globals.CreateFrame) ~= "function" then return nil end
+    spread = spread or HALO.spread
+    local frame = Globals.CreateFrame("Frame", nil, Globals.UIParent)
+    pcall(frame.EnableMouse, frame, false)
+    frame:Hide()
+    local inner = 31 / 32
+    local pieces = {}
+    local function add(coords, place)
+        local texture = frame:CreateTexture(nil, "BACKGROUND")
+        pcall(texture.SetTexture, texture, Theme.SHADOW)
+        pcall(texture.SetTexCoord, texture, coords[1], coords[2], coords[3], coords[4])
+        pcall(texture.SetBlendMode, texture, "ADD")
+        place(texture)
+        table.insert(pieces, texture)
+    end
+    add({ 0, 1, 0, 1 }, function(t) t:SetSize(spread, spread); t:SetPoint("BOTTOMRIGHT", frame, "TOPLEFT", spread, -spread) end)
+    add({ 1, 0, 0, 1 }, function(t) t:SetSize(spread, spread); t:SetPoint("BOTTOMLEFT", frame, "TOPRIGHT", -spread, -spread) end)
+    add({ 0, 1, 1, 0 }, function(t) t:SetSize(spread, spread); t:SetPoint("TOPRIGHT", frame, "BOTTOMLEFT", spread, spread) end)
+    add({ 1, 0, 1, 0 }, function(t) t:SetSize(spread, spread); t:SetPoint("TOPLEFT", frame, "BOTTOMRIGHT", -spread, spread) end)
+    add({ inner, 1, 0, 1 }, function(t)
+        t:SetHeight(spread)
+        t:SetPoint("TOPLEFT", frame, "TOPLEFT", spread, 0)
+        t:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -spread, 0)
+    end)
+    add({ inner, 1, 1, 0 }, function(t)
+        t:SetHeight(spread)
+        t:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", spread, 0)
+        t:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -spread, 0)
+    end)
+    add({ 0, 1, inner, 1 }, function(t)
+        t:SetWidth(spread)
+        t:SetPoint("TOPLEFT", frame, "TOPLEFT", 0, -spread)
+        t:SetPoint("BOTTOMLEFT", frame, "BOTTOMLEFT", 0, spread)
+    end)
+    add({ 1, 0, inner, 1 }, function(t)
+        t:SetWidth(spread)
+        t:SetPoint("TOPRIGHT", frame, "TOPRIGHT", 0, -spread)
+        t:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", 0, spread)
+    end)
+
+    local halo = { frame = frame, pieces = pieces, spread = spread }
+
+    function halo:SetColor(rgb)
+        rgb = type(rgb) == "table" and rgb or Theme.Color(rgb)
+        self.color = rgb
+        for _, texture in ipairs(self.pieces) do
+            pcall(texture.SetVertexColor, texture, rgb[1], rgb[2], rgb[3], 1)
+        end
+    end
+
+    -- Surrounds `target`: the halo's own frame is larger by the spread on
+    -- every side, in the same strata, one level below.
+    function halo:Attach(target)
+        local f = self.frame
+        f:ClearAllPoints()
+        f:SetPoint("TOPLEFT", target, "TOPLEFT", -self.spread, self.spread)
+        f:SetPoint("BOTTOMRIGHT", target, "BOTTOMRIGHT", self.spread, -self.spread)
+        local okStrata, strata = pcall(target.GetFrameStrata, target)
+        if okStrata and type(strata) == "string" then pcall(f.SetFrameStrata, f, strata) end
+        local okLevel, level = pcall(target.GetFrameLevel, target)
+        if okLevel and tonumber(level) then pcall(f.SetFrameLevel, f, math.max(0, tonumber(level) - 1)) end
+        self.target = target
+    end
+
+    -- Breathes between two alphas. An animation group where the client has
+    -- one; otherwise the halo simply stays lit.
+    function halo:Pulse()
+        local f = self.frame
+        pcall(f.SetAlpha, f, HALO.high)
+        f:Show()
+        if not self.animation and type(f.CreateAnimationGroup) == "function" then
+            local ok, group = pcall(f.CreateAnimationGroup, f)
+            if ok and type(group) == "table" and type(group.CreateAnimation) == "function" then
+                local okFade, fade = pcall(group.CreateAnimation, group, "Alpha")
+                if okFade and type(fade) == "table" then
+                    pcall(fade.SetFromAlpha, fade, HALO.high)
+                    pcall(fade.SetToAlpha, fade, HALO.low)
+                    pcall(fade.SetDuration, fade, HALO.period)
+                    pcall(fade.SetSmoothing, fade, "IN_OUT")
+                    pcall(group.SetLooping, group, "BOUNCE")
+                    self.animation = group
+                end
+            end
+        end
+        if self.animation then pcall(self.animation.Play, self.animation) end
+        self.lit = true
+    end
+
+    function halo:Stop()
+        if self.animation then pcall(self.animation.Stop, self.animation) end
+        self.frame:Hide()
+        self.frame:ClearAllPoints()
+        self.target = nil
+        self.lit = false
+    end
+
+    return halo
+end

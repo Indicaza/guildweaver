@@ -94,6 +94,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
 
         GW.Store.Initialize()
         GW.Quests.Initialize()
+        GW.LootSync.Initialize()
         GW.MainFrame:Initialize()
         GW.MinimapButton:Initialize()
         GW.Character:Initialize()
@@ -276,6 +277,67 @@ SlashCmdList.GUILDWEAVER = function(message)
         return
     end
 
+    if command == "loot" or command:find("^loot ") then
+        local action, rest = command:match("^loot%s*(%S*)%s*(.-)$")
+        local alerts, sync = GW.LootAlerts, GW.LootSync
+        local prefs = alerts.Prefs()
+        local function onOff(key, label)
+            if rest == "on" or rest == "off" then prefs[key] = rest == "on" else prefs[key] = prefs[key] == false end
+            GW.Print(label .. (prefs[key] ~= false and " on." or " off."))
+            GW.MainFrame:RefreshView()
+        end
+        if action == "test" then
+            GW.LootAlertUI.Preview(rest == "boe" and "valuable_boe" or "wishlist")
+            GW.Print("Preview of a " .. (rest == "boe" and "valuable BoE" or "wishlist") .. " alert. /gw loot test boe shows the other kind. A real one also glows on the roll frame.")
+        elseif action == "wishlist" then
+            onOff("wishlist", "Wishlist alerts")
+        elseif action == "boe" then
+            onOff("boe", "Valuable BoE alerts")
+        elseif action == "toast" then
+            onOff("toast", "Loot toast when the HUD is hidden")
+        elseif action == "sound" then
+            if alerts.CHIMES[rest] then
+                prefs.chime, prefs.sound = rest, true
+                alerts.PlayChime(true)
+                GW.Print("Loot alert chime: " .. alerts.CHIMES[rest].label .. ".")
+                GW.MainFrame:RefreshView()
+            else
+                onOff("sound", "Loot alert sound")
+            end
+        elseif action == "threshold" then
+            local gold = tonumber(rest)
+            if gold and gold >= 1 and gold <= 100000 then
+                prefs.boeThreshold = math.floor(gold * 10000)
+                GW.MainFrame:RefreshView()
+            end
+            GW.Print("Valuable BoE alerts start at " .. alerts.FormatValue(alerts.Threshold()) .. " (estimated auction value). /gw loot threshold <gold> changes it.")
+        elseif action == "probe" then
+            for _, line in ipairs(GW.LootJournal.Probe()) do GW.Print(line) end
+        elseif action == "scan" then
+            local started, reason = GW.LootJournal.Scan(function(result)
+                GW.Print(result.sent and ("Journal loot read for " .. result.encounters .. " bosses" .. (result.complete and "" or " (incomplete: some items had not loaded; scan again later)")
+                    .. ". It reaches the website after /reload or logout.") or "The journal listed nothing to send.")
+            end)
+            GW.Print(started and "Reading the Encounter Journal's loot for this instance, a boss at a time." or GW.LootJournal.REASONS[reason] or "The scan could not start.")
+        else
+            local status = sync.Status()
+            if not status.loaded then
+                GW.Print("No wishlist has reached the game yet. Build one on the website (Dungeon runs > Loot & wishlist); Guildweaver on your computer brings it in, then /reload.")
+            elseif not status.matched then
+                GW.Print("A wishlist file is loaded (" .. status.characters .. " character(s)), but none of them is this character. Sync this character once (/reload), then check the website.")
+            else
+                GW.Print(string.format("Wishlist for %s: %d wanted item(s), revision %s. Valuable BoE list: %s.", tostring(status.characterName), status.wanted, tostring(status.revision),
+                    status.market and (status.watch .. " item(s) on " .. status.market .. ", alerting from " .. alerts.FormatValue(alerts.Threshold())) or "none (no auction data for this character's faction and realm yet)"))
+            end
+            if status.result == "kept" or status.result == "stale" then
+                GW.Print("The newest file from the bridge was " .. (status.result == "stale" and "older than the one already loaded" or "missing or unreadable") .. "; the last good wishlist is in use.")
+            end
+            GW.Print("Alerts: wishlist " .. (prefs.wishlist ~= false and "on" or "off") .. ", valuable BoE " .. (prefs.boe ~= false and "on" or "off") .. ", sound " .. (prefs.sound ~= false and "on" or "off")
+                .. ". /gw loot test previews one; /gw loot wishlist|boe|sound|toast on|off, /gw loot sound soft|bell|coin, /gw loot threshold <gold>, /gw loot probe, /gw loot scan.")
+        end
+        return
+    end
+
     if command == "snapshot" then
         local snapshot = GW.Character.Capture("SLASH_COMMAND")
 
@@ -365,6 +427,7 @@ SlashCmdList.GUILDWEAVER = function(message)
         GW.Print("/gw farm start and /gw farm stop measure a farming run. /gw farm shows its status.")
         GW.Print("/gw dungeon shows the open dungeon run. Its timer starts on your first pull; /gw dungeon start and /gw dungeon stop control it by hand. /gw dungeon split [name] marks a split (named after your target without a name), /gw dungeon finish ends the run, /gw dungeon hud on|off shows or hides the tracker, /gw dungeon mode cycles minimized/compact/expanded. /gw obj manages your dungeon objectives.")
         GW.Print("/gw settings opens the settings; /gw minimap shows or hides the minimap button.")
+        GW.Print("/gw loot shows the wishlist the website sent and the alert settings. Wishlist items glow purple and valuable Bind-on-Equip items gold in Need/Greed rolls, with a chime. /gw loot test previews an alert; /gw loot wishlist|boe|sound|toast on|off; /gw loot threshold <gold>.")
         GW.Print("/gw opens Guildweaver. Telemetry capture is automatic at session start, during play, and logout. WoW writes it to disk on /reload and logout, when the bridge syncs it. /gw sync (or /gw capture) forces a checkpoint and a reload to sync now. /gw snapshot captures a diagnostic snapshot. /gw telemetry shows captured telemetry streams. /gw inventory rescans your bags and shows the inventory revision. /gw fishing shows the casts and catches recorded this session. /gw perf shows capture timings and counts (/gw perf reset clears them). /gw version shows the addon version. /gw reset resets the window position.")
         return
     end
