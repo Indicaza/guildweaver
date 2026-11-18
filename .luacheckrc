@@ -65,3 +65,10 @@ globals = {
     "UnitRace",
     "UnitSex",
 }
+
+-- Third-party code that is not Guildweaver's: the read-only reference
+-- add-ons (if checked out inside the add-on) and the test excerpt of them.
+exclude_files = {
+    "references/**",
+    "test/fixtures/journal_refs/**",
+}

@@ -40,7 +40,7 @@ Guide.ROLE_FOCUS = {
 }
 local PRIORITY_SCORE = { high = 30, medium = 20, low = 10 }
 
-local cache = { dungeons = {}, layouts = {}, spells = nil, items = nil, abilities = {} }
+local cache = { dungeons = {}, layouts = {}, spells = nil, items = nil, abilities = {}, pins = {}, display = {} }
 Guide.cache = cache
 
 local function data()
@@ -408,6 +408,167 @@ function Guide.LayoutPoints(instanceId)
     return points
 end
 
+-- Client art ------------------------------------------------------------------------------
+--
+-- Data/DungeonJournalArt.generated.lua (GW.DungeonJournalArt): the client's
+-- own dungeon maps as texture file IDs, Blizzard's journal positions of
+-- bosses on them, and creature display IDs for portraits. IDs only; the
+-- client draws the art, and a file it lacks simply stays empty.
+
+local function art()
+    if cache.art == nil then
+        local raw = GW.DungeonJournalArt
+        local ok, tables = false, nil
+        if raw and type(raw.load) == "function" then ok, tables = pcall(raw.load) end
+        cache.art = ok and type(tables) == "table" and tables or false
+    end
+    return cache.art or nil
+end
+Guide.Art = art
+
+-- The instance's floors: { { n = name or nil, t = 12 file IDs } }, or {}.
+function Guide.Floors(instanceId)
+    local maps = art() and art().maps
+    return maps and maps[tonumber(instanceId) or 0] or {}
+end
+
+-- Bosses the journal placed on the floors, matched to the atlas's bosses by
+-- name: { creature, index, floor, x, y } (x, y 0..1 of the picture). A boss
+-- the journal did not place has no pin: its spot is never guessed, and the
+-- atlas's own spawn layout (another projection) is never laid over the map.
+function Guide.Pins(instanceId)
+    instanceId = tonumber(instanceId) or 0
+    local cached = cache.pins[instanceId]
+    if cached then return cached end
+    local dungeon = Guide.Dungeon(instanceId)
+    local placed = art() and art().pins and art().pins[instanceId]
+    local floors = Guide.Floors(instanceId)
+    local pins = {}
+    if dungeon and placed then
+        local byName = {}
+        for _, pin in ipairs(placed) do
+            local key = Guide.NormalizeName(pin.n)
+            if key and floors[pin.f] then byName[key] = pin end
+        end
+        for index, boss in ipairs(dungeon.bosses) do
+            local pin = byName[Guide.NormalizeName(boss.name) or ""]
+            if pin then table.insert(pins, { creature = boss, index = index, floor = pin.f, x = pin.x, y = pin.y }) end
+        end
+    end
+    cache.pins[instanceId] = pins
+    return pins
+end
+
+function Guide.PinFor(instanceId, creature)
+    for _, pin in ipairs(Guide.Pins(instanceId)) do
+        if pin.creature == creature then return pin end
+    end
+    return nil
+end
+
+-- What the art table knows of a creature (by its own NPC ID only).
+function Guide.CreatureArt(creature)
+    local creatures = art() and art().creatures
+    return creatures and type(creature) == "table" and creature.npc and creatures[creature.npc] or nil
+end
+
+-- A creature's display ID for its portrait, resolved once per creature:
+-- the verified registry (Data/DungeonBosses.lua), what the HUD read from the
+-- client's journal, then the art table by NPC ID. Never an NPC ID itself.
+function Guide.DisplayId(instanceId, creature)
+    if type(creature) ~= "table" then return nil end
+    local cached = cache.display[creature]
+    if cached ~= nil then return cached or nil end
+    local displayId
+    local registry = GW.DungeonBosses
+    if creature.e and registry and type(registry.DisplayId) == "function" then
+        displayId = registry.DisplayId(instanceId, creature.e, creature.name)
+    end
+    local hud = GW.DungeonHud
+    local journal = hud and hud.journal and hud.journal[tonumber(instanceId) or 0]
+    if not displayId and creature.e and type(journal) == "table" then
+        for _, boss in ipairs(journal) do
+            if boss.encounterId == creature.e and boss.displayId then displayId = boss.displayId end
+        end
+    end
+    if not displayId then
+        local known = Guide.CreatureArt(creature)
+        displayId = known and known.d or nil
+    end
+    cache.display[creature] = displayId or false
+    return displayId
+end
+
+-- "21", "24-25" (with an en dash) or nil: the atlas's level, else the art
+-- table's.
+function Guide.CreatureLevel(creature)
+    if type(creature) ~= "table" then return nil end
+    if creature.lmin then return Guide.LevelText(creature.lmin, creature.lmax) end
+    local known = Guide.CreatureArt(creature)
+    if not known or not known.l then return nil end
+    local low, high = string.match(known.l, "^(%d+)%-(%d+)$")
+    if low then return Guide.LevelText(tonumber(low), tonumber(high)) end
+    return known.l
+end
+
+-- "Elite", "Rare elite", "Rare" or "Boss" (world boss), from the art table.
+local CLASS_NAMES = { e = "Elite", re = "Rare elite", r = "Rare", wb = "Boss" }
+function Guide.CreatureClass(creature)
+    local known = Guide.CreatureArt(creature)
+    return known and CLASS_NAMES[known.c] or nil
+end
+
+-- What this session observed of a boss in the dungeon run open here:
+-- "engaged" (fighting it now), "defeated" (killed in this run) or nil.
+-- Only the run's own events count (GW.DungeonSessions); nothing is assumed.
+-- run: the run to read (false: none); default the current one.
+function Guide.EncounterState(instanceId, creature, run)
+    if type(creature) ~= "table" then return nil end
+    if run == nil then run = Guide.CurrentRun() end
+    if not run or tonumber(run.instanceId) ~= tonumber(instanceId) then return nil end
+    local key = Guide.NormalizeName(creature.name)
+    local function same(encounterId, name)
+        if encounterId and creature.e then return tonumber(encounterId) == creature.e end
+        return key ~= nil and Guide.NormalizeName(name) == key
+    end
+    if run.engaged and same(run.engaged.encounterId, run.engaged.name) then return "engaged" end
+    for _, split in ipairs(run.splits or {}) do
+        if split.kind == "boss_kill" then
+            local encounterId = split.id and tonumber(tostring(split.id):match("^boss:(%d+)$"))
+            if same(encounterId, split.name) then return "defeated" end
+        end
+    end
+    return nil
+end
+
+-- The open dungeon run (GW.DungeonSessions), or false.
+function Guide.CurrentRun()
+    local sessions = GW.DungeonSessions
+    if not sessions or type(sessions.Current) ~= "function" then return false end
+    local ok, run = pcall(sessions.Current)
+    return ok and run or false
+end
+
+-- The dungeon to show outside an instance with nothing picked: the
+-- lowest-level dungeon (not raid) the player's level falls into, else the
+-- highest one below it, else the first.
+function Guide.SuggestedInstanceId(level)
+    if level == nil and type(Globals.UnitLevel) == "function" then
+        local ok, value = pcall(Globals.UnitLevel, "player")
+        level = ok and tonumber(value) or nil
+    end
+    local list = Guide.List()
+    local best, below
+    for _, entry in ipairs(list) do
+        if entry.kind ~= "raid" and entry.lmin and level then
+            if not best and level >= entry.lmin and level <= (entry.lmax or entry.lmin) then best = entry end
+            if entry.lmin <= level then below = entry end
+        end
+    end
+    local pick = best or below or list[1]
+    return pick and pick.id or nil
+end
+
 -- Formatting ------------------------------------------------------------------------------
 
 function Guide.LevelText(lmin, lmax)
@@ -436,7 +597,7 @@ function Guide.SelectedInstanceId()
     if current and (not value or value.follow ~= false) then return current end
     local picked = value and tonumber(value.instanceId)
     if picked and Guide.Index()[picked] then return picked end
-    return current or (Guide.List()[1] and Guide.List()[1].id) or nil
+    return current or Guide.SuggestedInstanceId()
 end
 
 function Guide.Select(instanceId)
@@ -458,7 +619,10 @@ function Guide.FollowCurrent()
 end
 
 function Guide.Reset()
-    cache.dungeons, cache.layouts, cache.spells, cache.items, cache.list = {}, {}, nil, nil, nil
+    cache.dungeons, cache.layouts, cache.spells, cache.items, cache.list, cache.pins = {}, {}, nil, nil, nil, {}
+    cache.art = nil
     cache.abilities = setmetatable({}, { __mode = "k" })
+    cache.display = setmetatable({}, { __mode = "k" })
 end
 cache.abilities = setmetatable({}, { __mode = "k" })
+cache.display = setmetatable({}, { __mode = "k" })

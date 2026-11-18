@@ -22,7 +22,7 @@ jobs:
 
       - name: Validate Lua syntax
         run: |
-          find . -name '*.lua' -print0 | xargs -0 -n1 luac5.1 -p
+          find . -path ./references -prune -o -name '*.lua' -print0 | xargs -0 -n1 luac5.1 -p
 
       - name: Run Luacheck
         run: luacheck .

@@ -407,6 +407,16 @@ function Hud.Portraits(run)
                 displayId = boss and boss.displayId or nil })
         end
     end
+    -- Faces the client gave no art for: the Dungeon Guide's display ID for
+    -- the same boss (read only from a dungeon already built in combat).
+    local guide = GW.DungeonGuideUI
+    if run and run.instanceId and guide and type(guide.DisplayIdForEntry) == "function" then
+        for _, entry in ipairs(entries) do
+            if not entry.displayId and entry.kind ~= "split" and (entry.encounterId or entry.name) then
+                entry.displayId = guide.DisplayIdForEntry(run.instanceId, entry)
+            end
+        end
+    end
     return entries
 end
 
@@ -640,10 +650,13 @@ local function setPortrait(circle, unit, fallback, displayId)
             return true
         end
     end
-    -- A creature display ID from the journal or the verified registry.
-    if displayId and not circle.hasFace and circle.display ~= displayId
-        and type(Globals.SetPortraitTextureFromCreatureDisplayID) == "function" then
-        if pcall(Globals.SetPortraitTextureFromCreatureDisplayID, circle.portrait, displayId) then
+    -- A creature display ID (the journal, the verified registry or the
+    -- Dungeon Guide's art table), drawn by the shared portrait engine
+    -- (UI/Portraits.lua): loaded once, never first drawn in combat.
+    local portraits = GW.Portraits
+    if displayId and not circle.hasFace and circle.display ~= displayId and portraits then
+        local result = portraits.Draw(circle.portrait, displayId)
+        if result == "ready" or result == "loading" then
             circle.display = displayId
             circle.icon = nil
             pcall(circle.portrait.SetTexCoord, circle.portrait, 0, 1, 0, 1)

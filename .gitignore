@@ -7,3 +7,6 @@ Thumbs.db
 Data/BridgeInbox.generated.lua
 Data/BridgeAcks.generated.lua
 Data/BridgeLoot.generated.lua
+# Read-only reference add-ons checked out next to or inside the add-on
+# (never part of it, never packaged).
+references/

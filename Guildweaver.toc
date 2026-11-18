@@ -46,6 +46,7 @@ Systems/SessionCapture.lua
 Systems/FarmingSessions.lua
 Data/DungeonBosses.lua
 Data/DungeonAtlas.generated.lua
+Data/DungeonJournalArt.generated.lua
 Systems/DungeonObjectives.lua
 Systems/DungeonSessions.lua
 Systems/InventoryCapture.lua
@@ -65,6 +66,8 @@ Systems/DungeonGuide.lua
 Telemetry/Compatibility.lua
 UI/Theme.lua
 UI/Widgets.lua
+UI/Portraits.lua
+UI/DungeonMap.lua
 UI/Prefs.lua
 UI/QuestLog.lua
 UI/DungeonHud.lua
