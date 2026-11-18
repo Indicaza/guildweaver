@@ -170,7 +170,7 @@ do
             if boss.e then equal(data.encounters[boss.e], id, "encounter lookup") end
         end
         for _, list in ipairs({ dungeon.trash, dungeon.rares, dungeon.quests }) do
-            for _, entry in ipairs(list) do truthy(entry.name, id .. ": every entry keeps its name") end
+            for _, named in ipairs(list) do truthy(named.name, id .. ": every entry keeps its name") end
         end
         truthy(#dungeon.quests <= Export.MAX_QUESTS, "quests bounded")
     end

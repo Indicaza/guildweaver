@@ -39,11 +39,9 @@ Forever verification from a Classic source, an encounter in two dungeons, a
 loot item without facts, a spell classified two ways, coordinates out of
 range) and a file over 480 KB.
 
-The packaged file's header names the Holdfast commit. **This PR's file was
-generated from Holdfast commit `943fcdf` (branch `feat/dungeon-atlas-loot`,
-PR Indicaza/holdfast#297, not merged yet)**, because that is where the
-reference loot and the quest details live. Regenerate it from Holdfast `main`
-once #297 is merged (or from `main` now, without `--loot`, for no loot).
+The packaged file's header names the Holdfast commit: currently `main` at
+`46af21b` (after Indicaza/holdfast#297 and #298). Regenerate it whenever the
+atlas or the reference loot changes on Holdfast `main`.
 
 What is exported (only what the game shows): names, level bands, zone and
 entrance, encounter and NPC IDs, up to 12 abilities per creature (name,
