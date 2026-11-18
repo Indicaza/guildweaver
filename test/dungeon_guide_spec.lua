@@ -368,43 +368,45 @@ do
     equal(view.title.gwText, "Deadmines")
     equal(guideUI.state.tab, "bosses")
     local detail = view.tabs.bosses.detail
-    equal(detail.name.gwText, view.tabs.bosses.list[3].left.gwText, "the detail shows the selected boss")
+    equal(detail.name.gwText, view.tabs.bosses.list[3].name.gwText, "the panel shows the selected encounter")
     for _, tab in ipairs({ "overview", "loot", "rares", "bosses" }) do
         view.tabBar.buttons[({ overview = 1, bosses = 2, loot = 3, rares = 4 })[tab]]:Click()
         equal(guideUI.state.tab, tab)
         truthy(view.tabs[tab].shown, tab .. " is shown")
     end
-    -- Overview: layout drawn once, reused.
+    -- Overview: the client's map of the floor, drawn once, reused.
     guideUI.state.tab = "overview"
     main:RefreshView()
-    local layout = view.tabs.overview.layout
-    equal(layout.drawn, 36, "the spawn layout is drawn")
-    local dots = #layout.dots
-    truthy(dots > 50, "with the dungeon's cells")
+    local map = view.tabs.overview.map
+    equal(map.gwDrawn, "36:2", "the floor of the selected boss (Gilnid, Ironclad Cove) is drawn")
+    equal(#map.tiles, 12, "from 12 tiles")
+    map.bar.prev:GetScript("OnClick")()
+    equal(map.gwDrawn, "36:1", "the floor arrow turns to the first floor")
+    contains(map.bar.label.gwText, "1/2", "the floor bar names the floor")
     main:RefreshView()
-    equal(#layout.dots, dots, "redrawing creates nothing new")
+    equal(#map.tiles, 12, "redrawing creates nothing new")
     -- Loot tab: the wanted filter.
     guideUI.state.tab = "loot"
     guideUI.state.lootFilter = "wanted"
     main:RefreshView()
-    contains(view.tabs.loot.rows[1].left.gwText, "Cruel Barb", "the wishlist filter shows the wanted drop")
+    contains(view.tabs.loot.rows[1].name.gwText, "Cruel Barb", "the wishlist filter shows the wanted drop")
     falsy(view.tabs.loot.rows[2].shown, "and only it")
     -- A dungeon with no wanted items: the empty state.
     guideUI.Show(48)
     guideUI.state.tab = "loot"
     main:RefreshView()
     contains(view.tabs.loot.empty.gwText, "None of your wishlist items drop here")
-    -- Rares tab lists rares then dangerous trash.
+    -- Trash & Rares lists rares then dangerous trash.
     guideUI.Show(36)
     guideUI.state.tab = "rares"
     main:RefreshView()
-    equal(view.tabs.rares.list[1].left.gwText, "Miner Johnson")
-    -- Reference note on every detail.
+    equal(view.tabs.rares.list[1].name.gwText, "Miner Johnson")
+    -- Reference note on every panel.
     contains(view.tabs.rares.detail.note.gwText, "unverified on Forever")
     equal(env.protectedCalls, 0)
 end
 
--- Combat: nothing large is created mid-fight; the layout waits for the end.
+-- Combat: nothing large is created mid-fight; the map waits for the end.
 do
     local env, addon = boot()
     local main, guideUI = addon.MainFrame, addon.DungeonGuideUI
@@ -419,12 +421,13 @@ do
     truthy(guideUI.Show(36), "an already built guide may be shown")
     guideUI.state.tab = "overview"
     main:RefreshView()
-    local layout = main.views.guide.tabs.overview.layout
-    falsy(layout.drawn == 36, "the layout is not drawn in combat")
+    local map = main.views.guide.tabs.overview.map
+    falsy(map.gwDrawn == "36:1", "the map's art is not set in combat")
     truthy(guideUI.pending)
+    contains(map.empty.gwText, "after combat")
     env.inCombat = false
     env:dispatch("PLAYER_REGEN_ENABLED")
-    equal(layout.drawn, 36, "drawn when combat ends")
+    equal(map.gwDrawn, "36:1", "drawn when combat ends")
     equal(env.protectedCalls, 0)
 end
 
@@ -462,14 +465,12 @@ do
     equal(onUpdates(), updatesBefore, "the guide adds no OnUpdate handlers")
     equal(env:itemTooltipScans(), 0, "no item tooltip scans")
     equal(env:callCount("GetItemInfo"), 0, "no item info queries")
-    -- Frames: only layout dots grow, up to the largest dungeon's cells.
-    local maxCells = 0
-    for _, entry in ipairs(guide.List()) do maxCells = math.max(maxCells, #guide.LayoutPoints(entry.id)) end
-    truthy(#env.frames - framesAfterFirst <= 120, "browsing every dungeon adds few frames (" .. (#env.frames - framesAfterFirst) .. ")")
-    truthy(#main.views.guide.tabs.overview.layout.dots <= maxCells, "layout dots are pooled")
+    -- Frames: only map pins grow, up to the most pins on one floor.
+    truthy(#env.frames - framesAfterFirst <= 60, "browsing every dungeon adds few frames (" .. (#env.frames - framesAfterFirst) .. ")")
+    equal(#main.views.guide.tabs.overview.map.tiles, 12, "the map's 12 tiles are reused for every dungeon")
     collectgarbage("collect")
-    print(string.format("guide: %d dungeons browsed, %d layout dots pooled, %d KB Lua memory in the fake client", #guide.List(),
-        #main.views.guide.tabs.overview.layout.dots, math.floor(collectgarbage("count"))))
+    print(string.format("guide: %d dungeons browsed, %d frames after the first open, %d map pins pooled, %d KB Lua memory in the fake client",
+        #guide.List(), #env.frames - framesAfterFirst, #main.views.guide.tabs.overview.map.pins, math.floor(collectgarbage("count"))))
 end
 
 -- The HUD: Guide button, boss faces with mechanics and a click into the guide.

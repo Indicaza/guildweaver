@@ -1,0 +1,3 @@
+## Title: DungeonPlanner (test excerpt: the boss data files only)
+Data\Bosses\ragefire-chasm.lua
+Data\Bosses\the-deadmines.lua
