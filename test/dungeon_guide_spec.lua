@@ -1,0 +1,530 @@
+-- The Dungeon Guide: the build-time exporter (Holdfast's atlas JSON -> Lua),
+-- the packaged data's integrity and size, lookups by encounter/NPC/name,
+-- ability ordering per role, wishlist and acquired state from LootSync,
+-- current-instance detection, selection across /reload, the dashboard view,
+-- the HUD's links into it, and what is (not) done in combat.
+--
+-- Fixtures: test/fixtures/atlas_mini.json and reference_loot_mini.json are a
+-- real excerpt of Holdfast's atlas (Deadmines and Wailing Caverns), cut by
+-- hand-free script; nothing in them is made up for the test.
+
+local Env = dofile("test/support/wow_env.lua")
+local Export = dofile("scripts/exportDungeonAtlas.lua")
+
+local function equal(actual, expected, label)
+    if actual ~= expected then
+        error((label or "value") .. ": expected " .. tostring(expected) .. ", got " .. tostring(actual), 2)
+    end
+end
+
+local function truthy(value, label)
+    if not value then error((label or "value") .. ": expected truthy value", 2) end
+end
+
+local function falsy(value, label)
+    if value then error((label or "value") .. ": expected nil or false, got " .. tostring(value), 2) end
+end
+
+local function contains(text, needle, label)
+    if type(text) ~= "string" or not string.find(text, needle, 1, true) then
+        error((label or "text") .. ": " .. tostring(text) .. " does not contain " .. needle, 2)
+    end
+end
+
+local function read(path)
+    local file = assert(io.open(path, "rb"))
+    local text = file:read("*a")
+    file:close()
+    return (string.gsub(text, "\r\n", "\n"))
+end
+
+local function loadGenerated(text)
+    local chunk = assert((loadstring or load)(text, "=generated"))
+    local holder = {}
+    local data = chunk("Guildweaver", holder)
+    return data, holder
+end
+
+local ATLAS = read("test/fixtures/atlas_mini.json")
+local LOOT = read("test/fixtures/reference_loot_mini.json")
+local COMMIT = "943fcdf01844efb4151a22f4ff5decfe8e78a75a"
+
+-- Exporter: deterministic, valid Lua 5.1, nothing invented -----------------------------
+
+do
+    local first, problems = Export.run(ATLAS, LOOT, COMMIT)
+    equal(#problems, 0, "the excerpt exports cleanly: " .. table.concat(problems, "; "))
+    local second = Export.run(ATLAS, LOOT, COMMIT)
+    equal(first, second, "the same inputs give byte-identical Lua")
+    contains(first, COMMIT, "the source commit is in the file")
+    local data, holder = loadGenerated(first)
+    equal(holder.DungeonAtlasData, data, "the file registers GW.DungeonAtlasData")
+    equal(data.schema, 1)
+    equal(data.source.commit, COMMIT)
+    truthy(data.source.lootRevision, "the loot file's revision is kept")
+    truthy(#data.sources >= 2, "sources with licences")
+
+    -- Index and lookups.
+    equal(data.index[36].name, "Deadmines")
+    equal(data.index[36].bosses, 3)
+    equal(data.encounters[2747], 36, "VanCleef's encounter is the Deadmines'")
+    equal(data.npcs[3586], 36, "a rare's NPC id maps to its dungeon")
+    equal(type(data.dungeons[36]), "function", "detail is built on demand")
+
+    local dm = data.dungeons[36]()
+    local vancleef = dm.bosses[3]
+    equal(vancleef.name, "Edwin VanCleef")
+    equal(vancleef.e, 2747)
+    equal(vancleef.npc, 639)
+    equal(#vancleef.loot, 5, "VanCleef's reference loot")
+    local items = data.items()
+    equal(items[5191].n, "Cruel Barb")
+    equal(items[5191].q, 3)
+    falsy(items[5191].chance, "no drop chances anywhere")
+    for id, item in pairs(items) do
+        truthy(item.n, "item " .. id .. " has a name")
+    end
+    local spells = data.spells()
+    local cookie = dm.bosses[2]
+    local kicks = 0
+    for _, spellId in ipairs(cookie.ab) do
+        local spell = spells[spellId]
+        truthy(spell, "every ability id has spell facts")
+        falsy(spell.v, "nothing claims Forever verification")
+        if spell.c == "interrupt" then
+            equal(spell.k, true, "an interrupt spell is one the client marks interruptible")
+            kicks = kicks + 1
+        end
+    end
+    equal(kicks, 1, "Cookie has one interruptible cast")
+    for _, quest in ipairs(dm.quests) do
+        for _, itemId in ipairs(quest.rew or {}) do truthy(items[itemId], "quest reward " .. itemId .. " has facts") end
+    end
+    truthy(dm.layout and #dm.layout.pts % 4 == 0, "the layout is packed as 4 hex digits per cell")
+
+    -- Without the loot file: same dungeons, no loot.
+    local noLoot, noLootProblems = Export.run(ATLAS, nil, COMMIT)
+    equal(#noLootProblems, 0)
+    local bare = loadGenerated(noLoot)
+    equal(bare.dungeons[36]().bosses[3].loot, nil, "no reference loot, no rows")
+end
+
+do
+    -- Problems are reported, not papered over.
+    local atlas = Export.decode(ATLAS)
+    atlas.dungeons[1].bosses[2].abilities[1].verifiedForForever = true
+    atlas.dungeons[2].bosses[1].encounterId = 2747
+    local loot = Export.decode(LOOT)
+    loot.items["5191"] = nil
+    local _, problems = Export.normalize(atlas, loot)
+    local text = table.concat(problems, "\n")
+    contains(text, "claims Forever verification", "a Classic ability cannot claim Forever verification")
+    contains(text, "encounter 2747 is in two dungeons")
+    contains(text, "item 5191 has no facts", "an item id without facts is refused")
+    local ok, message = pcall(Export.normalize, { schemaVersion = 2, dungeons = {} })
+    falsy(ok)
+    contains(message, "schemaVersion 1")
+    -- JSON edge cases the atlas uses.
+    local decoded = Export.decode('{"a":"Rhahk\\u0027Zor \\u00b7 x","b":[1,-2.5,1e2,null,true]}')
+    equal(decoded.a, "Rhahk'Zor \194\183 x")
+    equal(decoded.b[3], 100)
+    equal(decoded.b[4], Export.NULL)
+end
+
+-- The packaged file: loads, bounded, consistent -----------------------------------------
+
+do
+    local text = read("Data/DungeonAtlas.generated.lua")
+    truthy(#text < Export.MAX_BYTES, "the packaged atlas stays under " .. Export.MAX_BYTES .. " bytes (" .. #text .. ")")
+    collectgarbage("collect")
+    local before = collectgarbage("count")
+    local data = loadGenerated(text)
+    collectgarbage("collect")
+    local atLogin = collectgarbage("count") - before
+    truthy(atLogin < 1024, "at login the atlas costs under 1 MB of Lua memory (" .. math.floor(atLogin) .. " KB)")
+    print(string.format("packaged atlas: %d bytes, %d KB of Lua memory at login", #text, math.floor(atLogin)))
+    truthy(data.source.commit and #data.source.commit == 40, "a full Holdfast commit")
+    local spells, items = data.spells(), data.items()
+    local dungeons = 0
+    for id, entry in pairs(data.index) do
+        dungeons = dungeons + 1
+        local dungeon = data.dungeons[id]()
+        equal(dungeon.id, id)
+        equal(#dungeon.bosses, entry.bosses, id .. ": index boss count")
+        for _, list in ipairs({ dungeon.bosses, dungeon.trash, dungeon.rares }) do
+            for _, creature in ipairs(list) do
+                truthy(#(creature.ab or {}) <= Export.MAX_ABILITIES, "abilities bounded")
+                for _, spellId in ipairs(creature.ab or {}) do
+                    local spell = spells[spellId]
+                    truthy(spell, id .. ": spell " .. spellId .. " has facts")
+                    truthy(Export.CATEGORIES[spell.c], "known category")
+                    falsy(spell.v, "nothing is verified on Forever yet")
+                    if spell.c == "interrupt" then equal(spell.k, true, spell.n .. ": interrupt means the client marks it interruptible") end
+                end
+                for _, itemId in ipairs(creature.loot or {}) do truthy(items[itemId], "loot item " .. itemId .. " has facts") end
+                if creature.x then truthy(creature.x >= 0 and creature.x <= 1000 and creature.y >= 0 and creature.y <= 1000, "positions in range") end
+            end
+        end
+        for _, boss in ipairs(dungeon.bosses) do
+            truthy(boss.name, id .. ": every boss keeps its name (encounter " .. tostring(boss.e) .. ")")
+            if boss.e then equal(data.encounters[boss.e], id, "encounter lookup") end
+        end
+        for _, list in ipairs({ dungeon.trash, dungeon.rares, dungeon.quests }) do
+            for _, entry in ipairs(list) do truthy(entry.name, id .. ": every entry keeps its name") end
+        end
+        truthy(#dungeon.quests <= Export.MAX_QUESTS, "quests bounded")
+    end
+    equal(dungeons, 26, "26 dungeons and raids")
+end
+
+-- The add-on in the fake client --------------------------------------------------------
+
+local world
+local DEADMINES = { name = "The Deadmines", type = "party", difficultyId = 1, difficultyName = "Normal", maxPlayers = 5, id = 36 }
+local WAILING = { name = "Wailing Caverns", type = "party", difficultyId = 1, difficultyName = "Normal", maxPlayers = 5, id = 43 }
+local UNKNOWN = { name = "Excavation Site: Wetlands", type = "party", difficultyId = 1, difficultyName = "Normal", maxPlayers = 5, id = 2998 }
+
+local function installWorld(env)
+    local G = _G
+    G.IsInInstance = function() return world.instance ~= nil, world.instance and world.instance.type or "none" end
+    G.GetInstanceInfo = function()
+        local instance = world.instance
+        if not instance then return "Elwynn Forest", "none", 0, "", 0, 0, false, 0 end
+        return instance.name, instance.type, instance.difficultyId, instance.difficultyName, instance.maxPlayers, 0, false, instance.id
+    end
+    G.UnitXP = function() return 1000 end
+    G.UnitXPMax = function() return 5000 end
+    G.GetMaxPlayerLevel = function() return 60 end
+    G.GetNumGroupMembers = function() return 5 end
+    G.GetInstanceLockTimeRemaining = function() return 3600, false, 7, 0 end
+    G.GetInstanceLockTimeRemainingEncounter = nil
+    G.EJ_GetInstanceForMap, G.EJ_SelectInstance, G.EJ_GetEncounterInfoByIndex, G.EJ_GetCreatureInfo = nil, nil, nil, nil
+    G.C_Map = nil
+    G.UnitFactionGroup = function() return "Alliance" end
+    G.UnitGroupRolesAssigned = nil
+    for _, name in ipairs({ "RollOnLoot", "ConfirmLootRoll", "CastSpellByName", "UseAction", "TargetUnit", "RunMacroText" }) do
+        G[name] = function() env.protectedCalls = (env.protectedCalls or 0) + 1 end
+    end
+end
+
+local function fixtureInbox()
+    local holder = {}
+    assert(loadfile("test/fixtures/BridgeLoot.generated.lua"))("Guildweaver", holder)
+    return holder.BridgeLoot
+end
+
+local function boot(options)
+    options = options or {}
+    world = { instance = nil }
+    local env = Env.new()
+    local addon = env:load()
+    installWorld(env)
+    env.protectedCalls = 0
+    if options.db then GuildweaverDB = options.db end
+    if options.inbox ~= false then addon.BridgeLoot = fixtureInbox() end
+    env:login()
+    env:advance(3)
+    return env, addon
+end
+
+local function zone(env, instance)
+    world.instance = instance
+    env:dispatch("PLAYER_ENTERING_WORLD", false, false)
+    env:advance(2)
+end
+
+-- Lookups and abilities.
+do
+    local env, addon = boot()
+    local guide = addon.DungeonGuide
+    truthy(guide.Available(), "the packaged atlas is loaded")
+    falsy(guide.IsBuilt(36), "nothing is built at login")
+    equal(guide.InstanceFor(2746), 36, "Cookie's encounter -> Deadmines")
+    equal(guide.InstanceFor(nil, 3586), 36, "a rare's NPC -> Deadmines")
+    equal(guide.InstanceFor(999999), nil)
+
+    local boss, index, how = guide.FindBoss(36, 2747, "Somebody Else")
+    equal(boss.name, "Edwin VanCleef")
+    equal(how, "encounter", "the encounter ID wins over the name")
+    truthy(index and index > 0)
+    local _, _, byNpc = guide.FindBoss(36, nil, nil, 645)
+    equal(byNpc, "npc")
+    local byName, _, nameHow = guide.FindBoss(36, nil, "mr smite")
+    equal(byName and byName.name, "Mr. Smite", "names match without case or punctuation")
+    equal(nameHow, "name")
+    equal(guide.FindBoss(36, 999, "Cookie"), nil, "a different known encounter ID is not overridden by a name")
+    equal(guide.FindBoss(2998, 3480, "Saltspine"), nil, "a dungeon the atlas does not know has no guide")
+    equal(guide.Dungeon(2998), nil)
+    truthy(guide.IsBuilt(36), "built on first use")
+    equal(guide.Dungeon(36), guide.Dungeon(36), "and cached")
+
+    -- Labels: KICK only for an interruptible cast.
+    equal(guide.Label({ c = "interrupt", k = true }), "KICK")
+    equal(guide.Label({ c = "interrupt", k = false }), "CAST", "never claim a kick the data does not support")
+    equal(guide.Label({ c = "interrupt" }), "CAST")
+    equal(guide.Label({ c = "tank-danger" }), "TANK")
+    equal(guide.Label({ c = "healer-danger" }), "HEAL")
+    equal(guide.Label({ c = "dispel" }), "DISPEL")
+    equal(guide.Label({ c = "positioning" }), "MOVE")
+    equal(guide.Label({ c = "crowd-control" }), "CC")
+
+    -- Role ordering on a synthetic creature over the real spell table.
+    local spells = guide.Spells()
+    local function first(category, kick)
+        for id, spell in pairs(spells) do
+            if spell.c == category and spell.p == "high" and (kick == nil or spell.k == kick) then return id end
+        end
+    end
+    local creature = { ab = { first("crowd-control"), first("interrupt", true), first("healer-danger"), first("tank-danger") } }
+    for _, id in ipairs(creature.ab) do truthy(id, "the atlas has high-priority spells of each kind") end
+    local function topLabel(role)
+        local top = guide.TopMechanics(creature, role, 4)
+        return top[1].label, #top
+    end
+    equal(topLabel("dps"), "KICK", "damage dealers see the kick first")
+    equal(topLabel("healer"), "HEAL", "healers see the healer danger first")
+    equal(topLabel("tank"), "TANK", "tanks see the tank danger first")
+    local label, count = topLabel(nil)
+    equal(label, "CC", "no role: the atlas's own order")
+    equal(count, 4)
+    local quiet = { ab = {} }
+    equal(#guide.TopMechanics(quiet, "dps", 4), 0, "no abilities, no mechanics")
+
+    -- Current instance detection.
+    equal(guide.CurrentInstanceId(), nil, "outside: none")
+    zone(env, DEADMINES)
+    equal(guide.CurrentInstanceId(), 36)
+    zone(env, UNKNOWN)
+    equal(guide.CurrentInstanceId(), nil, "an instance the atlas does not know")
+    equal(env.protectedCalls, 0)
+end
+
+-- Wishlist and acquired state, read from LootSync.
+do
+    local _, addon = boot()
+    local guide, sync = addon.DungeonGuide, addon.LootSync
+    local rows = guide.LootRows(36)
+    local barb
+    for _, row in ipairs(rows) do if row.itemId == 5191 then barb = row end end
+    truthy(barb, "Cruel Barb is reference loot in the Deadmines")
+    equal(barb.from, "Edwin VanCleef")
+    equal(barb.kind, "boss")
+    truthy(barb.wanted, "and on Rook's website wishlist")
+    equal(barb.wanted.priority, "high")
+    falsy(barb.acquired)
+    equal(guide.WantedCount(36), 1)
+    local vancleef = guide.FindBoss(36, 2747)
+    truthy(guide.HasWantedLoot(vancleef), "VanCleef carries a wanted drop")
+    falsy(guide.HasWantedLoot(guide.FindBoss(36, 2746)), "Cookie does not")
+    -- The wishlist's own source names a dungeon ("Wailing Caverns").
+    local belt
+    for _, row in ipairs(guide.LootRows(43)) do if row.itemId == 6468 then belt = row end end
+    truthy(belt and belt.wanted, "a wanted item that names the dungeon shows there")
+    -- Acquired: the game said so this session.
+    sync.MarkAcquired("i:5191")
+    for _, row in ipairs(guide.LootRows(36)) do if row.itemId == 5191 then barb = row end end
+    truthy(barb.acquired, "acquired once the game reported it")
+    equal(guide.WantedCount(36), 0, "acquired items stop counting")
+end
+
+-- No website wishlist: nothing is wanted, nothing breaks.
+do
+    local _, addon = boot({ inbox = false })
+    local guide = addon.DungeonGuide
+    equal(guide.WantedCount(36), 0)
+    truthy(#guide.LootRows(36) > 0, "reference loot still lists")
+end
+
+-- Selection survives /reload; the guide follows the instance unless the player picked.
+do
+    local env, addon = boot()
+    local guide = addon.DungeonGuide
+    truthy(guide.Select(43))
+    equal(guide.SelectedInstanceId(), 43)
+    falsy(guide.Select(2998), "a dungeon the atlas does not know cannot be picked")
+    local saved = GuildweaverDB
+    local env2, again = boot({ db = saved })
+    equal(again.DungeonGuide.SelectedInstanceId(), 43, "the pick is kept across /reload")
+    zone(env2, DEADMINES)
+    equal(again.DungeonGuide.SelectedInstanceId(), 36, "inside a known dungeon the guide follows it")
+    again.DungeonGuide.Select(43)
+    equal(again.DungeonGuide.SelectedInstanceId(), 43, "picking another dungeon inside stops following")
+    again.DungeonGuide.FollowCurrent()
+    equal(again.DungeonGuide.SelectedInstanceId(), 36)
+    local _ = env
+end
+
+-- The dashboard view: built on first open, every tab, empty states.
+do
+    local env, addon = boot()
+    local main, guideUI = addon.MainFrame, addon.DungeonGuideUI
+    local hasGuide = false
+    for _, entry in ipairs(main.NAV) do if entry.key == "guide" then hasGuide = true end end
+    truthy(hasGuide, "the dashboard lists the Dungeon Guide")
+    falsy(main.views, "nothing built before the window opens")
+    truthy(guideUI.Show(36, 3))
+    local view = main.views.guide
+    truthy(view, "the view is built on open")
+    equal(view.title.gwText, "Deadmines")
+    equal(guideUI.state.tab, "bosses")
+    local detail = view.tabs.bosses.detail
+    equal(detail.name.gwText, view.tabs.bosses.list[3].left.gwText, "the detail shows the selected boss")
+    for _, tab in ipairs({ "overview", "loot", "rares", "bosses" }) do
+        view.tabBar.buttons[({ overview = 1, bosses = 2, loot = 3, rares = 4 })[tab]]:Click()
+        equal(guideUI.state.tab, tab)
+        truthy(view.tabs[tab].shown, tab .. " is shown")
+    end
+    -- Overview: layout drawn once, reused.
+    guideUI.state.tab = "overview"
+    main:RefreshView()
+    local layout = view.tabs.overview.layout
+    equal(layout.drawn, 36, "the spawn layout is drawn")
+    local dots = #layout.dots
+    truthy(dots > 50, "with the dungeon's cells")
+    main:RefreshView()
+    equal(#layout.dots, dots, "redrawing creates nothing new")
+    -- Loot tab: the wanted filter.
+    guideUI.state.tab = "loot"
+    guideUI.state.lootFilter = "wanted"
+    main:RefreshView()
+    contains(view.tabs.loot.rows[1].left.gwText, "Cruel Barb", "the wishlist filter shows the wanted drop")
+    falsy(view.tabs.loot.rows[2].shown, "and only it")
+    -- A dungeon with no wanted items: the empty state.
+    guideUI.Show(48)
+    guideUI.state.tab = "loot"
+    main:RefreshView()
+    contains(view.tabs.loot.empty.gwText, "None of your wishlist items drop here")
+    -- Rares tab lists rares then dangerous trash.
+    guideUI.Show(36)
+    guideUI.state.tab = "rares"
+    main:RefreshView()
+    equal(view.tabs.rares.list[1].left.gwText, "Miner Johnson")
+    -- Reference note on every detail.
+    contains(view.tabs.rares.detail.note.gwText, "unverified on Forever")
+    equal(env.protectedCalls, 0)
+end
+
+-- Combat: nothing large is created mid-fight; the layout waits for the end.
+do
+    local env, addon = boot()
+    local main, guideUI = addon.MainFrame, addon.DungeonGuideUI
+    env.inCombat = true
+    falsy(guideUI.Show(36), "the guide is not built in combat")
+    falsy(main.views and main.views.guide, "no view created")
+    env.inCombat = false
+    guideUI.Show(43)
+    guideUI.state.tab = "bosses"
+    main:RefreshView()
+    env.inCombat = true
+    truthy(guideUI.Show(36), "an already built guide may be shown")
+    guideUI.state.tab = "overview"
+    main:RefreshView()
+    local layout = main.views.guide.tabs.overview.layout
+    falsy(layout.drawn == 36, "the layout is not drawn in combat")
+    truthy(guideUI.pending)
+    env.inCombat = false
+    env:dispatch("PLAYER_REGEN_ENABLED")
+    equal(layout.drawn, 36, "drawn when combat ends")
+    equal(env.protectedCalls, 0)
+end
+
+-- Performance: every dungeon, every tab, no item or tooltip scans, no
+-- OnUpdate handlers, bounded frames, one build per dungeon.
+do
+    local env, addon = boot()
+    local main, guideUI, guide = addon.MainFrame, addon.DungeonGuideUI, addon.DungeonGuide
+    local function onUpdates()
+        local count = 0
+        for _, frame in ipairs(env.frames) do
+            if frame.scripts.OnUpdate then count = count + 1 end
+        end
+        return count
+    end
+    local updatesBefore = onUpdates()
+    env:resetCalls()
+    guideUI.Show(36)
+    local framesAfterFirst = #env.frames
+    local builds = 0
+    local build = guide.Dungeon
+    guide.Dungeon = function(id)
+        if not guide.IsBuilt(id) then builds = builds + 1 end
+        return build(id)
+    end
+    for _, entry in ipairs(guide.List()) do
+        guideUI.Show(entry.id)
+        for _, tab in ipairs({ "overview", "bosses", "loot", "rares" }) do
+            guideUI.state.tab = tab
+            main:RefreshView()
+        end
+    end
+    guide.Dungeon = build
+    truthy(builds <= #guide.List(), "each dungeon is built at most once")
+    equal(onUpdates(), updatesBefore, "the guide adds no OnUpdate handlers")
+    equal(env:itemTooltipScans(), 0, "no item tooltip scans")
+    equal(env:callCount("GetItemInfo"), 0, "no item info queries")
+    -- Frames: only layout dots grow, up to the largest dungeon's cells.
+    local maxCells = 0
+    for _, entry in ipairs(guide.List()) do maxCells = math.max(maxCells, #guide.LayoutPoints(entry.id)) end
+    truthy(#env.frames - framesAfterFirst <= 120, "browsing every dungeon adds few frames (" .. (#env.frames - framesAfterFirst) .. ")")
+    truthy(#main.views.guide.tabs.overview.layout.dots <= maxCells, "layout dots are pooled")
+    collectgarbage("collect")
+    print(string.format("guide: %d dungeons browsed, %d layout dots pooled, %d KB Lua memory in the fake client", #guide.List(),
+        #main.views.guide.tabs.overview.layout.dots, math.floor(collectgarbage("count"))))
+end
+
+-- The HUD: Guide button, boss faces with mechanics and a click into the guide.
+do
+    local env, addon = boot()
+    local hud, sessions, main = addon.DungeonHud, addon.DungeonSessions, addon.MainFrame
+    zone(env, DEADMINES)
+    env:dispatch("PLAYER_REGEN_DISABLED")
+    env:dispatch("PLAYER_REGEN_ENABLED")
+    env:dispatch("ENCOUNTER_START", 2746, "Cookie", 1, 5)
+    env.serverTime = env.serverTime + 30
+    env:advance(30)
+    env:dispatch("ENCOUNTER_END", 2746, "Cookie", 1, 5, 1)
+    hud:SetMode("expanded")
+    hud:Refresh()
+    truthy(hud.guideButton, "the HUD has a Guide button")
+    local entries = hud.Portraits(sessions.Current())
+    equal(entries[1].encounterId, 2746, "a kill's face knows its encounter")
+    local lines = {}
+    local tooltip = _G.GameTooltip
+    tooltip.SetOwner = function() end
+    tooltip.ClearLines = function() lines = {} end
+    tooltip.AddLine = function(_, text) table.insert(lines, text) end
+    tooltip.Show = function() end
+    -- Out of combat the tooltip reads (and builds) the guide's boss.
+    hud.circles["boss:2746"].frame:GetScript("OnEnter")()
+    equal(lines[1], "Cookie")
+    contains(table.concat(lines, "\n"), "KICK", "the face's tooltip shows Cookie's kick")
+    contains(table.concat(lines, "\n"), "unverified on Forever")
+    -- A click opens the guide on that boss.
+    hud.circles["boss:2746"].frame:GetScript("OnClick")()
+    equal(main.current, "guide")
+    equal(main.views.guide.tabs.bosses.detail.name.gwText, "Cookie")
+    -- The expanded HUD's guide line (the next boss) and the timer still there.
+    local section = addon.DungeonGuideUI.hudSection
+    truthy(section.frame, "the guide line exists in the HUD")
+    truthy(hud.clock and hud.timerButton, "the timer is untouched")
+    equal(env.protectedCalls, 0)
+    -- In combat, the HUD never builds a dungeon it has not built.
+    addon.DungeonGuide.Reset()
+    env.inCombat = true
+    lines = {}
+    hud.circles["boss:2746"].frame:GetScript("OnEnter")()
+    falsy(addon.DungeonGuide.IsBuilt(36), "no build in combat")
+    equal(lines[1], "Cookie", "the plain tooltip still shows")
+    env.inCombat = false
+end
+
+-- Wailing Caverns, no wanted loot: unknown fields stay empty, nothing crashes.
+do
+    local env, addon = boot()
+    local guideUI = addon.DungeonGuideUI
+    zone(env, WAILING)
+    truthy(guideUI.Show())
+    equal(addon.MainFrame.views.guide.title.gwText, "Wailing Caverns", "the guide opens on the dungeon the player is in")
+end
+
+print("dungeon guide tests passed")

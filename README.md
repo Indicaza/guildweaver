@@ -23,6 +23,7 @@ The first milestone establishes a reliable addon foundation:
 
 - `/gw` toggles the Guildweaver dashboard
 - `/gw settings` opens the dashboard on Settings
+- `/gw guide` opens the Dungeon Guide on the dungeon you are in (or the last one picked)
 - `/gw minimap` shows or hides the minimap button
 - `/gw version` prints the current addon version
 - `/gw snapshot` captures a diagnostic snapshot; normal synchronization does not require it
@@ -38,7 +39,7 @@ The first milestone establishes a reliable addon foundation:
 
 **Minimap button.** The Guildweaver emblem on the minimap edge. Click opens or closes the dashboard; double-click opens it on Settings (a single click waits out the double-click window, so a double-click never opens and closes the window first); right-click shows quick actions (open, show or hide the dungeon HUD, start or stop a timed farming run, Sync & data, Settings, hide the button); drag moves it around the minimap. Its angle and visibility are saved. `/gw` always works, with or without it.
 
-**Dashboard.** One window with a sidebar: **Overview** (a card per module), **Dungeons** (the open run with Start/Pause/Resume, Split and End run, recent runs, objectives), **Farming** (start or stop a timed run, elapsed time and gathers, this session's fishing), **Sync & Data** (what is waiting for the bridge, Sync now, and an Advanced section with the diagnostic commands) and **Settings**. It remembers its position and the last view, closes with Escape, and is built the first time it is opened. While open it updates live numbers once a second; closed it costs nothing. Guild Quests is left out of this release (`MainFrame.QUESTS_ENABLED = false`); the quest log and the quest sync behind it are unchanged and come back by flipping that flag.
+**Dashboard.** One window with a sidebar: **Overview** (a card per module), **Dungeons** (the open run with Start/Pause/Resume, Split and End run, recent runs, objectives), **Dungeon Guide** (bosses, mechanics, loot and rares from the website's Dungeon Atlas, see `docs/dungeon-guide.md`), **Farming** (start or stop a timed run, elapsed time and gathers, this session's fishing), **Sync & Data** (what is waiting for the bridge, Sync now, and an Advanced section with the diagnostic commands) and **Settings**. It remembers its position and the last view, closes with Escape, and is built the first time it is opened. While open it updates live numbers once a second; closed it costs nothing. Guild Quests is left out of this release (`MainFrame.QUESTS_ENABLED = false`); the quest log and the quest sync behind it are unchanged and come back by flipping that flag.
 
 **Settings** are grouped by module: the minimap button and window position; the dungeon HUD (show in dungeons, collapse in combat, lock position, default view, size, reset position); loot alerts (wishlist, valuable BoE, the value they start at, the chime). Data collection has no switch: hiding the HUD or any window never stops recording.
 

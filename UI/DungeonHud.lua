@@ -386,11 +386,11 @@ function Hud.Portraits(run)
     for _, split in ipairs(run and run.splits or {}) do
         local kind = split.kind == "boss_kill" and "boss" or "split"
         local encounterId = split.id and tonumber(tostring(split.id):match("^boss:(%d+)$")) or nil
-        table.insert(entries, { id = split.id, name = split.name, kind = kind, at = split.at,
+        table.insert(entries, { id = split.id, name = split.name, kind = kind, at = split.at, encounterId = kind == "boss" and encounterId or nil,
             displayId = kind == "boss" and displayFor(encounterId, split.name) or nil })
     end
     if run and run.engaged then
-        table.insert(entries, { id = "engaged", name = run.engaged.name, kind = "engaged", at = run.engaged.since,
+        table.insert(entries, { id = "engaged", name = run.engaged.name, kind = "engaged", at = run.engaged.since, encounterId = run.engaged.encounterId,
             displayId = displayFor(run.engaged.encounterId, run.engaged.name) })
     end
     if run and run.bossesTotal then
@@ -403,7 +403,7 @@ function Hud.Portraits(run)
         local remaining = run.bossesTotal - (run.bossesDefeated or 0) - (run.engaged and 1 or 0)
         for index = 1, math.min(MAX_BOSSES, remaining) do
             local boss = ahead[index]
-            table.insert(entries, { id = "pending:" .. index, kind = "pending", name = boss and boss.name or nil,
+            table.insert(entries, { id = "pending:" .. index, kind = "pending", name = boss and boss.name or nil, encounterId = boss and boss.encounterId or nil,
                 displayId = boss and boss.displayId or nil })
         end
     end
@@ -561,18 +561,42 @@ end
 
 local show = UI.SetShown
 
+-- What the Dungeon Guide knows about a face's boss (its top mechanics and
+-- wanted loot), as tooltip lines; nil when it knows nothing.
+local function guideLines(entry)
+    local guide = GW.DungeonGuideUI
+    if not guide or type(guide.TooltipLines) ~= "function" or entry.kind == "split" or not Hud.run then return nil end
+    local ok, lines = pcall(guide.TooltipLines, Hud.run.instanceId, entry)
+    return ok and lines or nil
+end
+
 function Hud.ShowTooltip(circle)
     local entry = circle.entry
     if not entry then
         return
     end
+    local lines
     if entry.kind == "pending" then
         -- Named only when the client named it (journal or lockout).
-        UI.ShowTooltip(circle.frame, entry.name or "Boss ahead", { "Not defeated yet." }, "ANCHOR_TOP")
-        return
+        lines = { "Not defeated yet." }
+    else
+        local what = entry.kind == "boss" and "Defeated" or (entry.kind == "split" and "Split" or "Fighting since")
+        lines = { what .. (entry.at and (" at " .. Hud.FormatDuration(entry.at)) or "") }
     end
-    local what = entry.kind == "boss" and "Defeated" or (entry.kind == "split" and "Split" or "Fighting since")
-    UI.ShowTooltip(circle.frame, entry.name or "Boss", { what .. (entry.at and (" at " .. Hud.FormatDuration(entry.at)) or "") }, "ANCHOR_TOP")
+    for _, line in ipairs(guideLines(entry) or {}) do table.insert(lines, line) end
+    UI.ShowTooltip(circle.frame, entry.name or (entry.kind == "pending" and "Boss ahead" or "Boss"), lines, "ANCHOR_TOP")
+end
+
+-- A click on a boss face opens the Dungeon Guide on that boss. In combat
+-- the guide only opens when the dashboard was already built.
+function Hud.OpenGuide(entry)
+    local guide = GW.DungeonGuideUI
+    if not guide then return false end
+    local instanceId = Hud.run and Hud.run.instanceId or nil
+    if entry and entry.kind ~= "split" and type(guide.OpenForEntry) == "function" then
+        return guide.OpenForEntry(instanceId, entry)
+    end
+    return type(guide.Show) == "function" and guide.Show(instanceId) or false
 end
 
 -- A small round face: a coloured ring, the face inside. Its state lives in
@@ -597,6 +621,10 @@ local function newCircle(parent)
     local circle = { frame = frame, ring = ring, portrait = portrait, hasFace = false }
     frame:SetScript("OnEnter", function() Hud.ShowTooltip(circle) end)
     frame:SetScript("OnLeave", UI.HideTooltip)
+    pcall(frame.RegisterForClicks, frame, "LeftButtonUp")
+    frame:SetScript("OnClick", function()
+        if circle.entry then Hud.OpenGuide(circle.entry) end
+    end)
     return circle
 end
 
@@ -965,6 +993,9 @@ function Hud:Create()
         onClick = function() Hud:SetMode(MODES[math.min(3, MODE_INDEX[Hud:DisplayMode()] + 1)]) end })
     self.lessButton = UI.IconButton(frame, GLYPH.less, { size = 16, tooltip = "Less detail",
         onClick = function() Hud:SetMode(MODES[math.max(1, MODE_INDEX[Hud:DisplayMode()] - 1)]) end })
+    self.guideButton = UI.IconButton(frame, "?", { size = 16, tooltip = "Dungeon Guide",
+        tooltipLines = { "Bosses, mechanics, loot and rares for this dungeon. Click a boss face for its guide." },
+        onClick = function() Hud.OpenGuide(nil) end })
 
     -- The clock and the timer controls.
     local clockRow = row(frame, 30)
@@ -1078,9 +1109,15 @@ function Hud:Create()
     self.hint:SetPoint("RIGHT", hintRow, "RIGHT", 0, 0)
     pcall(self.hint.SetWordWrap, self.hint, false)
     self.hint:SetText("Boss kills not reported here: Split at each boss.")
-    -- Room for later sections (a loot wishlist): each is
-    -- { key, height, refresh(frame, run) -> shown }. None ship yet.
+    -- Room for later sections: each is { key, create(parent) -> frame,
+    -- refresh(frame, run) -> shown }. The Dungeon Guide adds its next-boss line.
     self.extraSections = self.extraSections or {}
+    for _, section in ipairs(self.extraSections) do
+        if section.create and not section.frame then
+            local ok, sectionFrame = pcall(section.create, frame)
+            section.frame = ok and sectionFrame or nil
+        end
+    end
 
     local footer = row(frame, 22)
     self.footer = footer
@@ -1219,6 +1256,8 @@ function Hud:Layout(mode, has)
     self.lessButton:ClearAllPoints()
     self.moreButton:ClearAllPoints()
     self.closeButton:ClearAllPoints()
+    self.guideButton:ClearAllPoints()
+    show(self.guideButton, not minimized)
     self.clock:ClearAllPoints()
     self.dot:ClearAllPoints()
     show(self.lessButton, not minimized)
@@ -1239,7 +1278,8 @@ function Hud:Layout(mode, has)
     if mode ~= "expanded" then
         self.moreButton:SetPoint("RIGHT", self.lessButton, "LEFT", -1, 0)
     end
-    pcall(self.title.SetWidth, self.title, width - PAD * 2 - (mode == "expanded" and 110 or 56))
+    self.guideButton:SetPoint("RIGHT", mode ~= "expanded" and self.moreButton or self.lessButton, "LEFT", -1, 0)
+    pcall(self.title.SetWidth, self.title, width - PAD * 2 - (mode == "expanded" and 127 or 73))
     local list = { self.header, self.clockRow }
     if has.state then table.insert(list, self.stateRow) end
     if has.progress and self:RefreshRow(self.run, mode, width) > 0 then

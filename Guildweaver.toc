@@ -45,6 +45,7 @@ Systems/CharacterStatEvents.lua
 Systems/SessionCapture.lua
 Systems/FarmingSessions.lua
 Data/DungeonBosses.lua
+Data/DungeonAtlas.generated.lua
 Systems/DungeonObjectives.lua
 Systems/DungeonSessions.lua
 Systems/InventoryCapture.lua
@@ -60,6 +61,7 @@ Systems/LootAlerts.lua
 Systems/LootRolls.lua
 Systems/LootJournal.lua
 Systems/Quests.lua
+Systems/DungeonGuide.lua
 Telemetry/Compatibility.lua
 UI/Theme.lua
 UI/Widgets.lua
@@ -68,5 +70,6 @@ UI/QuestLog.lua
 UI/DungeonHud.lua
 UI/LootAlertUI.lua
 UI/MainFrame.lua
+UI/DungeonGuide.lua
 UI/MinimapButton.lua
 Core.lua

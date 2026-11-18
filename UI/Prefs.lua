@@ -11,6 +11,10 @@ local Prefs = GW.UiPrefs
 local DEFAULTS = {
     minimap = { hide = false, angle = 215 },
     dashboard = { view = "overview" },
+    -- The Dungeon Guide: the tab, the role mechanics are ordered for
+    -- ("auto" = the group role when the client has one), whether it follows
+    -- the instance the player is in, and the last dungeon picked.
+    dungeonGuide = { tab = "overview", role = "auto", follow = true },
     -- Loot alerts in Need/Greed rolls. boeThreshold is copper: 10g.
     lootAlerts = { wishlist = true, boe = true, sound = true, toast = true, chime = "soft", boeThreshold = 100000 },
 }

@@ -1,0 +1,745 @@
+-- Build-time exporter: Holdfast's Dungeon Atlas -> Data/DungeonAtlas.generated.lua,
+-- packaged with the add-on. The game never downloads or parses anything; it
+-- loads the generated Lua like any other add-on file.
+--
+--   lua5.1 scripts/exportDungeonAtlas.lua [--check] --atlas <atlas.json>
+--       [--loot <reference-loot.json>] --commit <holdfast sha> [--out <file.lua>]
+--
+-- Inputs come from Indicaza/holdfast at one commit:
+--   backend/src/Atlas/data/atlas.json           dungeons, bosses, abilities, trash,
+--                                               rares, quests, spawn layouts
+--   backend/src/Atlas/data/reference-loot.json  Classic reference loot (optional)
+-- Nothing is added that those files do not say. Fields the game cannot use
+-- (art URLs, provenance URLs, area triggers, long descriptions) are left out.
+-- Output is deterministic: the same inputs and commit give byte-identical Lua
+-- (--check verifies the packaged file against them).
+--
+-- Memory: the file defines one small index (names, level bands, encounter
+-- and NPC id lookups). Every dungeon's detail, the spell table and the item
+-- table are functions: the client builds those tables only when the guide
+-- first needs them.
+
+local Export = {}
+
+Export.SCHEMA = 1
+Export.MAX_BYTES = 491520 -- the generated file must stay under 480 KB
+Export.MAX_ABILITIES = 12 -- per creature, highest priority first
+Export.MAX_QUESTS = 40 -- per dungeon (the atlas lists zone quests for some raids)
+Export.MAX_LOOT = 40 -- per creature
+Export.DEFAULT_TIER = "classic-reference"
+
+-- JSON ---------------------------------------------------------------------------
+
+local function decodeError(text, pos, what)
+    error(string.format("JSON: %s at byte %d near %q", what, pos, string.sub(text, pos, pos + 20)), 0)
+end
+
+local function utf8(code)
+    if code < 0x80 then return string.char(code) end
+    if code < 0x800 then return string.char(0xC0 + math.floor(code / 0x40), 0x80 + code % 0x40) end
+    if code < 0x10000 then
+        return string.char(0xE0 + math.floor(code / 0x1000), 0x80 + math.floor(code / 0x40) % 0x40, 0x80 + code % 0x40)
+    end
+    return string.char(0xF0 + math.floor(code / 0x40000), 0x80 + math.floor(code / 0x1000) % 0x40,
+        0x80 + math.floor(code / 0x40) % 0x40, 0x80 + code % 0x40)
+end
+
+local ESCAPES = { ['"'] = '"', ["\\"] = "\\", ["/"] = "/", b = "\b", f = "\f", n = "\n", r = "\r", t = "\t" }
+
+-- A JSON null: kept apart from "absent" while decoding.
+Export.NULL = setmetatable({}, { __tostring = function() return "null" end })
+
+function Export.decode(text)
+    local pos = 1
+    local value
+    local function skip()
+        pos = string.find(text, "[^ \t\r\n]", pos) or (#text + 1)
+    end
+    local function str()
+        local parts = {}
+        pos = pos + 1
+        while true do
+            local stop = string.find(text, '["\\]', pos)
+            if not stop then decodeError(text, pos, "unterminated string") end
+            table.insert(parts, string.sub(text, pos, stop - 1))
+            if string.sub(text, stop, stop) == '"' then
+                pos = stop + 1
+                return table.concat(parts)
+            end
+            local kind = string.sub(text, stop + 1, stop + 1)
+            if kind == "u" then
+                local code = tonumber(string.sub(text, stop + 2, stop + 5), 16)
+                if not code then decodeError(text, stop, "bad \\u escape") end
+                pos = stop + 6
+                if code >= 0xD800 and code <= 0xDBFF and string.sub(text, pos, pos + 1) == "\\u" then
+                    local low = tonumber(string.sub(text, pos + 2, pos + 5), 16)
+                    if low and low >= 0xDC00 and low <= 0xDFFF then
+                        code = 0x10000 + (code - 0xD800) * 0x400 + (low - 0xDC00)
+                        pos = pos + 6
+                    end
+                end
+                table.insert(parts, utf8(code))
+            else
+                if not ESCAPES[kind] then decodeError(text, stop, "bad escape") end
+                table.insert(parts, ESCAPES[kind])
+                pos = stop + 2
+            end
+        end
+    end
+    function value()
+        skip()
+        local c = string.sub(text, pos, pos)
+        if c == "{" then
+            local object = {}
+            pos = pos + 1
+            skip()
+            if string.sub(text, pos, pos) == "}" then pos = pos + 1 return object end
+            while true do
+                skip()
+                if string.sub(text, pos, pos) ~= '"' then decodeError(text, pos, "expected key") end
+                local key = str()
+                skip()
+                if string.sub(text, pos, pos) ~= ":" then decodeError(text, pos, "expected :") end
+                pos = pos + 1
+                object[key] = value()
+                skip()
+                local sep = string.sub(text, pos, pos)
+                pos = pos + 1
+                if sep == "}" then return object end
+                if sep ~= "," then decodeError(text, pos - 1, "expected , or }") end
+            end
+        elseif c == "[" then
+            local array = {}
+            pos = pos + 1
+            skip()
+            if string.sub(text, pos, pos) == "]" then pos = pos + 1 return array end
+            while true do
+                array[#array + 1] = value()
+                skip()
+                local sep = string.sub(text, pos, pos)
+                pos = pos + 1
+                if sep == "]" then return array end
+                if sep ~= "," then decodeError(text, pos - 1, "expected , or ]") end
+            end
+        elseif c == '"' then
+            return str()
+        elseif string.sub(text, pos, pos + 3) == "true" then
+            pos = pos + 4 return true
+        elseif string.sub(text, pos, pos + 4) == "false" then
+            pos = pos + 5 return false
+        elseif string.sub(text, pos, pos + 3) == "null" then
+            pos = pos + 4 return Export.NULL
+        end
+        local number = string.match(text, "^-?%d+%.?%d*[eE]?[-+]?%d*", pos)
+        if not number or number == "" then decodeError(text, pos, "unexpected character") end
+        pos = pos + #number
+        return tonumber(number)
+    end
+    local result = value()
+    skip()
+    if pos <= #text then decodeError(text, pos, "trailing data") end
+    return result
+end
+
+-- Values -------------------------------------------------------------------------
+
+local NULL = Export.NULL
+
+local function present(value)
+    if value == NULL then return nil end
+    return value
+end
+
+local function int(value)
+    value = present(value)
+    if type(value) ~= "number" or value ~= math.floor(value) then return nil end
+    return value
+end
+
+local function str(value, max)
+    value = present(value)
+    if type(value) ~= "string" or value == "" then return nil end
+    return max and string.sub(value, 1, max) or value
+end
+
+local function list(value)
+    value = present(value)
+    return type(value) == "table" and value or {}
+end
+
+-- 0-1 map coordinates as integer per-mille, or nil when out of range.
+local function permille(value)
+    value = present(value)
+    if type(value) ~= "number" or value < 0 or value > 1 then return nil end
+    return math.floor(value * 1000 + 0.5)
+end
+
+local function position(raw)
+    raw = present(raw)
+    if type(raw) ~= "table" then return nil, nil end
+    local x, y = permille(raw.x), permille(raw.y)
+    if not x or not y then return nil, nil end
+    return x, y
+end
+
+Export.CATEGORIES = {
+    ["interrupt"] = true, ["tank-danger"] = true, ["healer-danger"] = true, ["positioning"] = true,
+    ["dispel"] = true, ["crowd-control"] = true, ["special-mechanic"] = true,
+}
+local CATEGORIES = Export.CATEGORIES
+local PRIORITY_RANK = { high = 1, medium = 2, low = 3 }
+local VERIFIED_TIERS = { ["official-client"] = true, ["forever-reference"] = true }
+local FACTIONS = { alliance = "A", horde = "H", both = "B" }
+
+-- Normalize --------------------------------------------------------------------------
+
+local function newState()
+    return { problems = {}, spells = {}, items = {}, prov = {}, provIndex = {}, encounters = {}, npcs = {} }
+end
+
+local function problem(state, text)
+    table.insert(state.problems, text)
+end
+
+-- Spell facts go to one shared table; a creature keeps spell ids, highest
+-- priority first. A spell classified two ways is an atlas bug.
+local function abilities(state, raw, where)
+    local rows = {}
+    for index, ability in ipairs(list(raw)) do
+        local id, category = int(ability.spellId), str(ability.category)
+        local tier = str(ability.source) or "community-unverified"
+        if not id or not str(ability.name) or not CATEGORIES[category] then
+            problem(state, where .. ": ability " .. index .. " lacks an id, name or known category")
+        else
+            local verified = ability.verifiedForForever == true
+            if verified and not VERIFIED_TIERS[tier] then
+                problem(state, where .. ": " .. ability.name .. " claims Forever verification from " .. tier)
+                verified = false
+            end
+            local kick = present(ability.interruptible)
+            if kick ~= true and kick ~= false then kick = nil end
+            local roles = {}
+            for _, role in ipairs(list(ability.roles)) do
+                if role == "tank" or role == "healer" or role == "dps" then table.insert(roles, role) end
+            end
+            local fact = { name = str(ability.name, 60), category = category,
+                priority = PRIORITY_RANK[present(ability.priority)] and ability.priority or "low",
+                kick = kick, summary = str(ability.summary, 90), tier = tier, verified = verified or nil,
+                roles = #roles > 0 and table.concat(roles, ",") or nil }
+            local known = state.spells[id]
+            if known and (known.category ~= fact.category or known.priority ~= fact.priority or known.kick ~= fact.kick or known.tier ~= fact.tier) then
+                problem(state, where .. ": spell " .. id .. " is classified two ways")
+            end
+            state.spells[id] = known or fact
+            table.insert(rows, { id = id, rank = PRIORITY_RANK[fact.priority], index = index })
+        end
+    end
+    table.sort(rows, function(a, b)
+        if a.rank ~= b.rank then return a.rank < b.rank end
+        return a.index < b.index
+    end)
+    local ids, seen = {}, {}
+    for _, row in ipairs(rows) do
+        if not seen[row.id] and #ids < Export.MAX_ABILITIES then
+            seen[row.id] = true
+            table.insert(ids, row.id)
+        end
+    end
+    return ids
+end
+
+-- Provenance lines (source, tier, confidence, note) are shared; creatures
+-- and dungeons keep their indexes.
+local function provenance(state, raw)
+    local refs, seen = {}, {}
+    for _, line in ipairs(list(raw)) do
+        local source, tier = str(line.source), str(line.tier)
+        if source and tier then
+            local note = str(line.note, 120)
+            local key = table.concat({ source, tier, str(line.confidence) or "", note or "" }, "|")
+            if not state.provIndex[key] then
+                table.insert(state.prov, { source = source, tier = tier, confidence = str(line.confidence) or "low", note = note })
+                state.provIndex[key] = #state.prov
+            end
+            local ref = state.provIndex[key]
+            if not seen[ref] then
+                seen[ref] = true
+                table.insert(refs, ref)
+            end
+        end
+    end
+    table.sort(refs)
+    return refs
+end
+
+local function layoutOf(state, raw, where)
+    for _, map in ipairs(list(raw)) do
+        if str(map.kind) == "spawn-layout" and #list(map.points) > 0 then
+            local cells, seen = {}, {}
+            for _, point in ipairs(list(map.points)) do
+                local x, y = present(point[1]), present(point[2])
+                if type(x) ~= "number" or type(y) ~= "number" or x < 0 or x > 1 or y < 0 or y > 1 then
+                    problem(state, where .. ": layout point out of range")
+                else
+                    -- The atlas quantizes to a 1% grid: two hex digits each, 0-100.
+                    local cx, cy = math.floor(x * 100 + 0.5), math.floor(y * 100 + 0.5)
+                    local key = cx * 101 + cy
+                    if not seen[key] then
+                        seen[key] = true
+                        table.insert(cells, key)
+                    end
+                end
+            end
+            table.sort(cells)
+            local parts = {}
+            for _, key in ipairs(cells) do
+                table.insert(parts, string.format("%02x%02x", math.floor(key / 101), key % 101))
+            end
+            return { width = int(map.width) or 0, height = int(map.height) or 0, points = table.concat(parts) }
+        end
+    end
+    return nil
+end
+
+-- Item facts the game shows, from the reference-loot file. Unknown = nil.
+local function itemFact(raw)
+    raw = present(raw)
+    if type(raw) ~= "table" then return nil end
+    local weapon = present(raw.weapon)
+    return {
+        name = str(raw.name, 80), quality = int(raw.qualityId), icon = int(raw.iconFileDataId), slot = str(raw.slot, 30),
+        itemLevel = int(raw.itemLevel), requiredLevel = int(raw.requiredLevel), class = str(raw.itemClass, 20),
+        subclass = str(raw.itemSubclass, 30), bind = str(raw.bindType, 8), setName = str(raw.setName, 60), kind = str(raw.kind, 12),
+        dps = type(weapon) == "table" and type(present(weapon.dps)) == "number" and weapon.dps or nil,
+    }
+end
+
+-- An item id the reference file knows, or nil (and a problem).
+local function useItem(state, loot, itemId, where)
+    itemId = int(itemId)
+    -- Without the loot file there are no item facts: no items at all.
+    if not itemId or itemId < 1 or not loot then return nil end
+    local known = loot and present(loot.items) and present(loot.items[tostring(itemId)])
+    if not known then
+        problem(state, where .. ": item " .. itemId .. " has no facts in the reference loot file")
+        return nil
+    end
+    if not state.items[itemId] then state.items[itemId] = itemFact(known) end
+    return itemId
+end
+
+local function itemList(state, loot, raw, where)
+    local ids, seen = {}, {}
+    for _, value in ipairs(list(raw)) do
+        local id = useItem(state, loot, value, where)
+        if id and not seen[id] and #ids < Export.MAX_LOOT then
+            seen[id] = true
+            table.insert(ids, id)
+        end
+    end
+    return #ids > 0 and ids or nil
+end
+
+local function lootByDungeon(loot)
+    local byId = {}
+    for _, entry in ipairs(list(loot and loot.dungeons)) do
+        local id = int(entry.instanceId)
+        if id then byId[id] = entry end
+    end
+    return byId
+end
+
+local function quests(state, loot, raw, where)
+    local rows = {}
+    for _, quest in ipairs(list(raw)) do
+        local questId, name = int(quest.questId), str(quest.name, 80)
+        if questId and name then
+            local giver = present(quest.giver)
+            local rewards, choice = {}, false
+            for _, reward in ipairs(list(quest.rewards)) do
+                local id = useItem(state, loot, present(reward) and reward.itemId, where .. " quest " .. questId)
+                if id then
+                    table.insert(rewards, id)
+                    if reward.choice == true then choice = true end
+                end
+            end
+            local prereqs = {}
+            for index, pre in ipairs(list(quest.prerequisites)) do
+                if index > 3 then break end
+                local preName = str(present(pre) and pre.name, 80)
+                if preName then table.insert(prereqs, preName) end
+            end
+            local location = present(quest.location)
+            local lx, ly = position(location)
+            table.insert(rows, {
+                id = questId, name = name, level = int(quest.level), minLevel = int(quest.minLevel),
+                faction = FACTIONS[present(quest.faction) or ""] or nil,
+                giver = type(giver) == "table" and str(giver.name, 60) or nil,
+                objective = str(quest.objective, 160),
+                rewards = #rewards > 0 and rewards or nil, choice = choice or nil,
+                prereqs = #prereqs > 0 and prereqs or nil,
+                where = type(location) == "table" and str(location.zoneName, 40) or nil, x = lx, y = ly,
+                inside = present(quest.startsInside) == true or nil,
+            })
+        end
+    end
+    table.sort(rows, function(a, b)
+        local la, lb = a.minLevel or a.level or 999, b.minLevel or b.level or 999
+        if la ~= lb then return la < lb end
+        return a.id < b.id
+    end)
+    local kept = {}
+    for index = 1, math.min(#rows, Export.MAX_QUESTS) do kept[index] = rows[index] end
+    return kept, #rows
+end
+
+local function dungeonOf(state, raw, lootEntry, loot)
+    local id = int(raw.instanceId)
+    local where = "dungeon " .. tostring(id or raw.name)
+    local dungeon = {
+        id = id, name = str(raw.name, 80), kind = str(raw.kind) == "raid" and "raid" or "dungeon",
+        levelMin = int(raw.levelMin), levelMax = int(raw.levelMax), zone = str(raw.zoneName, 60),
+        bosses = {}, trash = {}, rares = {},
+    }
+    local ex, ey = position(raw.entrance)
+    if ex then dungeon.entrance = { mapId = int(raw.entrance.mapId), x = ex, y = ey } end
+    dungeon.layout = layoutOf(state, raw.maps, where)
+    dungeon.prov = provenance(state, raw.provenance)
+
+    -- Reference loot, matched by the ids the loot file carries.
+    local bossLoot, rareLoot = {}, {}
+    for _, entry in ipairs(list(lootEntry and lootEntry.bosses)) do
+        local key = int(entry.encounterId) and ("e" .. entry.encounterId) or (int(entry.npcId) and ("n" .. entry.npcId))
+        if key then bossLoot[key] = entry.itemIds end
+    end
+    for _, entry in ipairs(list(lootEntry and lootEntry.rares)) do
+        if int(entry.npcId) then rareLoot[entry.npcId] = entry.itemIds end
+    end
+
+    local npcs = {}
+    for index, boss in ipairs(list(raw.bosses)) do
+        local name = str(boss.name, 80)
+        if not name then
+            problem(state, where .. ": boss " .. index .. " has no name")
+        else
+            local encounterId, npcId = int(boss.encounterId), int(boss.npcId)
+            local x, y = position(boss.mapPosition)
+            local lootIds = (encounterId and bossLoot["e" .. encounterId]) or (npcId and bossLoot["n" .. npcId]) or nil
+            table.insert(dungeon.bosses, {
+                encounterId = encounterId, npcId = npcId, name = name, x = x, y = y,
+                abilities = abilities(state, boss.abilities, where .. " " .. name),
+                prov = provenance(state, boss.provenance),
+                loot = itemList(state, loot, lootIds, where .. " " .. name),
+            })
+            if encounterId then
+                if state.encounters[encounterId] and state.encounters[encounterId] ~= id then
+                    problem(state, where .. ": encounter " .. encounterId .. " is in two dungeons")
+                end
+                state.encounters[encounterId] = id
+            end
+            if npcId then npcs[npcId] = true end
+        end
+    end
+    for _, creature in ipairs(list(raw.creatures)) do
+        local name = str(creature.name, 80)
+        if name then
+            table.insert(dungeon.trash, { npcId = int(creature.npcId), name = name, levelMin = int(creature.levelMin), levelMax = int(creature.levelMax),
+                count = int(creature.count), abilities = abilities(state, creature.abilities, where .. " " .. name) })
+        end
+    end
+    for _, rare in ipairs(list(raw.rares)) do
+        local name, npcId = str(rare.name, 80), int(rare.npcId)
+        if name then
+            local x, y = position(rare.mapPosition)
+            table.insert(dungeon.rares, { npcId = npcId, name = name, levelMin = int(rare.levelMin), levelMax = int(rare.levelMax),
+                elite = rare.elite == true or nil, x = x, y = y, abilities = abilities(state, rare.abilities, where .. " " .. name),
+                loot = itemList(state, loot, npcId and rareLoot[npcId], where .. " " .. name) })
+            if npcId then npcs[npcId] = true end
+        end
+    end
+    -- Drops that are not a boss's or a rare's: the source creature's name.
+    local other = {}
+    for _, entry in ipairs(list(lootEntry and lootEntry.dungeonLoot)) do
+        local itemId = useItem(state, loot, entry.itemId, where .. " dungeon loot")
+        if itemId then table.insert(other, { itemId = itemId, source = str(entry.sourceName, 60) }) end
+    end
+    table.sort(other, function(a, b)
+        if a.itemId ~= b.itemId then return a.itemId < b.itemId end
+        return (a.source or "") < (b.source or "")
+    end)
+    dungeon.otherLoot = other
+    dungeon.quests, dungeon.questsTotal = quests(state, loot, raw.quests, where)
+    for npcId in pairs(npcs) do
+        if state.npcs[npcId] and state.npcs[npcId] ~= id then
+            problem(state, where .. ": npc " .. npcId .. " is in two dungeons")
+        end
+        state.npcs[npcId] = id
+    end
+    return dungeon
+end
+
+local function sourcesOf(atlas, loot)
+    local out, seen = {}, {}
+    for _, document in ipairs({ atlas, loot or {} }) do
+        for _, source in ipairs(list(document.sources)) do
+            local key = (str(source.source) or "?") .. "@" .. (str(source.revision) or "?")
+            if not seen[key] then
+                seen[key] = true
+                table.insert(out, { source = str(source.source) or "?", revision = str(source.revision) or "?", license = str(source.license, 200) })
+            end
+        end
+    end
+    table.sort(out, function(a, b) return a.source .. "@" .. a.revision < b.source .. "@" .. b.revision end)
+    return out
+end
+
+function Export.normalize(atlas, loot)
+    if type(atlas) ~= "table" or present(atlas.schemaVersion) ~= 1 or type(present(atlas.dungeons)) ~= "table" then
+        error("atlas: not a schemaVersion 1 atlas", 0)
+    end
+    if loot ~= nil and (type(loot) ~= "table" or present(loot.schemaVersion) ~= 1 or present(loot.dataset) ~= "atlas-reference-loot") then
+        error("reference loot: not a schemaVersion 1 atlas-reference-loot file", 0)
+    end
+    local state = newState()
+    local lootIndex = lootByDungeon(loot)
+    local dungeons, seen = {}, {}
+    for _, raw in ipairs(list(atlas.dungeons)) do
+        local id = int(raw.instanceId)
+        if not id or not str(raw.name) then
+            problem(state, "dungeon " .. tostring(raw.name) .. ": no instance id or name")
+        elseif seen[id] then
+            problem(state, "dungeon " .. id .. ": listed twice")
+        else
+            seen[id] = true
+            table.insert(dungeons, dungeonOf(state, raw, lootIndex[id], loot))
+        end
+    end
+    table.sort(dungeons, function(a, b) return a.id < b.id end)
+    return {
+        dungeons = dungeons, spells = state.spells, items = state.items, prov = state.prov, encounters = state.encounters, npcs = state.npcs,
+        sources = sourcesOf(atlas, loot), atlasGeneratedAt = str(atlas.generatedAt) or "",
+        lootRevision = loot and str(loot.revision) or nil, lootGeneratedAt = loot and str(loot.generatedAt) or nil,
+    }, state.problems
+end
+
+-- Lua output -------------------------------------------------------------------------
+
+local function quote(value)
+    return '"' .. string.gsub(value, '[%c"\\]', function(c)
+        if c == "\n" then return "\\n" end
+        if c == '"' or c == "\\" then return "\\" .. c end
+        return string.format("\\%03d", string.byte(c))
+    end) .. '"'
+end
+
+local function scalar(value)
+    if type(value) == "string" then return quote(value) end
+    if type(value) == "number" then
+        if value == math.floor(value) then return string.format("%d", value) end
+        return (string.gsub(string.format("%.2f", value), "%.?0+$", ""))
+    end
+    if value == true then return "true" end
+    if value == false then return "false" end
+    error("cannot write " .. type(value))
+end
+
+local function array(values)
+    local parts = {}
+    for _, value in ipairs(values or {}) do table.insert(parts, scalar(value)) end
+    return "{" .. table.concat(parts, ",") .. "}"
+end
+
+-- k=v pairs in the given order, skipping nils. Tables are arrays of scalars.
+-- The list has holes where a value is nil, so its length is not #list_: the
+-- keys (odd slots) are never nil, so the highest index bounds it.
+local function fields(list_)
+    local parts, last = {}, 0
+    for index in pairs(list_) do
+        if type(index) == "number" and index > last then last = index end
+    end
+    for index = 1, last, 2 do
+        local key, value = list_[index], list_[index + 1]
+        if value ~= nil then
+            table.insert(parts, key .. "=" .. (type(value) == "table" and array(value) or scalar(value)))
+        end
+    end
+    return "{" .. table.concat(parts, ",") .. "}"
+end
+
+local function sortedKeys(map)
+    local keys = {}
+    for key in pairs(map) do table.insert(keys, key) end
+    table.sort(keys)
+    return keys
+end
+
+-- Short keys keep the file small; GW.DungeonGuide reads them (see its header).
+local function dungeonBody(d, add)
+    add("  return {")
+    add("    id=" .. d.id .. ",name=" .. quote(d.name) .. ",kind=" .. quote(d.kind) .. ",lmin=" .. (d.levelMin or "nil") .. ",lmax=" .. (d.levelMax or "nil")
+        .. (d.zone and (",zone=" .. quote(d.zone)) or "") .. ",prov=" .. array(d.prov) .. ",questsTotal=" .. d.questsTotal .. ",")
+    if d.entrance then add("    entrance=" .. fields({ "map", d.entrance.mapId, "x", d.entrance.x, "y", d.entrance.y }) .. ",") end
+    if d.layout then add("    layout=" .. fields({ "w", d.layout.width, "h", d.layout.height, "pts", d.layout.points }) .. ",") end
+    add("    bosses={")
+    for _, b in ipairs(d.bosses) do
+        add("      " .. fields({ "e", b.encounterId, "npc", b.npcId, "name", b.name, "x", b.x, "y", b.y, "ab", b.abilities, "prov", b.prov, "loot", b.loot }) .. ",")
+    end
+    add("    },")
+    add("    trash={")
+    for _, c in ipairs(d.trash) do
+        add("      " .. fields({ "npc", c.npcId, "name", c.name, "lmin", c.levelMin, "lmax", c.levelMax, "n", c.count, "ab", c.abilities }) .. ",")
+    end
+    add("    },")
+    add("    rares={")
+    for _, r in ipairs(d.rares) do
+        add("      " .. fields({ "npc", r.npcId, "name", r.name, "lmin", r.levelMin, "lmax", r.levelMax, "elite", r.elite, "x", r.x, "y", r.y,
+            "ab", r.abilities, "loot", r.loot }) .. ",")
+    end
+    add("    },")
+    add("    other={")
+    for _, o in ipairs(d.otherLoot) do
+        add("      " .. fields({ "item", o.itemId, "from", o.source }) .. ",")
+    end
+    add("    },")
+    add("    quests={")
+    for _, q in ipairs(d.quests) do
+        add("      " .. fields({ "id", q.id, "name", q.name, "lvl", q.level, "min", q.minLevel, "fac", q.faction, "giver", q.giver, "obj", q.objective,
+            "rew", q.rewards, "choice", q.choice, "pre", q.prereqs, "where", q.where, "x", q.x, "y", q.y, "inside", q.inside }) .. ",")
+    end
+    add("    },")
+    add("  }")
+end
+
+function Export.render(n, commit)
+    assert(type(commit) == "string" and string.match(commit, "^%x+$") and #commit >= 7, "a Holdfast commit sha is required")
+    local lines = {}
+    local function add(line) table.insert(lines, line) end
+    add("-- GENERATED by scripts/exportDungeonAtlas.lua from Indicaza/holdfast at commit")
+    add("-- " .. commit .. " (backend/src/Atlas/data/atlas.json"
+        .. (n.lootRevision and " and reference-loot.json)." or ")."))
+    add("-- Do not edit by hand: regenerate it (docs/dungeon-guide.md). Classic reference")
+    add("-- data: nothing here is verified on WoW Forever unless an entry says so.")
+    add("local _, GW = ...")
+    add("local A = {")
+    add("  schema=" .. Export.SCHEMA .. ",defaultTier=" .. quote(Export.DEFAULT_TIER) .. ",")
+    add("  source=" .. fields({ "repo", "Indicaza/holdfast", "commit", commit, "atlasGeneratedAt", n.atlasGeneratedAt,
+        "lootRevision", n.lootRevision, "lootGeneratedAt", n.lootGeneratedAt }) .. ",")
+    add("  sources={")
+    for _, s in ipairs(n.sources) do add("    " .. fields({ "source", s.source, "revision", s.revision, "license", s.license }) .. ",") end
+    add("  },")
+    add("  prov={")
+    for _, p in ipairs(n.prov) do add("    " .. fields({ "source", p.source, "tier", p.tier, "conf", p.confidence, "note", p.note }) .. ",") end
+    add("  },")
+    add("  index={")
+    for _, d in ipairs(n.dungeons) do
+        local lootCount = 0
+        for _, b in ipairs(d.bosses) do lootCount = lootCount + #(b.loot or {}) end
+        add("    [" .. d.id .. "]=" .. fields({ "name", d.name, "kind", d.kind, "lmin", d.levelMin, "lmax", d.levelMax, "zone", d.zone,
+            "bosses", #d.bosses, "rares", #d.rares, "trash", #d.trash, "quests", d.questsTotal, "loot", lootCount }) .. ",")
+    end
+    add("  },")
+    add("  encounters={")
+    for _, e in ipairs(sortedKeys(n.encounters)) do add("    [" .. e .. "]=" .. n.encounters[e] .. ",") end
+    add("  },")
+    add("  npcs={")
+    for _, npc in ipairs(sortedKeys(n.npcs)) do add("    [" .. npc .. "]=" .. n.npcs[npc] .. ",") end
+    add("  },")
+    add("  dungeons={},")
+    add("}")
+    -- Spells: n name, c category, p priority, k interruptible (true/false;
+    -- absent = not applicable or unknown), s summary, t tier when not the
+    -- default, v verified on Forever, r roles.
+    add("function A.spells()")
+    add("  return {")
+    for _, id in ipairs(sortedKeys(n.spells)) do
+        local s = n.spells[id]
+        add("    [" .. id .. "]=" .. fields({ "n", s.name, "c", s.category, "p", s.priority, "k", s.kick, "s", s.summary,
+            "t", s.tier ~= Export.DEFAULT_TIER and s.tier or nil, "v", s.verified, "r", s.roles }) .. ",")
+    end
+    add("  }")
+    add("end")
+    -- Items: n name, q quality, s slot, l item level, r required level, sc
+    -- subclass (armour or weapon type), b bind, set set name, dps. Icons come
+    -- from the client (GetItemInfoInstant), not from here.
+    add("function A.items()")
+    add("  return {")
+    for _, id in ipairs(sortedKeys(n.items)) do
+        local i = n.items[id]
+        add("    [" .. id .. "]=" .. fields({ "n", i.name, "q", i.quality, "s", i.slot, "l", i.itemLevel, "r", i.requiredLevel,
+            "sc", i.subclass, "b", i.bind, "set", i.setName, "dps", i.dps }) .. ",")
+    end
+    add("  }")
+    add("end")
+    for _, d in ipairs(n.dungeons) do
+        add("A.dungeons[" .. d.id .. "] = function()")
+        dungeonBody(d, add)
+        add("end")
+    end
+    add("if GW then GW.DungeonAtlasData = A end")
+    add("return A")
+    return table.concat(lines, "\n") .. "\n"
+end
+
+function Export.run(atlasJson, lootJson, commit)
+    local normalized, problems = Export.normalize(Export.decode(atlasJson), lootJson and Export.decode(lootJson) or nil)
+    local text = Export.render(normalized, commit)
+    if #text > Export.MAX_BYTES then
+        table.insert(problems, string.format("generated file is %d bytes (limit %d)", #text, Export.MAX_BYTES))
+    end
+    return text, problems, normalized
+end
+
+local function readFile(path)
+    local file = assert(io.open(path, "rb"))
+    local text = file:read("*a")
+    file:close()
+    return text
+end
+
+local function main(args)
+    local options, index = { out = "Data/DungeonAtlas.generated.lua" }, 1
+    while index <= #args do
+        local flag = args[index]
+        if flag == "--check" then
+            options.check = true
+            index = index + 1
+        else
+            options[string.gsub(flag, "^%-%-", "")] = args[index + 1]
+            index = index + 2
+        end
+    end
+    if not options.atlas or not options.commit then
+        io.stderr:write("usage: lua5.1 scripts/exportDungeonAtlas.lua [--check] --atlas <atlas.json> [--loot <reference-loot.json>] --commit <sha> [--out <file.lua>]\n")
+        os.exit(2)
+    end
+    local text, problems, normalized = Export.run(readFile(options.atlas), options.loot and readFile(options.loot) or nil, options.commit)
+    if #problems > 0 then
+        io.stderr:write("atlas problems:\n  " .. table.concat(problems, "\n  ") .. "\n")
+        os.exit(1)
+    end
+    if options.check then
+        local ok, current = pcall(readFile, options.out)
+        current = ok and (string.gsub(current, "\r\n", "\n")) or nil
+        if current ~= text then
+            io.stderr:write(options.out .. " is not current; regenerate it\n")
+            os.exit(1)
+        end
+        print(options.out .. " is current")
+        return
+    end
+    local file = assert(io.open(options.out, "wb"))
+    file:write(text)
+    file:close()
+    local itemCount = 0
+    for _ in pairs(normalized.items) do itemCount = itemCount + 1 end
+    print(string.format("wrote %s: %d bytes, %d dungeons, %d items", options.out, #text, #normalized.dungeons, itemCount))
+end
+
+-- Run from the command line (lua5.1 scripts/exportDungeonAtlas.lua --atlas ...):
+-- the chunk's own arguments. Loaded by a spec with dofile: none.
+local cli = { ... }
+if type(cli[1]) == "string" and string.find(cli[1], "^%-%-") then
+    main(cli)
+end
+
+return Export
