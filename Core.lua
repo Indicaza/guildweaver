@@ -159,6 +159,11 @@ SlashCmdList.GUILDWEAVER = function(message)
         return
     end
 
+    if command == "guide" then
+        GW.DungeonGuideUI.Show()
+        return
+    end
+
     if command == "farm start" then
         GW.Print(GW.FarmingSessions.Start() and "Farming timer started. /gw farm stop ends the run. Travel and waiting count."
             or "Timer already running, or character data is not ready.")
@@ -426,6 +431,7 @@ SlashCmdList.GUILDWEAVER = function(message)
     if command == "help" then
         GW.Print("/gw farm start and /gw farm stop measure a farming run. /gw farm shows its status.")
         GW.Print("/gw dungeon shows the open dungeon run. Its timer starts on your first pull; /gw dungeon start and /gw dungeon stop control it by hand. /gw dungeon split [name] marks a split (named after your target without a name), /gw dungeon finish ends the run, /gw dungeon hud on|off shows or hides the tracker, /gw dungeon mode cycles minimized/compact/expanded. /gw obj manages your dungeon objectives.")
+        GW.Print("/gw guide opens the Dungeon Guide (bosses, mechanics, loot, rares) on the dungeon you are in or the last one picked.")
         GW.Print("/gw settings opens the settings; /gw minimap shows or hides the minimap button.")
         GW.Print("/gw loot shows the wishlist the website sent and the alert settings. Wishlist items glow purple and valuable Bind-on-Equip items gold in Need/Greed rolls, with a chime. /gw loot test previews an alert; /gw loot wishlist|boe|sound|toast on|off; /gw loot threshold <gold>.")
         GW.Print("/gw opens Guildweaver. Telemetry capture is automatic at session start, during play, and logout. WoW writes it to disk on /reload and logout, when the bridge syncs it. /gw sync (or /gw capture) forces a checkpoint and a reload to sync now. /gw snapshot captures a diagnostic snapshot. /gw telemetry shows captured telemetry streams. /gw inventory rescans your bags and shows the inventory revision. /gw fishing shows the casts and catches recorded this session. /gw perf shows capture timings and counts (/gw perf reset clears them). /gw version shows the addon version. /gw reset resets the window position.")

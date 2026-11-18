@@ -3,6 +3,7 @@ local _, GW = ...
 -- The Guildweaver dashboard: a sidebar of modules and one view at a time.
 --   Overview     what each module is doing, one card each
 --   Dungeons     the open run and its timer, recent runs, objectives
+--   Dungeon Guide  bosses, mechanics, loot and rares (UI/DungeonGuide.lua)
 --   Farming      the timed farming run, this session's fishing
 --   Sync & Data  what is waiting for the bridge, Sync now, and an Advanced
 --                section for diagnostics
@@ -33,6 +34,7 @@ Main.QUESTS_ENABLED = false
 local NAV = {
     { key = "overview", label = "Overview" },
     { key = "dungeon", label = "Dungeons" },
+    { key = "guide", label = "Dungeon Guide" },
     { key = "farming", label = "Farming" },
     { key = "quests", label = "Guild Quests", enabled = function() return Main.QUESTS_ENABLED end },
     { key = "sync", label = "Sync & Data" },

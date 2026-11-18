@@ -1,0 +1,882 @@
+{
+ "schemaVersion": 1,
+ "dataset": "atlas-reference-loot",
+ "revision": "wow_classic_era 1.15.7.59706+ + 6ffb62abb867dabb258de6813ff5d06d6b011543",
+ "generatedAt": "2026-11-18T08:15:37.325Z",
+ "provenance": [
+  {
+   "source": "wago-classic-era",
+   "revision": "wow_classic_era 1.15.7.59706+",
+   "confidence": "high",
+   "tier": "classic-reference",
+   "retrievedAt": "2026-11-18T08:15:37.325Z",
+   "url": "https://wago.tools/db2?product=wow_classic_era",
+   "note": "ItemSparse, Item, ItemSet: item facts"
+  },
+  {
+   "source": "azerothcore",
+   "revision": "6ffb62abb867dabb258de6813ff5d06d6b011543",
+   "confidence": "medium",
+   "tier": "community-unverified",
+   "retrievedAt": "2026-11-18T08:15:37.325Z",
+   "url": "https://github.com/azerothcore/azerothcore-wotlk/tree/6ffb62abb867dabb258de6813ff5d06d6b011543/data/sql/base/db_world",
+   "note": "creature_loot_template / reference_loot_template: which creature drops it (no drop chances)"
+  }
+ ],
+ "filter": "Dungeon-only drops of creatures and chests (nothing outside the vanilla dungeons drops them): uncommon+ weapons, armour, bags and quivers, set items, rare+ items, uncommon+ trade goods, reagents and recipes, quest starters; plus the atlas quests' reward items. No drop chances.",
+ "sources": [
+  {
+   "source": "wago-classic-era",
+   "revision": "wow_classic_era 1.15.7.59706+",
+   "retrievedAt": "2026-11-18T08:15:37.325Z",
+   "url": "https://wago.tools/db2?product=wow_classic_era",
+   "license": "Factual game data extracted from the World of Warcraft Classic Era client (Blizzard Entertainment). Names and numbers only; no art."
+  },
+  {
+   "source": "azerothcore",
+   "revision": "6ffb62abb867dabb258de6813ff5d06d6b011543",
+   "retrievedAt": "2026-11-18T08:15:37.325Z",
+   "url": "https://github.com/azerothcore/azerothcore-wotlk/tree/6ffb62abb867dabb258de6813ff5d06d6b011543/data/sql/base/db_world",
+   "license": "AzerothCore world database, GPL-2.0 (https://github.com/azerothcore/azerothcore-wotlk). A WotLK (3.3.5) emulator database: vanilla content as the emulator models it."
+  }
+ ],
+ "items": {
+  "872": {
+   "itemId": 872,
+   "itemKey": "i:872",
+   "name": "Rockslicer",
+   "qualityId": 2,
+   "iconFileDataId": 135419,
+   "slot": "Two-Hand",
+   "itemLevel": 21,
+   "requiredLevel": 16,
+   "itemClass": "Weapon",
+   "itemSubclass": "Two-Handed Axes",
+   "classes": null,
+   "bindType": "BoP",
+   "armor": null,
+   "weapon": {
+    "minDamage": 36,
+    "maxDamage": 55,
+    "speed": 3.3,
+    "dps": 13.8
+   },
+   "stats": [
+    {
+     "stat": "Strength",
+     "value": 7
+    }
+   ],
+   "setName": null,
+   "kind": "gear"
+  },
+  "1930": {
+   "itemId": 1930,
+   "itemKey": "i:1930",
+   "name": "Stonemason Cloak",
+   "qualityId": 2,
+   "iconFileDataId": 133763,
+   "slot": "Back",
+   "itemLevel": 18,
+   "requiredLevel": 13,
+   "itemClass": "Armor",
+   "itemSubclass": "Cloth",
+   "classes": null,
+   "bindType": "BoE",
+   "armor": 16,
+   "weapon": null,
+   "stats": [
+    {
+     "stat": "Stamina",
+     "value": 3
+    }
+   ],
+   "setName": null,
+   "kind": "boe"
+  },
+  "1937": {
+   "itemId": 1937,
+   "itemKey": "i:1937",
+   "name": "Buzz Saw",
+   "qualityId": 2,
+   "iconFileDataId": 135325,
+   "slot": "One-Hand",
+   "itemLevel": 21,
+   "requiredLevel": 16,
+   "itemClass": "Weapon",
+   "itemSubclass": "One-Handed Swords",
+   "classes": null,
+   "bindType": "BoP",
+   "armor": null,
+   "weapon": {
+    "minDamage": 17,
+    "maxDamage": 33,
+    "speed": 2.4,
+    "dps": 10.4
+   },
+   "stats": [
+    {
+     "stat": "Agility",
+     "value": 2
+    },
+    {
+     "stat": "Strength",
+     "value": 2
+    }
+   ],
+   "setName": null,
+   "kind": "gear"
+  },
+  "2036": {
+   "itemId": 2036,
+   "itemKey": "i:2036",
+   "name": "Dusty Mining Gloves",
+   "qualityId": 2,
+   "iconFileDataId": 132939,
+   "slot": "Hands",
+   "itemLevel": 18,
+   "requiredLevel": null,
+   "itemClass": "Armor",
+   "itemSubclass": "Leather",
+   "classes": null,
+   "bindType": "BoP",
+   "armor": 46,
+   "weapon": null,
+   "stats": [
+    {
+     "stat": "Strength",
+     "value": 3
+    },
+    {
+     "stat": "Agility",
+     "value": 2
+    }
+   ],
+   "setName": null,
+   "kind": "quest-reward"
+  },
+  "2037": {
+   "itemId": 2037,
+   "itemKey": "i:2037",
+   "name": "Tunneler's Boots",
+   "qualityId": 2,
+   "iconFileDataId": 132535,
+   "slot": "Feet",
+   "itemLevel": 18,
+   "requiredLevel": null,
+   "itemClass": "Armor",
+   "itemSubclass": "Mail",
+   "classes": null,
+   "bindType": "BoP",
+   "armor": 111,
+   "weapon": null,
+   "stats": [
+    {
+     "stat": "Stamina",
+     "value": 3
+    },
+    {
+     "stat": "Spirit",
+     "value": 2
+    }
+   ],
+   "setName": null,
+   "kind": "quest-reward"
+  },
+  "2041": {
+   "itemId": 2041,
+   "itemKey": "i:2041",
+   "name": "Tunic of Westfall",
+   "qualityId": 3,
+   "iconFileDataId": 132722,
+   "slot": "Chest",
+   "itemLevel": 24,
+   "requiredLevel": null,
+   "itemClass": "Armor",
+   "itemSubclass": "Leather",
+   "classes": null,
+   "bindType": "BoP",
+   "armor": 92,
+   "weapon": null,
+   "stats": [
+    {
+     "stat": "Stamina",
+     "value": 5
+    },
+    {
+     "stat": "Agility",
+     "value": 11
+    }
+   ],
+   "setName": null,
+   "kind": "quest-reward"
+  },
+  "2042": {
+   "itemId": 2042,
+   "itemKey": "i:2042",
+   "name": "Staff of Westfall",
+   "qualityId": 3,
+   "iconFileDataId": 135147,
+   "slot": "Two-Hand",
+   "itemLevel": 24,
+   "requiredLevel": null,
+   "itemClass": "Weapon",
+   "itemSubclass": "Staves",
+   "classes": null,
+   "bindType": "BoP",
+   "armor": null,
+   "weapon": {
+    "minDamage": 49,
+    "maxDamage": 74,
+    "speed": 3,
+    "dps": 20.5
+   },
+   "stats": [
+    {
+     "stat": "Spirit",
+     "value": 11
+    },
+    {
+     "stat": "Intellect",
+     "value": 5
+    }
+   ],
+   "setName": null,
+   "kind": "quest-reward"
+  },
+  "2874": {
+   "itemId": 2874,
+   "itemKey": "i:2874",
+   "name": "An Unsent Letter",
+   "qualityId": 1,
+   "iconFileDataId": 133471,
+   "slot": null,
+   "itemLevel": 16,
+   "requiredLevel": 16,
+   "itemClass": "Quest",
+   "itemSubclass": "Quest",
+   "classes": null,
+   "bindType": "BoP",
+   "armor": null,
+   "weapon": null,
+   "stats": [],
+   "setName": null,
+   "kind": "other"
+  },
+  "5191": {
+   "itemId": 5191,
+   "itemKey": "i:5191",
+   "name": "Cruel Barb",
+   "qualityId": 3,
+   "iconFileDataId": 135325,
+   "slot": "One-Hand",
+   "itemLevel": 24,
+   "requiredLevel": 19,
+   "itemClass": "Weapon",
+   "itemSubclass": "One-Handed Swords",
+   "classes": null,
+   "bindType": "BoP",
+   "armor": null,
+   "weapon": {
+    "minDamage": 30,
+    "maxDamage": 57,
+    "speed": 2.8,
+    "dps": 15.5
+   },
+   "stats": [],
+   "setName": null,
+   "kind": "gear"
+  },
+  "5193": {
+   "itemId": 5193,
+   "itemKey": "i:5193",
+   "name": "Cape of the Brotherhood",
+   "qualityId": 3,
+   "iconFileDataId": 133760,
+   "slot": "Back",
+   "itemLevel": 25,
+   "requiredLevel": 20,
+   "itemClass": "Armor",
+   "itemSubclass": "Cloth",
+   "classes": null,
+   "bindType": "BoP",
+   "armor": 21,
+   "weapon": null,
+   "stats": [
+    {
+     "stat": "Agility",
+     "value": 6
+    },
+    {
+     "stat": "Stamina",
+     "value": 3
+    }
+   ],
+   "setName": null,
+   "kind": "gear"
+  },
+  "5197": {
+   "itemId": 5197,
+   "itemKey": "i:5197",
+   "name": "Cookie's Tenderizer",
+   "qualityId": 2,
+   "iconFileDataId": 132906,
+   "slot": "One-Hand",
+   "itemLevel": 21,
+   "requiredLevel": 16,
+   "itemClass": "Weapon",
+   "itemSubclass": "One-Handed Maces",
+   "classes": null,
+   "bindType": "BoP",
+   "armor": null,
+   "weapon": {
+    "minDamage": 20,
+    "maxDamage": 39,
+    "speed": 2.8,
+    "dps": 10.5
+   },
+   "stats": [
+    {
+     "stat": "Strength",
+     "value": 3
+    }
+   ],
+   "setName": null,
+   "kind": "gear"
+  },
+  "5198": {
+   "itemId": 5198,
+   "itemKey": "i:5198",
+   "name": "Cookie's Stirring Rod",
+   "qualityId": 3,
+   "iconFileDataId": 135139,
+   "slot": "Ranged",
+   "itemLevel": 22,
+   "requiredLevel": 17,
+   "itemClass": "Weapon",
+   "itemSubclass": "Wands",
+   "classes": null,
+   "bindType": "BoP",
+   "armor": null,
+   "weapon": {
+    "minDamage": 20,
+    "maxDamage": 38,
+    "speed": 1.3,
+    "dps": 22.3
+   },
+   "stats": [],
+   "setName": null,
+   "kind": "gear"
+  },
+  "5202": {
+   "itemId": 5202,
+   "itemKey": "i:5202",
+   "name": "Corsair's Overshirt",
+   "qualityId": 3,
+   "iconFileDataId": 135012,
+   "slot": "Chest",
+   "itemLevel": 24,
+   "requiredLevel": 19,
+   "itemClass": "Armor",
+   "itemSubclass": "Cloth",
+   "classes": null,
+   "bindType": "BoP",
+   "armor": 42,
+   "weapon": null,
+   "stats": [
+    {
+     "stat": "Spirit",
+     "value": 11
+    },
+    {
+     "stat": "Stamina",
+     "value": 5
+    }
+   ],
+   "setName": null,
+   "kind": "gear"
+  },
+  "5243": {
+   "itemId": 5243,
+   "itemKey": "i:5243",
+   "name": "Firebelcher",
+   "qualityId": 3,
+   "iconFileDataId": 135473,
+   "slot": "Ranged",
+   "itemLevel": 20,
+   "requiredLevel": 15,
+   "itemClass": "Weapon",
+   "itemSubclass": "Wands",
+   "classes": null,
+   "bindType": "BoP",
+   "armor": null,
+   "weapon": {
+    "minDamage": 24,
+    "maxDamage": 45,
+    "speed": 1.7,
+    "dps": 20.3
+   },
+   "stats": [],
+   "setName": null,
+   "kind": "rare"
+  },
+  "5443": {
+   "itemId": 5443,
+   "itemKey": "i:5443",
+   "name": "Gold-plated Buckler",
+   "qualityId": 3,
+   "iconFileDataId": 134948,
+   "slot": "Shield",
+   "itemLevel": 20,
+   "requiredLevel": 15,
+   "itemClass": "Armor",
+   "itemSubclass": "Shields",
+   "classes": null,
+   "bindType": "BoP",
+   "armor": 471,
+   "weapon": null,
+   "stats": [
+    {
+     "stat": "Stamina",
+     "value": 5
+    },
+    {
+     "stat": "Agility",
+     "value": 2
+    }
+   ],
+   "setName": null,
+   "kind": "rare"
+  },
+  "5444": {
+   "itemId": 5444,
+   "itemKey": "i:5444",
+   "name": "Miner's Cape",
+   "qualityId": 2,
+   "iconFileDataId": 133763,
+   "slot": "Back",
+   "itemLevel": 19,
+   "requiredLevel": 14,
+   "itemClass": "Armor",
+   "itemSubclass": "Cloth",
+   "classes": null,
+   "bindType": "BoP",
+   "armor": 16,
+   "weapon": null,
+   "stats": [
+    {
+     "stat": "Stamina",
+     "value": 3
+    }
+   ],
+   "setName": null,
+   "kind": "rare"
+  },
+  "6087": {
+   "itemId": 6087,
+   "itemKey": "i:6087",
+   "name": "Chausses of Westfall",
+   "qualityId": 3,
+   "iconFileDataId": 134583,
+   "slot": "Legs",
+   "itemLevel": 24,
+   "requiredLevel": null,
+   "itemClass": "Armor",
+   "itemSubclass": "Mail",
+   "classes": null,
+   "bindType": "BoP",
+   "armor": 173,
+   "weapon": null,
+   "stats": [
+    {
+     "stat": "Stamina",
+     "value": 5
+    },
+    {
+     "stat": "Strength",
+     "value": 11
+    }
+   ],
+   "setName": null,
+   "kind": "quest-reward"
+  },
+  "6461": {
+   "itemId": 6461,
+   "itemKey": "i:6461",
+   "name": "Slime-encrusted Pads",
+   "qualityId": 3,
+   "iconFileDataId": 135036,
+   "slot": "Shoulder",
+   "itemLevel": 27,
+   "requiredLevel": 22,
+   "itemClass": "Armor",
+   "itemSubclass": "Cloth",
+   "classes": null,
+   "bindType": "BoP",
+   "armor": 34,
+   "weapon": null,
+   "stats": [],
+   "setName": null,
+   "kind": "gear"
+  },
+  "6463": {
+   "itemId": 6463,
+   "itemKey": "i:6463",
+   "name": "Deep Fathom Ring",
+   "qualityId": 3,
+   "iconFileDataId": 133357,
+   "slot": "Finger",
+   "itemLevel": 26,
+   "requiredLevel": 21,
+   "itemClass": "Armor",
+   "itemSubclass": "Miscellaneous",
+   "classes": null,
+   "bindType": "BoP",
+   "armor": null,
+   "weapon": null,
+   "stats": [
+    {
+     "stat": "Spirit",
+     "value": 6
+    },
+    {
+     "stat": "Stamina",
+     "value": 3
+    },
+    {
+     "stat": "Intellect",
+     "value": 3
+    }
+   ],
+   "setName": null,
+   "kind": "gear"
+  },
+  "6504": {
+   "itemId": 6504,
+   "itemKey": "i:6504",
+   "name": "Wingblade",
+   "qualityId": 3,
+   "iconFileDataId": 135314,
+   "slot": "Main Hand",
+   "itemLevel": 24,
+   "requiredLevel": null,
+   "itemClass": "Weapon",
+   "itemSubclass": "One-Handed Swords",
+   "classes": null,
+   "bindType": "BoP",
+   "armor": null,
+   "weapon": {
+    "minDamage": 24,
+    "maxDamage": 45,
+    "speed": 2.2,
+    "dps": 15.7
+   },
+   "stats": [
+    {
+     "stat": "Agility",
+     "value": 5
+    },
+    {
+     "stat": "Stamina",
+     "value": 2
+    }
+   ],
+   "setName": null,
+   "kind": "quest-reward"
+  },
+  "6505": {
+   "itemId": 6505,
+   "itemKey": "i:6505",
+   "name": "Crescent Staff",
+   "qualityId": 3,
+   "iconFileDataId": 135141,
+   "slot": "Two-Hand",
+   "itemLevel": 24,
+   "requiredLevel": null,
+   "itemClass": "Weapon",
+   "itemSubclass": "Staves",
+   "classes": null,
+   "bindType": "BoP",
+   "armor": null,
+   "weapon": {
+    "minDamage": 47,
+    "maxDamage": 71,
+    "speed": 2.9,
+    "dps": 20.3
+   },
+   "stats": [
+    {
+     "stat": "Intellect",
+     "value": 7
+    },
+    {
+     "stat": "Spirit",
+     "value": 7
+    },
+    {
+     "stat": "Stamina",
+     "value": 7
+    }
+   ],
+   "setName": null,
+   "kind": "quest-reward"
+  },
+  "6627": {
+   "itemId": 6627,
+   "itemKey": "i:6627",
+   "name": "Mutant Scale Breastplate",
+   "qualityId": 3,
+   "iconFileDataId": 132743,
+   "slot": "Chest",
+   "itemLevel": 28,
+   "requiredLevel": 23,
+   "itemClass": "Armor",
+   "itemSubclass": "Mail",
+   "classes": null,
+   "bindType": "BoP",
+   "armor": 211,
+   "weapon": null,
+   "stats": [
+    {
+     "stat": "Strength",
+     "value": 13
+    },
+    {
+     "stat": "Stamina",
+     "value": 5
+    }
+   ],
+   "setName": null,
+   "kind": "gear"
+  },
+  "6632": {
+   "itemId": 6632,
+   "itemKey": "i:6632",
+   "name": "Feyscale Cloak",
+   "qualityId": 2,
+   "iconFileDataId": 133754,
+   "slot": "Back",
+   "itemLevel": 20,
+   "requiredLevel": 15,
+   "itemClass": "Armor",
+   "itemSubclass": "Cloth",
+   "classes": null,
+   "bindType": "BoP",
+   "armor": 17,
+   "weapon": null,
+   "stats": [
+    {
+     "stat": "Stamina",
+     "value": 3
+    },
+    {
+     "stat": "Spirit",
+     "value": 2
+    }
+   ],
+   "setName": null,
+   "kind": "rare"
+  },
+  "10399": {
+   "itemId": 10399,
+   "itemKey": "i:10399",
+   "name": "Blackened Defias Armor",
+   "qualityId": 3,
+   "iconFileDataId": 132723,
+   "slot": "Chest",
+   "itemLevel": 24,
+   "requiredLevel": 19,
+   "itemClass": "Armor",
+   "itemSubclass": "Leather",
+   "classes": null,
+   "bindType": "BoP",
+   "armor": 92,
+   "weapon": null,
+   "stats": [
+    {
+     "stat": "Stamina",
+     "value": 11
+    },
+    {
+     "stat": "Agility",
+     "value": 3
+    },
+    {
+     "stat": "Strength",
+     "value": 4
+    }
+   ],
+   "setName": "Defias Leather",
+   "kind": "set"
+  },
+  "10412": {
+   "itemId": 10412,
+   "itemKey": "i:10412",
+   "name": "Belt of the Fang",
+   "qualityId": 2,
+   "iconFileDataId": 132519,
+   "slot": "Waist",
+   "itemLevel": 21,
+   "requiredLevel": 16,
+   "itemClass": "Armor",
+   "itemSubclass": "Leather",
+   "classes": null,
+   "bindType": "BoP",
+   "armor": 45,
+   "weapon": null,
+   "stats": [
+    {
+     "stat": "Stamina",
+     "value": 3
+    },
+    {
+     "stat": "Agility",
+     "value": 2
+    }
+   ],
+   "setName": "Embrace of the Viper",
+   "kind": "set"
+  },
+  "10413": {
+   "itemId": 10413,
+   "itemKey": "i:10413",
+   "name": "Gloves of the Fang",
+   "qualityId": 2,
+   "iconFileDataId": 132952,
+   "slot": "Hands",
+   "itemLevel": 19,
+   "requiredLevel": 14,
+   "itemClass": "Armor",
+   "itemSubclass": "Leather",
+   "classes": null,
+   "bindType": "BoE",
+   "armor": 47,
+   "weapon": null,
+   "stats": [
+    {
+     "stat": "Agility",
+     "value": 3
+    },
+    {
+     "stat": "Strength",
+     "value": 2
+    }
+   ],
+   "setName": "Embrace of the Viper",
+   "kind": "set"
+  },
+  "10441": {
+   "itemId": 10441,
+   "itemKey": "i:10441",
+   "name": "Glowing Shard",
+   "qualityId": 1,
+   "iconFileDataId": 135229,
+   "slot": null,
+   "itemLevel": 15,
+   "requiredLevel": 15,
+   "itemClass": "Quest",
+   "itemSubclass": "Quest",
+   "classes": null,
+   "bindType": "BoP",
+   "armor": null,
+   "weapon": null,
+   "stats": [],
+   "setName": null,
+   "kind": "other"
+  }
+ },
+ "dungeons": [
+  {
+   "instanceId": 36,
+   "name": "Deadmines",
+   "bosses": [
+    {
+     "encounterId": 2741,
+     "npcId": 644,
+     "itemIds": [
+      872
+     ]
+    },
+    {
+     "encounterId": 2746,
+     "npcId": 645,
+     "itemIds": [
+      5197,
+      5198
+     ]
+    },
+    {
+     "encounterId": 2747,
+     "npcId": 639,
+     "itemIds": [
+      2874,
+      5191,
+      5193,
+      5202,
+      10399
+     ]
+    }
+   ],
+   "rares": [
+    {
+     "npcId": 3586,
+     "itemIds": [
+      5443,
+      5444
+     ]
+    }
+   ],
+   "dungeonLoot": [
+    {
+     "itemId": 1930,
+     "npcId": 598,
+     "sourceName": "Defias Miner"
+    },
+    {
+     "itemId": 1937,
+     "npcId": 642,
+     "sourceName": "Sneed's Shredder"
+    }
+   ]
+  },
+  {
+   "instanceId": 43,
+   "name": "Wailing Caverns",
+   "bosses": [
+    {
+     "encounterId": 585,
+     "npcId": 3671,
+     "itemIds": [
+      10412
+     ]
+    },
+    {
+     "encounterId": 592,
+     "npcId": 3654,
+     "itemIds": [
+      6461,
+      6463,
+      6627,
+      10441
+     ]
+    }
+   ],
+   "rares": [
+    {
+     "npcId": 5912,
+     "itemIds": [
+      5243,
+      6632
+     ]
+    }
+   ],
+   "dungeonLoot": [
+    {
+     "itemId": 10413,
+     "npcId": 3840,
+     "sourceName": "Druid of the Fang"
+    }
+   ]
+  }
+ ]
+}
