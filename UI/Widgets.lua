@@ -383,10 +383,98 @@ function UI.Input(parent, width, onEnter)
     return box
 end
 
+-- Scroll areas ----------------------------------------------------------------------
+
+-- A vertically scrolling area: a clipped viewport, a scroll child the
+-- caller fills (area.child) and a slim scroll bar shown only when the
+-- content is taller than the viewport. The mouse wheel and the bar only move
+-- the offset: nothing is laid out while scrolling. The caller tells it the
+-- viewport's size (SetViewSize) and the content's height (SetContentHeight).
+-- opts: step (pixels per wheel notch, default 40), onScroll(offset).
+function UI.ScrollArea(parent, opts)
+    opts = opts or {}
+    local area = create("ScrollFrame", parent)
+    area.child = create("Frame", area)
+    area.child:SetSize(1, 1)
+    pcall(area.SetScrollChild, area, area.child)
+    pcall(area.EnableMouseWheel, area, true)
+    area.gwOffset, area.gwViewWidth, area.gwViewHeight, area.gwContent = 0, 1, 1, 0
+    local bar = create("Slider", area)
+    bar:SetWidth(6)
+    bar:SetPoint("TOPRIGHT", area, "TOPRIGHT", 0, 0)
+    bar:SetPoint("BOTTOMRIGHT", area, "BOTTOMRIGHT", 0, 0)
+    Theme.Skin(bar, "bgInset", "border", 0.6)
+    pcall(bar.EnableMouse, bar, true)
+    pcall(bar.SetOrientation, bar, "VERTICAL")
+    pcall(bar.SetMinMaxValues, bar, 0, 1)
+    pcall(bar.SetValueStep, bar, 1)
+    bar.thumb = bar:CreateTexture(nil, "OVERLAY")
+    bar.thumb:SetSize(6, 28)
+    Theme.Fill(bar.thumb, "goldDim")
+    pcall(bar.SetThumbTexture, bar, bar.thumb)
+    bar:Hide()
+    area.bar = bar
+
+    function area:MaxOffset()
+        return math.max(0, (self.gwContent or 0) - (self.gwViewHeight or 0))
+    end
+    function area:ScrollTo(offset)
+        offset = math.max(0, math.min(tonumber(offset) or 0, self:MaxOffset()))
+        if offset == self.gwOffset and not self.gwForce then return offset end
+        self.gwForce = nil
+        self.gwOffset = offset
+        pcall(self.SetVerticalScroll, self, offset)
+        self.gwSyncing = true
+        pcall(self.bar.SetValue, self.bar, offset)
+        self.gwSyncing = nil
+        if opts.onScroll then opts.onScroll(offset, self) end
+        return offset
+    end
+    function area:Offset() return self.gwOffset or 0 end
+    function area:SetViewSize(width, height)
+        self.gwViewWidth, self.gwViewHeight = math.max(1, width or 1), math.max(1, height or 1)
+        self:SetSize(self.gwViewWidth, self.gwViewHeight)
+        self.child:SetWidth(self.gwViewWidth - 10)
+        self:SetContentHeight(self.gwContent)
+    end
+    -- The width the content may use (the bar keeps its own strip).
+    function area:ContentWidth() return math.max(1, (self.gwViewWidth or 1) - 10) end
+    function area:SetContentHeight(height)
+        self.gwContent = math.max(0, tonumber(height) or 0)
+        self.child:SetHeight(math.max(1, self.gwContent))
+        local max = self:MaxOffset()
+        pcall(self.bar.SetMinMaxValues, self.bar, 0, math.max(1, max))
+        UI.SetShown(self.bar, max > 0)
+        self.gwForce = true
+        self:ScrollTo(self.gwOffset)
+    end
+    area:SetScript("OnMouseWheel", function(self, delta)
+        self:ScrollTo(self.gwOffset - (tonumber(delta) or 0) * (opts.step or 40))
+    end)
+    bar:SetScript("OnValueChanged", function(_, value)
+        if not area.gwSyncing then area:ScrollTo(value) end
+    end)
+    return area
+end
+
 -- Windows ---------------------------------------------------------------------------
+
+local SIZE_GRIP = "Interface\\ChatFrame\\UI-ChatIM-SizeGrabber"
+
+-- A frame's width and height as numbers ("fallback" where the client has none).
+local function frameSize(frame, width, height)
+    local okW, w = pcall(frame.GetWidth, frame)
+    local okH, h = pcall(frame.GetHeight, frame)
+    return okW and tonumber(w) or width, okH and tonumber(h) or height
+end
+UI.FrameSize = frameSize
 
 -- A draggable window with a title bar, an emblem and a close button.
 -- opts: name, width, height, title, getPosition(), savePosition(point, relativePoint, x, y), strata
+-- Resizable windows also take: resizable, minWidth, minHeight, getSize()
+-- -> width, height, saveSize(width, height), onResized(width, height). The
+-- grip in the bottom-right corner resizes; the size is clamped to the
+-- minimum and the screen, saved and announced once, when the drag ends.
 function UI.Window(opts)
     local frame = create("Frame", Globals.UIParent, opts.name)
     frame:SetSize(opts.width or 640, opts.height or 440)
@@ -408,7 +496,7 @@ function UI.Window(opts)
     local headerBg = header:CreateTexture(nil, "BACKGROUND", nil, -7)
     headerBg:SetAllPoints(header)
     Theme.Fill(headerBg, "bgRaised")
-    Theme.Grain(header, opts.width or 640, opts.headerHeight or 42, 0.06, 0)
+    header.gwGrain = Theme.Grain(header, opts.width or 640, opts.headerHeight or 42, 0.06, 0)
     local rule = Theme.Rule(header, "borderGold", 0.55)
     rule:SetPoint("BOTTOMLEFT", header, "BOTTOMLEFT", 0, 0)
     rule:SetPoint("BOTTOMRIGHT", header, "BOTTOMRIGHT", 0, 0)
@@ -450,6 +538,71 @@ function UI.Window(opts)
         end
     end
     frame:RestorePosition()
+    frame.headerGrain = header.gwGrain
+
+    -- Size: clamped to the minimum and to the screen; the grain re-tiles.
+    local minWidth, minHeight = opts.minWidth or opts.width or 640, opts.minHeight or opts.height or 440
+    function frame:ClampSize(width, height)
+        local screenW, screenH = frameSize(Globals.UIParent, 0, 0)
+        width, height = tonumber(width) or opts.width or 640, tonumber(height) or opts.height or 440
+        if screenW and screenW > 0 then width = math.min(width, math.max(minWidth, screenW - 20)) end
+        if screenH and screenH > 0 then height = math.min(height, math.max(minHeight, screenH - 20)) end
+        return math.floor(math.max(minWidth, width) + 0.5), math.floor(math.max(minHeight, height) + 0.5)
+    end
+    function frame:ApplySize(width, height)
+        width, height = self:ClampSize(width, height)
+        self.gwWidth, self.gwHeight = width, height
+        self:SetSize(width, height)
+        local size = Theme.GRAIN_SIZE
+        pcall(self.grain.SetTexCoord, self.grain, 0, width / size, 0, height / size)
+        pcall(header.gwGrain.SetTexCoord, header.gwGrain, 0, width / size, 0, (opts.headerHeight or 42) / size)
+        return width, height
+    end
+    function frame:Size() return self.gwWidth, self.gwHeight end
+    local savedW, savedH
+    if opts.getSize then savedW, savedH = opts.getSize() end
+    frame:ApplySize(savedW or opts.width, savedH or opts.height)
+
+    if opts.resizable then
+        pcall(frame.SetResizable, frame, true)
+        if not pcall(frame.SetResizeBounds, frame, minWidth, minHeight) then
+            pcall(frame.SetMinResize, frame, minWidth, minHeight)
+        end
+        local grip = create("Button", frame)
+        grip:SetSize(16, 16)
+        grip:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -2, 2)
+        pcall(grip.SetFrameLevel, grip, (tonumber(select(2, pcall(frame.GetFrameLevel, frame))) or 0) + 20)
+        pcall(grip.SetNormalTexture, grip, SIZE_GRIP .. "-Up")
+        pcall(grip.SetHighlightTexture, grip, SIZE_GRIP .. "-Highlight")
+        pcall(grip.SetPushedTexture, grip, SIZE_GRIP .. "-Down")
+        grip:SetScript("OnMouseDown", function()
+            frame.gwSizing = true
+            pcall(frame.StartSizing, frame, "BOTTOMRIGHT")
+        end)
+        grip:SetScript("OnMouseUp", function()
+            if not frame.gwSizing then return end
+            frame.gwSizing = nil
+            pcall(frame.StopMovingOrSizing, frame)
+            local width, height = frame:ApplySize(frameSize(frame, frame.gwWidth, frame.gwHeight))
+            if opts.saveSize then opts.saveSize(width, height) end
+            -- Sizing may re-anchor the window: keep where it now is.
+            if opts.savePosition then
+                local ok, point, _, relativePoint, x, y = pcall(frame.GetPoint, frame, 1)
+                if ok and type(point) == "string" then opts.savePosition(point, relativePoint, x, y) end
+            end
+            if opts.onResized then opts.onResized(width, height) end
+        end)
+        grip:SetScript("OnEnter", function(self) UI.ShowTooltip(self, "Resize", { "Drag to resize the window. Its size is remembered." }) end)
+        grip:SetScript("OnLeave", UI.HideTooltip)
+        frame.sizeGrip = grip
+        -- Sets and saves a size (Settings' reset, tests).
+        function frame:Resize(width, height)
+            width, height = self:ApplySize(width, height)
+            if opts.saveSize then opts.saveSize(width, height) end
+            if opts.onResized then opts.onResized(width, height) end
+            return width, height
+        end
+    end
 
     if opts.name and type(Globals.UISpecialFrames) == "table" then
         table.insert(Globals.UISpecialFrames, opts.name)

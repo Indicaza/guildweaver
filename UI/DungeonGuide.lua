@@ -1,21 +1,29 @@
 local _, GW = ...
 
--- The Dungeon Guide: a dungeon journal in the dashboard (Overview |
--- Encounters | Loot | Trash & Rares) and the dungeon HUD's links into it
--- (the ? button, clickable boss faces, a "next boss" line in the expanded
--- HUD and mechanics in boss tooltips).
+-- The Dungeons view: a dungeon journal in the dashboard, and the dungeon
+-- HUD's links into it (the ? button, clickable boss faces, a "next boss"
+-- line in the expanded HUD and mechanics in boss tooltips).
 --
--- Layout (532 x 418 content): a header with the dungeon picker and the role
--- switch, the tabs, then two columns: navigation on the left (encounters,
--- trash), the map or the encounter panel on the right.
+-- Three levels, one navigation:
+--   Dungeons              a grid of dungeon cards (search, level and type
+--                         filters, the current dungeon first) | My Runs
+--   Deadmines             Overview (the client's map with boss pins, and
+--                         the bosses, rares and dangerous trash on the
+--                         left) | Quests | My Runs
+--   Captain Greenskin     portrait, key mechanics, abilities, and the loot
+--                         as a grid of item icons
+-- Back and Forward walk the journal's own history; the breadcrumb goes up.
+-- A boss from the map, from the list or from the HUD opens the same page.
+-- When a run is open, a slim status strip shows its clock and bosses; the
+-- floating HUD stays the tracker in combat.
 --
--- Built on first open, like every dashboard view. Nothing here runs on a
--- timer or OnUpdate: the view repaints when it is shown, when the player
--- picks something, or when the instance or combat state changes. Lists are
--- fixed pools of rows with paging. The client draws all art (maps, faces,
--- spell and item icons) from IDs; Guildweaver ships none of it.
---
--- Wishlists are read-only here: the website is where they are edited.
+-- Built on first open, like every dashboard view. Nothing runs on a timer
+-- or OnUpdate: the view repaints when it is shown, on a click, or when the
+-- instance, the run or combat changes. Rows, cards and item cells are pools
+-- that only grow to the largest list shown; scrolling only moves an offset.
+-- The layout follows the window's size (layout), never in combat. The
+-- client draws all art (maps, faces, spell and item icons) from IDs;
+-- Guildweaver ships none of it. Wishlists are read-only here.
 GW.DungeonGuideUI = GW.DungeonGuideUI or {}
 
 local GuideUI = GW.DungeonGuideUI
@@ -25,29 +33,40 @@ local Guide = GW.DungeonGuide
 local Portraits = GW.Portraits
 local DungeonMap = GW.DungeonMap
 
-local CONTENT_WIDTH = 532
-local BODY_TOP = -82
-local BODY_HEIGHT = 336
-local LEFT_WIDTH = 168
-local RIGHT_LEFT = 180
-local RIGHT_WIDTH = CONTENT_WIDTH - RIGHT_LEFT
 local DOT = "\194\183"
 local DASH = "\226\128\148"
+local TIMES = "\195\151"
+local SEP = "  " .. DOT .. "  "
 
 local ICONS = {
+    -- The client's own "unknown item" icon (bags show it for uncached items).
     unknown = "Interface\\Icons\\INV_Misc_QuestionMark",
+    -- A spell the client has no icon for: an empty slot, not a red "?".
+    noSpell = "Interface\\Buttons\\UI-EmptySlot-Disabled",
     wish = "Interface\\TargetingFrame\\UI-RaidTargetingIcon_3",
     acquired = "Interface\\RaidFrame\\ReadyCheck-Ready",
     rare = "Interface\\TargetingFrame\\UI-RaidTargetingIcon_1",
     trash = "Interface\\TargetingFrame\\UI-RaidTargetingIcon_8",
-    arrow = "Interface\\Buttons\\UI-ScrollBar-ScrollDownButton-Up",
+    other = "Interface\\Icons\\INV_Misc_Bag_10",
+    info = "Interface\\FriendsFrame\\InformationIcon",
+    quest = "Interface\\GossipFrame\\AvailableQuestIcon",
+    crumb = "Interface\\ChatFrame\\ChatFrameExpandArrow",
     search = "Interface\\Common\\UI-Searchbox-Icon",
+    highlight = "Interface\\Buttons\\ButtonHilight-Square",
 }
 GuideUI.ICONS = ICONS
 
-local TABS = { { "overview", "Overview" }, { "bosses", "Encounters" }, { "loot", "Loot" }, { "rares", "Trash & Rares" } }
 local QUALITY = { [0] = "9d9d9d", [1] = "ffffff", [2] = "1eff00", [3] = "0070dd", [4] = "a335ee", [5] = "ff8000" }
 local QUALITY_RGB = { [0] = { 0.62, 0.62, 0.62 }, [1] = { 1, 1, 1 }, [2] = { 0.12, 1, 0 }, [3] = { 0, 0.44, 0.87 }, [4] = { 0.64, 0.21, 0.93 }, [5] = { 1, 0.5, 0 } }
+local FACTIONS = { A = "Alliance", H = "Horde", B = "Both factions" }
+
+-- Sizes. The item grid uses bag-sized cells.
+local CELL, CELL_GAP = 40, 4
+local REWARD_CELL = 28
+local BOSS_ROW, SMALL_ROW, ABILITY_ROW, RUN_ROW = 42, 30, 26, 42
+local CARD_HEIGHT, CARD_GAP = 100, 10
+local TOP_BAR, STRIP = 28, 38
+local MECHANIC_ICONS = 3
 
 local function inCombat()
     if type(Globals.InCombatLockdown) ~= "function" then return false end
@@ -87,6 +106,18 @@ local function setIcon(texture, file, crop)
     if crop == false then pcall(texture.SetTexCoord, texture, 0, 1, 0, 1) end
 end
 
+local function wrapText(parent, role, color, width)
+    local text = UI.Text(parent, role or "small", color or "textMuted")
+    if width then text:SetWidth(width) end
+    pcall(text.SetWordWrap, text, true)
+    pcall(text.SetJustifyV, text, "TOP")
+    return text
+end
+
+local function duration(seconds)
+    return GW.DungeonHud and GW.DungeonHud.FormatDuration(seconds or 0) or tostring(seconds or 0)
+end
+
 -- Art from the client ----------------------------------------------------------------------
 
 -- An item's icon (the client's own item table: no server query, no tooltip).
@@ -110,19 +141,50 @@ function GuideUI.ItemIcon(itemId)
     return file or ICONS.unknown
 end
 
+-- A spell's icon. This client answers through C_Spell (as Guildweaver's own
+-- spell telemetry does); the old globals are only a fallback. A spell the
+-- client has no icon for gets the empty slot, and keeps its name and label.
 local spellIcons = {}
 function GuideUI.SpellIcon(spellId)
     spellId = tonumber(spellId)
-    if not spellId then return ICONS.unknown end
+    if not spellId then return ICONS.noSpell, false end
     local cached = spellIcons[spellId]
-    if cached ~= nil then return cached or ICONS.unknown end
+    if cached ~= nil then return cached or ICONS.noSpell, cached ~= false end
     local file
-    if type(Globals.GetSpellTexture) == "function" then
+    local C_Spell = Globals.C_Spell
+    if C_Spell and type(C_Spell.GetSpellTexture) == "function" then
+        local ok, value = pcall(C_Spell.GetSpellTexture, spellId)
+        if ok and value then file = value end
+    end
+    if not file and C_Spell and type(C_Spell.GetSpellInfo) == "function" then
+        local ok, info = pcall(C_Spell.GetSpellInfo, spellId)
+        if ok and type(info) == "table" then file = info.iconID or info.originalIconID end
+    end
+    if not file and type(Globals.GetSpellTexture) == "function" then
         local ok, value = pcall(Globals.GetSpellTexture, spellId)
-        if ok then file = value end
+        if ok and value then file = value end
+    end
+    if not file and type(Globals.GetSpellInfo) == "function" then
+        local ok, _, _, value = pcall(Globals.GetSpellInfo, spellId)
+        if ok and value then file = value end
     end
     spellIcons[spellId] = file or false
-    return file or ICONS.unknown
+    return file or ICONS.noSpell, file ~= nil
+end
+
+-- Sets a spell icon, dimmed when the client has none.
+local function setSpellIcon(texture, spellId)
+    local file, found = GuideUI.SpellIcon(spellId)
+    setIcon(texture, file)
+    pcall(texture.SetAlpha, texture, found and 1 or 0.55)
+end
+
+-- A dungeon card's art: a strip of the dungeon's own map from the client
+-- (its first floor's centre tile), or nothing.
+function GuideUI.CardArt(instanceId)
+    local floors = Guide.Floors(instanceId)
+    local floor = floors[1]
+    return floor and floor.t and (floor.t[6] or floor.t[1]) or nil
 end
 
 -- Text helpers ------------------------------------------------------------------------------
@@ -144,7 +206,7 @@ function GuideUI.ItemFacts(item)
     if item.r then table.insert(parts, "Req. " .. item.r) end
     if item.dps then table.insert(parts, item.dps .. " dps") end
     if item.b == "BoE" then table.insert(parts, "BoE") end
-    return #parts > 0 and table.concat(parts, "  " .. DOT .. "  ") or nil
+    return #parts > 0 and table.concat(parts, SEP) or nil
 end
 
 -- Ability lines for tooltips and the HUD: "KICK  Spell name  summary".
@@ -155,9 +217,8 @@ end
 
 -- Tooltips -------------------------------------------------------------------------------------
 --
--- Next to the cursor, not at the far edge of a wide row: the tooltip's
--- bottom-left corner sits just right of and above the pointer. GameTooltip
--- is clamped to the screen by the client, so it flips inward at the edges.
+-- One convention everywhere: next to the cursor (the tooltip's bottom-left
+-- just right of and above the pointer), clamped to the screen.
 
 function GuideUI.AnchorTooltip(tooltip, owner)
     local G = Globals
@@ -184,6 +245,18 @@ local function addLine(tooltip, text, color, wrap)
     pcall(tooltip.AddLine, tooltip, text, rgb[1], rgb[2], rgb[3], wrap == true)
 end
 
+-- A plain titled tooltip at the cursor.
+local function textTooltip(owner, title, lines)
+    local tooltip = Globals.GameTooltip
+    if not tooltip or type(tooltip.SetOwner) ~= "function" then return end
+    GuideUI.AnchorTooltip(tooltip, owner)
+    pcall(tooltip.ClearLines, tooltip)
+    addLine(tooltip, title, "goldBright")
+    for _, line in ipairs(lines or {}) do addLine(tooltip, line, "textMuted", true) end
+    pcall(tooltip.Show, tooltip)
+end
+GuideUI.TextTooltip = textTooltip
+
 local function wantsCompare()
     local G = Globals
     if type(G.IsModifiedClick) == "function" then
@@ -198,7 +271,7 @@ local function wantsCompare()
 end
 
 -- The client's own item tooltip (with Blizzard's comparison when shift is
--- held or always-compare is on), with what the guide knows underneath.
+-- held or always-compare is on), with what the journal knows underneath.
 function GuideUI.ShowItemTooltip(owner, row)
     local tooltip = Globals.GameTooltip
     if not tooltip or type(tooltip.SetOwner) ~= "function" or not row or not row.itemId then return end
@@ -219,7 +292,7 @@ function GuideUI.ShowItemTooltip(owner, row)
         addLine(tooltip, "On your wishlist (" .. tostring(row.wanted.priority) .. ")" .. (row.wanted.note and row.wanted.note ~= "" and (": " .. row.wanted.note) or ""),
             "alertWishlist", true)
     end
-    if row.kind ~= "wishlist" then addLine(tooltip, "Reference loot: " .. Guide.REFERENCE_NOTE .. ". Drop chances not shown.", "textFaint", true) end
+    if row.kind ~= "wishlist" and not row.quest then addLine(tooltip, Guide.REFERENCE_NOTE .. ". Drop chances not shown.", "textFaint", true) end
     pcall(tooltip.Show, tooltip)
     GuideUI.hoveredItem = { owner = owner, row = row }
     if shown and wantsCompare() and type(Globals.GameTooltip_ShowCompareItem) == "function" then
@@ -230,10 +303,10 @@ end
 function GuideUI.HideTooltip()
     GuideUI.hoveredItem = nil
     UI.HideTooltip()
-    local compare = Globals.ShoppingTooltip1
-    if compare and type(compare.Hide) == "function" then pcall(compare.Hide, compare) end
-    compare = Globals.ShoppingTooltip2
-    if compare and type(compare.Hide) == "function" then pcall(compare.Hide, compare) end
+    for _, name in ipairs({ "ShoppingTooltip1", "ShoppingTooltip2" }) do
+        local compare = Globals[name]
+        if compare and type(compare.Hide) == "function" then pcall(compare.Hide, compare) end
+    end
 end
 
 -- Shift pressed or released over an item: show again (with or without the
@@ -261,8 +334,9 @@ function GuideUI.ShowSpellTooltip(owner, row)
     pcall(tooltip.Show, tooltip)
 end
 
--- Rows -------------------------------------------------------------------------------------
+-- Building blocks ---------------------------------------------------------------------------
 
+-- A clickable row with hover and selected states.
 local function rowBase(parent, width, height, onClick)
     local row = UI.CreateFrame("Button", parent)
     row:SetSize(width, height)
@@ -271,7 +345,7 @@ local function rowBase(parent, width, height, onClick)
     row:SetScript("OnClick", function(self) if onClick and self.gwData then onClick(self.gwData, self) end end)
     row:SetScript("OnEnter", function(self)
         if self.gwData then
-            if not self.gwSelected then Theme.SetBackground(self, "bgHover") end
+            if not self.gwSelected and onClick then Theme.SetBackground(self, "bgHover") end
             if self.gwEnter then self.gwEnter(self, self.gwData) end
         end
     end)
@@ -292,20 +366,37 @@ local function rowBase(parent, width, height, onClick)
     return row
 end
 
--- An encounter frame: portrait, name, level and observed state, the top
+-- The small "Reference" indicator: an info icon with the source in its
+-- tooltip. The same one on every page that shows reference data.
+local function sourceBadge(parent)
+    local badge = UI.CreateFrame("Button", parent)
+    badge:SetSize(78, 16)
+    badge.icon = badge:CreateTexture(nil, "ARTWORK")
+    badge.icon:SetSize(14, 14)
+    badge.icon:SetPoint("LEFT", badge, "LEFT", 0, 0)
+    pcall(badge.icon.SetTexture, badge.icon, ICONS.info)
+    badge.text = UI.Text(badge, "caps", "textFaint")
+    badge.text:SetPoint("LEFT", badge.icon, "RIGHT", 3, 0)
+    badge.text:SetText("REFERENCE")
+    badge:SetScript("OnEnter", function(self) textTooltip(self, self.gwTitle or "Classic reference", self.gwLines) end)
+    badge:SetScript("OnLeave", GuideUI.HideTooltip)
+    function badge:Set(title, lines)
+        self.gwTitle, self.gwLines = title, lines
+    end
+    return badge
+end
+
+-- An encounter row: portrait, name, level and observed state, the top
 -- mechanics' spell icons, and how many wishlist items drop.
-local MECHANIC_ICONS = 3
-local function encounterRow(parent, width, height, onClick)
-    local row = rowBase(parent, width, height, onClick)
+local function encounterRow(parent, height, onClick)
+    local row = rowBase(parent, 200, height, onClick)
     local size = height - 6
     row.portrait = UI.Portrait(row, size)
     pcall(row.portrait.EnableMouse, row.portrait, false)
     row.portrait:SetPoint("LEFT", row, "LEFT", 3, 0)
-    row.name = noWrap(UI.Text(row, height >= 34 and "label" or "small", "text"))
-    row.name:SetPoint("TOPLEFT", row.portrait, "TOPRIGHT", 6, height >= 34 and -2 or 0)
-    row.name:SetPoint("RIGHT", row, "RIGHT", -22, 0)
+    local tall = height >= 34
+    row.name = noWrap(UI.Text(row, tall and "label" or "small", "text"))
     row.sub = noWrap(UI.Text(row, "small", "textFaint"))
-    row.sub:SetPoint("BOTTOMLEFT", row.portrait, "BOTTOMRIGHT", 6, height >= 34 and 2 or 0)
     row.marks = {}
     for index = 1, MECHANIC_ICONS do
         local mark = icon(row, 13, "OVERLAY")
@@ -315,47 +406,46 @@ local function encounterRow(parent, width, height, onClick)
     row.wish = icon(row, 13, "OVERLAY")
     setIcon(row.wish, ICONS.wish, false)
     row.wishCount = UI.Text(row, "small", "alertWishlist", "RIGHT")
-    if height < 34 then
-        row.name:SetPoint("RIGHT", row, "RIGHT", -60, 0)
-        row.sub:ClearAllPoints()
-        row.sub:SetPoint("RIGHT", row, "RIGHT", -4, 0)
+    if tall then
+        row.name:SetPoint("TOPLEFT", row.portrait, "TOPRIGHT", 7, -3)
+        row.name:SetPoint("RIGHT", row, "RIGHT", -24, 0)
+        row.wish:SetPoint("TOPRIGHT", row, "TOPRIGHT", -4, -5)
+    else
         pcall(row.sub.SetJustifyH, row.sub, "RIGHT")
-        row.name:ClearAllPoints()
-        row.name:SetPoint("LEFT", row.portrait, "RIGHT", 6, 0)
+        row.sub:SetPoint("RIGHT", row, "RIGHT", -4, 0)
+        row.name:SetPoint("LEFT", row.portrait, "RIGHT", 7, 0)
         row.name:SetPoint("RIGHT", row.sub, "LEFT", -4, 0)
+        row.wish:SetPoint("RIGHT", row.sub, "LEFT", -2, 0)
     end
-    -- entry: { creature, index, displayId, icon, level, state, mechanics, wanted, selected, sub }
+    row.wishCount:SetPoint("RIGHT", row.wish, "LEFT", -1, 0)
+    -- entry: { creature, kind, index, displayId, icon, state, mechanics, wanted, selected, sub }
     function row:Fill(entry)
         self.gwData = entry
-        UI.SetText(self.name, entry.creature.name)
+        UI.SetText(self.name, entry.name or entry.creature.name)
         Theme.Tint(self.name, entry.state == "defeated" and "textMuted" or (entry.selected and "goldBright" or "text"))
         UI.SetText(self.sub, entry.sub or "")
         self.portrait:SetCreature(entry.displayId, entry.icon)
         self.portrait:SetState(entry.state or (entry.displayId and "available" or "unknown"))
         local shownMarks = 0
         for index, mark in ipairs(self.marks) do
-            local mechanic = height >= 34 and entry.mechanics and entry.mechanics[index] or nil
+            local mechanic = tall and entry.mechanics and entry.mechanics[index] or nil
             if mechanic then
-                setIcon(mark, GuideUI.SpellIcon(mechanic.id))
+                setSpellIcon(mark, mechanic.id)
                 mark:Show()
                 shownMarks = index
             else
                 mark:Hide()
             end
         end
-        local wanted = entry.wanted or 0
-        self.wish:ClearAllPoints()
-        self.wish:SetPoint(height >= 34 and "TOPRIGHT" or "RIGHT", self, height >= 34 and "TOPRIGHT" or "RIGHT", -4, height >= 34 and -4 or 0)
-        UI.SetShown(self.wish, wanted > 0 and height >= 34)
-        UI.SetText(self.wishCount, wanted > 1 and tostring(wanted) or "")
-        self.wishCount:ClearAllPoints()
-        self.wishCount:SetPoint("RIGHT", self.wish, "LEFT", -1, 0)
-        UI.SetShown(self.wishCount, wanted > 1 and height >= 34)
         self.gwMarks = shownMarks
-        if height >= 34 then
+        local wanted = entry.wanted or 0
+        UI.SetShown(self.wish, wanted > 0)
+        UI.SetText(self.wishCount, wanted > 1 and tostring(wanted) or "")
+        UI.SetShown(self.wishCount, wanted > 1)
+        if tall then
             -- The level and state line stops before the mechanic icons.
             self.sub:ClearAllPoints()
-            self.sub:SetPoint("BOTTOMLEFT", self.portrait, "BOTTOMRIGHT", 6, 2)
+            self.sub:SetPoint("BOTTOMLEFT", self.portrait, "BOTTOMRIGHT", 7, 3)
             self.sub:SetPoint("RIGHT", self, "RIGHT", -(6 + shownMarks * 15), 0)
         end
         self:SetSelected(entry.selected)
@@ -364,20 +454,20 @@ local function encounterRow(parent, width, height, onClick)
     return row
 end
 
--- An ability: spell icon, label, name, the client's short summary.
-local function abilityRow(parent, width)
-    local row = rowBase(parent, width, 22, nil)
-    row.icon = icon(row, 18)
+-- An ability: spell icon, label, name and the atlas's short summary.
+local function abilityRow(parent)
+    local row = rowBase(parent, 300, ABILITY_ROW, nil)
+    row.icon = icon(row, 22)
     row.icon:SetPoint("LEFT", row, "LEFT", 2, 0)
     row.tag = UI.Text(row, "caps", "info", "LEFT")
-    row.tag:SetPoint("LEFT", row.icon, "RIGHT", 6, 0)
-    row.tag:SetWidth(42)
+    row.tag:SetPoint("LEFT", row.icon, "RIGHT", 7, 0)
+    row.tag:SetWidth(46)
     row.text = noWrap(UI.Text(row, "label", "text"))
     row.text:SetPoint("LEFT", row.tag, "RIGHT", 2, 0)
     row.text:SetPoint("RIGHT", row, "RIGHT", -4, 0)
     function row:Fill(ability)
         self.gwData, self.gwEnter = ability, GuideUI.ShowSpellTooltip
-        setIcon(self.icon, GuideUI.SpellIcon(ability.id))
+        setSpellIcon(self.icon, ability.id)
         UI.SetText(self.tag, ability.label)
         Theme.Tint(self.tag, Guide.LABEL_COLORS[ability.label] or "textMuted")
         UI.SetText(self.text, tostring(ability.spell.n) .. (ability.spell.s and Theme.Colorize("  " .. ability.spell.s, "textFaint") or ""))
@@ -387,102 +477,161 @@ local function abilityRow(parent, width)
     return row
 end
 
--- An item: its icon in a quality-coloured frame, the quality-coloured
--- name, its facts, where it drops and its wishlist state.
-local function itemRow(parent, width, height, onClick)
-    local row = rowBase(parent, width, height, onClick)
-    local size = height - 6
-    row.frame = UI.CreateFrame("Frame", row)
-    row.frame:SetSize(size, size)
-    row.frame:SetPoint("LEFT", row, "LEFT", 3, 0)
-    Theme.Skin(row.frame, "bgInset", "border")
-    row.icon = icon(row.frame, size - 2)
-    row.icon:SetPoint("CENTER", row.frame, "CENTER", 0, 0)
-    row.mark = icon(row, 14, "OVERLAY")
-    row.mark:SetPoint("RIGHT", row, "RIGHT", -4, 0)
-    row.source = noWrap(UI.Text(row, "small", "textFaint", "RIGHT"))
-    row.source:SetPoint("RIGHT", row.mark, "LEFT", -6, 0)
-    row.source:SetWidth(math.floor(width * 0.28))
-    row.name = noWrap(UI.Text(row, "label", "text"))
-    row.name:SetPoint("TOPLEFT", row.frame, "TOPRIGHT", 7, height >= 28 and -1 or 0)
-    row.name:SetPoint("RIGHT", row.source, "LEFT", -6, 0)
-    row.facts = noWrap(UI.Text(row, "small", "textMuted"))
-    row.facts:SetPoint("BOTTOMLEFT", row.frame, "BOTTOMRIGHT", 7, 1)
-    row.facts:SetPoint("RIGHT", row.source, "LEFT", -6, 0)
-    UI.SetShown(row.facts, height >= 28)
-    function row:Fill(data, source)
-        self.gwData, self.gwEnter = data, GuideUI.ShowItemTooltip
-        setIcon(self.icon, GuideUI.ItemIcon(data.itemId))
-        local rgb = QUALITY_RGB[(data.item and data.item.q) or 1] or QUALITY_RGB[1]
-        Theme.SetBorder(self.frame, { rgb[1], rgb[2], rgb[3], 0.9 })
-        UI.SetText(self.name, GuideUI.ItemName(data))
-        UI.SetText(self.facts, GuideUI.ItemFacts(data.item) or "")
-        UI.SetText(self.source, source or "")
-        pcall(self.source.SetWidth, self.source, (source and source ~= "") and math.floor(width * 0.28) or 1)
-        if data.acquired then
-            setIcon(self.mark, ICONS.acquired, false)
-            self.mark:Show()
-        elseif data.wanted then
-            setIcon(self.mark, ICONS.wish, false)
-            self.mark:Show()
-        else
-            self.mark:Hide()
-        end
-        self:SetSelected(data.wanted and not data.acquired)
+-- An inventory cell: the item's icon in a quality-coloured frame, a purple
+-- raid diamond when it is on the wishlist, a check when acquired. Hover for
+-- the client's tooltip; there is no click action.
+local function itemCell(parent, size)
+    local cell = UI.CreateFrame("Button", parent)
+    cell:SetSize(size, size)
+    Theme.Skin(cell, "bgInset", "border")
+    cell.icon = icon(cell, size - 2)
+    cell.icon:SetPoint("CENTER", cell, "CENTER", 0, 0)
+    cell.wish = cell:CreateTexture(nil, "OVERLAY")
+    cell.wish:SetSize(math.floor(size * 0.38), math.floor(size * 0.38))
+    cell.wish:SetPoint("TOPRIGHT", cell, "TOPRIGHT", 3, 3)
+    setIcon(cell.wish, ICONS.wish, false)
+    cell.check = cell:CreateTexture(nil, "OVERLAY")
+    cell.check:SetSize(math.floor(size * 0.4), math.floor(size * 0.4))
+    cell.check:SetPoint("BOTTOMRIGHT", cell, "BOTTOMRIGHT", 2, -2)
+    setIcon(cell.check, ICONS.acquired, false)
+    pcall(cell.SetHighlightTexture, cell, ICONS.highlight, "ADD")
+    cell:SetScript("OnEnter", function(self) if self.gwData then GuideUI.ShowItemTooltip(self, self.gwData) end end)
+    cell:SetScript("OnLeave", GuideUI.HideTooltip)
+    function cell:Fill(row)
+        self.gwData = row
+        setIcon(self.icon, GuideUI.ItemIcon(row.itemId))
+        local rgb = QUALITY_RGB[(row.item and row.item.q) or 1] or QUALITY_RGB[1]
+        Theme.SetBorder(self, { rgb[1], rgb[2], rgb[3], (row.item and (row.item.q or 1) >= 2) and 1 or 0.55 })
+        self.gwWanted, self.gwAcquired = (row.wanted and not row.acquired) and true or false, row.acquired == true
+        UI.SetShown(self.wish, self.gwWanted)
+        UI.SetShown(self.check, self.gwAcquired)
         self:Show()
     end
-    return row
-end
-
-local function emptyText(parent, width)
-    local text = UI.Text(parent, "label", "textFaint")
-    text:SetWidth(width)
-    pcall(text.SetWordWrap, text, true)
-    pcall(text.SetJustifyV, text, "TOP")
-    return text
-end
-
--- Page arrows and "2/3".
-local function pager(parent, onPage)
-    local frame = UI.CreateFrame("Frame", parent)
-    frame:SetSize(90, 22)
-    frame.prev = DungeonMap.Arrow(frame, DungeonMap.PREV, function() onPage(-1) end)
-    frame.prev:SetPoint("LEFT", frame, "LEFT", 0, 0)
-    frame.next = DungeonMap.Arrow(frame, DungeonMap.NEXT, function() onPage(1) end)
-    frame.next:SetPoint("RIGHT", frame, "RIGHT", 0, 0)
-    frame.label = UI.Text(frame, "small", "textMuted", "CENTER")
-    frame.label:SetPoint("LEFT", frame.prev, "RIGHT", 0, 0)
-    frame.label:SetPoint("RIGHT", frame.next, "LEFT", 0, 0)
-    function frame:Set(page, pages)
-        UI.SetShown(self, pages > 1)
-        UI.SetText(self.label, page .. "/" .. pages)
-        self.prev:SetActive(page > 1)
-        self.next:SetActive(page < pages)
+    function cell:Clear()
+        self.gwData = nil
+        self:Hide()
     end
-    return frame
+    return cell
 end
 
-local function clampPage(page, count, perPage)
-    local pages = math.max(1, math.ceil(count / perPage))
-    return math.max(1, math.min(page or 1, pages)), pages
+-- A pool of frames that grows to the largest list shown and is reused.
+local function pool(make)
+    local list = { items = {}, used = 0 }
+    function list:Get(index)
+        local item = self.items[index]
+        if not item then
+            item = make(index)
+            self.items[index] = item
+        end
+        if index > self.used then self.used = index end
+        return item
+    end
+    -- Hides everything past `count`.
+    function list:Trim(count)
+        for index = count + 1, #self.items do
+            local item = self.items[index]
+            if item.Clear then item:Clear() else item:Hide() end
+        end
+    end
+    return list
 end
 
--- State --------------------------------------------------------------------------------------
+-- Lays item rows out as a grid in `parent` from (x, y), `width` wide.
+-- Returns the grid's height and its number of columns.
+local function layoutGrid(cells, rows, parent, x, y, width, size, gap)
+    local columns = math.max(1, math.floor((width + gap) / (size + gap)))
+    for index, row in ipairs(rows) do
+        local cell = cells:Get(index)
+        local column, line = (index - 1) % columns, math.floor((index - 1) / columns)
+        cell:ClearAllPoints()
+        cell:SetPoint("TOPLEFT", parent, "TOPLEFT", x + column * (size + gap), y - line * (size + gap))
+        cell:Fill(row)
+    end
+    cells:Trim(#rows)
+    if #rows == 0 then return 0, columns end
+    return math.ceil(#rows / columns) * (size + gap) - gap, columns
+end
+GuideUI.LayoutGrid = layoutGrid
 
-local state = { tab = nil, boss = 1, rare = 1, lootPage = 1, lootFilter = "all", listPage = 1, trashPage = 1, floor = nil,
-    detailTab = "abilities", detailPage = 1, picker = { query = "", band = "all", kind = "all", page = 1 } }
+-- Navigation ------------------------------------------------------------------------------
+--
+-- A page: { level = "browser", mode = "dungeons"|"runs" }
+--         { level = "dungeon", id, tab = "overview"|"quests"|"runs" }
+--         { level = "creature", id, kind = "boss"|"rare"|"trash"|"other", index }
+-- The history is a list with a cursor: Navigate cuts what lay ahead,
+-- Back and Forward move the cursor. Each page keeps its own scroll offsets.
+
+local MAX_HISTORY = 50
+local nav = { history = {}, index = 0 }
+GuideUI.nav = nav
+
+local state = { floors = {}, browser = { query = "", band = "all", kind = "all" } }
 GuideUI.state = state
 
-local function selectedId()
-    return state.instanceId or Guide.SelectedInstanceId()
+local function samePage(a, b)
+    if not a or not b then return false end
+    return a.level == b.level and a.id == b.id and (a.tab or "overview") == (b.tab or "overview") and a.kind == b.kind
+        and a.index == b.index and (a.mode or "dungeons") == (b.mode or "dungeons")
+end
+GuideUI.SamePage = samePage
+
+function GuideUI.CurrentPage()
+    return nav.history[nav.index]
 end
 
-local function showTab(view, tab)
-    state.tab = tab
-    prefs().tab = tab
-    for key, frame in pairs(view.tabs) do UI.SetShown(frame, key == tab) end
-    view.tabBar:Refresh()
+local function rememberScroll()
+    local page, view = GuideUI.CurrentPage(), GuideUI.view
+    if not page or not view then return end
+    page.scroll = page.scroll or {}
+    for key, area in pairs(view.scrollAreas or {}) do
+        if area:IsShown() then page.scroll[key] = area:Offset() end
+    end
 end
+
+-- Goes to a page (a no-op when it is the page shown). The first page is
+-- always the dungeon cards, so Back from a first dungeon leads there.
+-- quiet: no repaint (the caller repaints).
+function GuideUI.Navigate(page, quiet)
+    if samePage(page, GuideUI.CurrentPage()) then
+        if not quiet then GuideUI.Refresh() end
+        return false
+    end
+    rememberScroll()
+    if nav.index == 0 and page.level ~= "browser" then
+        table.insert(nav.history, { level = "browser", mode = "dungeons" })
+        nav.index = 1
+    end
+    for index = #nav.history, nav.index + 1, -1 do table.remove(nav.history, index) end
+    table.insert(nav.history, page)
+    while #nav.history > MAX_HISTORY do table.remove(nav.history, 1) end
+    nav.index = #nav.history
+    if page.id and page.level ~= "browser" then Guide.Select(page.id) end
+    if not quiet then GuideUI.Refresh() end
+    return true
+end
+
+function GuideUI.Back()
+    if nav.index <= 1 then return false end
+    rememberScroll()
+    nav.index = nav.index - 1
+    GuideUI.Refresh()
+    return true
+end
+
+function GuideUI.Forward()
+    if nav.index >= #nav.history then return false end
+    rememberScroll()
+    nav.index = nav.index + 1
+    GuideUI.Refresh()
+    return true
+end
+
+local function browserPage(mode) return { level = "browser", mode = mode or "dungeons" } end
+local function dungeonPage(id, tab) return { level = "dungeon", id = id, tab = tab or "overview" } end
+local function creaturePage(id, kind, index) return { level = "creature", id = id, kind = kind, index = index } end
+GuideUI.Pages = { browser = browserPage, dungeon = dungeonPage, creature = creaturePage }
+
+-- Data for pages ----------------------------------------------------------------------------
 
 -- What the run open here observed, per boss.
 local function encounterStates(instanceId, dungeon)
@@ -495,170 +644,23 @@ end
 
 local STATE_TEXT = { engaged = Theme.Colorize("In combat", "bad"), defeated = Theme.Colorize("Defeated", "gold") }
 
--- An encounter list entry for a boss.
-local function bossEntry(instanceId, boss, index, states, selected)
-    local level = Guide.CreatureLevel(boss)
-    local parts = {}
-    if level then table.insert(parts, "Level " .. level) end
-    local observed = states[boss]
-    if observed then table.insert(parts, STATE_TEXT[observed]) end
-    local wanted = 0
-    for _, row in ipairs(Guide.CreatureLoot(boss)) do
-        if row.wanted and not row.acquired then wanted = wanted + 1 end
-    end
-    local displayId = Guide.DisplayId(instanceId, boss)
-    return { creature = boss, index = index, kind = "boss", displayId = displayId, level = level,
-        state = (index == selected and "selected") or observed or (displayId and "available" or "unknown"),
-        mechanics = Guide.TopMechanics(boss, Guide.Role(), MECHANIC_ICONS), wanted = wanted, selected = index == selected,
-        sub = table.concat(parts, "  " .. DOT .. "  ") }
+-- The creature a page shows, and its list.
+local function pageCreature(dungeon, page)
+    if not dungeon or page.level ~= "creature" then return nil end
+    local list = page.kind == "boss" and dungeon.bosses or (page.kind == "rare" and dungeon.rares or (page.kind == "trash" and dungeon.trash or nil))
+    return list and list[page.index] or nil
 end
 
--- The encounter panel -------------------------------------------------------------------------
---
--- 1. a large portrait and the name, 2. two to four mechanics that matter,
--- 3. every ability with its spell icon, 4. the loot with item icons and the
--- wishlist marked. Used for bosses, rares and dangerous trash.
-
-local WATCH_ROWS, DETAIL_ROWS, DETAIL_LOOT_ROWS = 4, 6, 4
-
-local function detailPanel(_, parent, width)
-    local panel = UI.CreateFrame("Frame", parent)
-    panel:SetSize(width, BODY_HEIGHT)
-    panel.portrait = UI.Portrait(panel, 60)
-    pcall(panel.portrait.EnableMouse, panel.portrait, false)
-    panel.portrait:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, 0)
-    panel.name = noWrap(UI.Text(panel, "pageTitle", "goldBright"))
-    panel.name:SetPoint("TOPLEFT", panel.portrait, "TOPRIGHT", 10, -6)
-    panel.name:SetPoint("RIGHT", panel, "RIGHT", 0, 0)
-    panel.facts = noWrap(UI.Text(panel, "label", "textMuted"))
-    panel.facts:SetPoint("TOPLEFT", panel.name, "BOTTOMLEFT", 0, -5)
-    panel.facts:SetPoint("RIGHT", panel, "RIGHT", 0, 0)
-    panel.note = noWrap(UI.Text(panel, "small", "textFaint"))
-    panel.note:SetPoint("TOPLEFT", panel.facts, "BOTTOMLEFT", 0, -4)
-    panel.note:SetPoint("RIGHT", panel, "RIGHT", 0, 0)
-
-    panel.watchHeader = UI.SectionHeader(panel, "Watch for")
-    panel.watchHeader:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, -70)
-    panel.watchHeader:SetWidth(width)
-    panel.watch = {}
-    for index = 1, WATCH_ROWS do
-        local row = abilityRow(panel, width)
-        row:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, -92 - (index - 1) * 22)
-        panel.watch[index] = row
+local function wantedIn(rows)
+    local count = 0
+    for _, row in ipairs(rows) do
+        if row.wanted and not row.acquired then count = count + 1 end
     end
-    panel.watchEmpty = emptyText(panel, width)
-    panel.watchEmpty:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, -94)
-
-    panel.switch = UI.Segmented(panel, { { "abilities", "Abilities" }, { "loot", "Loot" } }, function() return state.detailTab end, function(value)
-        state.detailTab, state.detailPage = value, 1
-        GuideUI.Refresh()
-    end, { segmentWidth = 86, height = 20 })
-    panel.pager = pager(panel, function(step)
-        state.detailPage = state.detailPage + step
-        GuideUI.Refresh()
-    end)
-    panel.abilities = {}
-    for index = 1, DETAIL_ROWS do panel.abilities[index] = abilityRow(panel, width) end
-    panel.loot = {}
-    for index = 1, DETAIL_LOOT_ROWS do panel.loot[index] = itemRow(panel, width, 28) end
-    panel.listEmpty = emptyText(panel, width)
-    return panel
+    return count
 end
 
-local function paintDetail(_, panel, instanceId, creature, kind, observed)
-    if not creature then
-        panel:Hide()
-        return
-    end
-    panel:Show()
-    local displayId = Guide.DisplayId(instanceId, creature)
-    panel.portrait:SetCreature(displayId, kind == "rare" and ICONS.rare or (kind == "trash" and ICONS.trash or nil))
-    panel.portrait:SetState(observed or (displayId and "available" or "unknown"))
-    UI.SetText(panel.name, creature.name)
-    local facts = {}
-    local level = Guide.CreatureLevel(creature)
-    if level then table.insert(facts, "Level " .. level) end
-    local class = Guide.CreatureClass(creature)
-    if kind == "rare" then table.insert(facts, creature.elite and "Rare elite" or "Rare")
-    elseif kind == "trash" then table.insert(facts, "Dangerous trash" .. (creature.n and creature.n > 1 and ("  \195\151" .. creature.n) or ""))
-    elseif class then table.insert(facts, class) end
-    if observed then table.insert(facts, STATE_TEXT[observed] .. (observed == "defeated" and Theme.Colorize(" this run", "textMuted") or "")) end
-    UI.SetText(panel.facts, table.concat(facts, "  " .. DOT .. "  "))
-
-    local abilities = Guide.Abilities(creature)
-    local verified = false
-    for _, row in ipairs(abilities) do if Guide.IsVerified(row.spell) then verified = true end end
-    UI.SetText(panel.note, verified and "Some entries verified on Forever." or ("Mechanics and loot: " .. Guide.REFERENCE_NOTE))
-
-    local role = Guide.Role()
-    local top = Guide.TopMechanics(creature, role, WATCH_ROWS)
-    panel.watchHeader:SetTitle("Watch for" .. (role and (" " .. DASH .. " " .. role) or ""))
-    for index, row in ipairs(panel.watch) do
-        if top[index] then row:Fill(top[index]) else row:Clear() end
-    end
-    UI.SetText(panel.watchEmpty, #abilities == 0 and "No abilities in the atlas for this creature. That does not mean it has none." or "")
-    UI.SetShown(panel.watchEmpty, #abilities == 0)
-
-    -- Abilities | Loot, under the mechanics.
-    local switchTop = -92 - math.max(1, #top) * 22 - 10
-    local loot = kind ~= "trash" and Guide.CreatureLoot(creature) or {}
-    if kind == "trash" then state.detailTab = "abilities" end
-    panel.switch.buttons[1]:SetLabel("Abilities (" .. #abilities .. ")")
-    panel.switch.buttons[2]:SetLabel("Loot (" .. #loot .. ")")
-    UI.SetShown(panel.switch.buttons[2], kind ~= "trash")
-    panel.switch:ClearAllPoints()
-    panel.switch:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, switchTop)
-    panel.switch:Refresh()
-    panel.pager:ClearAllPoints()
-    panel.pager:SetPoint("TOPRIGHT", panel, "TOPRIGHT", 0, switchTop + 1)
-    local listTop = switchTop - 26
-    local room = BODY_HEIGHT + listTop
-    local empty = ""
-    if state.detailTab == "loot" then
-        local perPage = math.max(1, math.min(DETAIL_LOOT_ROWS, math.floor(room / 28)))
-        local page, pages = clampPage(state.detailPage, #loot, perPage)
-        state.detailPage = page
-        panel.pager:Set(page, pages)
-        for _, row in ipairs(panel.abilities) do row:Clear() end
-        for index, rowFrame in ipairs(panel.loot) do
-            local row = index <= perPage and loot[(page - 1) * perPage + index] or nil
-            if row then
-                row.from = creature.name
-                rowFrame:ClearAllPoints()
-                rowFrame:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, listTop - (index - 1) * 28)
-                rowFrame:Fill(row, nil)
-            else
-                rowFrame:Clear()
-            end
-        end
-        if #loot == 0 then empty = "No reference loot listed for " .. creature.name .. "." end
-    else
-        local perPage = math.max(1, math.min(DETAIL_ROWS, math.floor(room / 22)))
-        local page, pages = clampPage(state.detailPage, #abilities, perPage)
-        state.detailPage = page
-        panel.pager:Set(page, pages)
-        for _, row in ipairs(panel.loot) do row:Clear() end
-        for index, rowFrame in ipairs(panel.abilities) do
-            local row = index <= perPage and abilities[(page - 1) * perPage + index] or nil
-            if row then
-                rowFrame:ClearAllPoints()
-                rowFrame:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, listTop - (index - 1) * 22)
-                rowFrame:Fill(row)
-            else
-                rowFrame:Clear()
-            end
-        end
-        if #abilities == 0 then empty = "None listed." end
-    end
-    panel.listEmpty:ClearAllPoints()
-    panel.listEmpty:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, listTop - 2)
-    UI.SetText(panel.listEmpty, empty)
-    UI.SetShown(panel.listEmpty, empty ~= "")
-end
-
--- Dungeon picker -----------------------------------------------------------------------------
-
-local PICKER_ROWS = 11
+-- Dungeon cards: the filters, then the current dungeon, then the ones for
+-- the player's level, then the rest in the atlas's order.
 local BANDS = {
     all = function() return true end,
     low = function(d) return (d.lmin or 0) < 30 end,
@@ -666,608 +668,1105 @@ local BANDS = {
     high = function(d) return (d.lmin or 0) >= 50 end,
 }
 
--- The dungeons the picker lists for its filters.
-function GuideUI.PickerList(filters)
-    filters = filters or state.picker
+local function playerLevel()
+    if type(Globals.UnitLevel) ~= "function" then return nil end
+    local ok, value = pcall(Globals.UnitLevel, "player")
+    return ok and tonumber(value) or nil
+end
+
+local function suits(dungeon, level)
+    return level and dungeon.lmin and dungeon.kind ~= "raid" and level >= dungeon.lmin and level <= (dungeon.lmax or dungeon.lmin) or false
+end
+
+function GuideUI.BrowserList(filters)
+    filters = filters or state.browser
     local query = Guide.NormalizeName(filters.query or "")
     local band = BANDS[filters.band or "all"] or BANDS.all
+    local current, level = Guide.CurrentInstanceId(), playerLevel()
     local list = {}
-    for _, dungeon in ipairs(Guide.List()) do
+    for order, dungeon in ipairs(Guide.List()) do
         local kindOk = filters.kind == nil or filters.kind == "all" or (filters.kind == "raid") == (dungeon.kind == "raid")
         local nameOk = not query or string.find(Guide.NormalizeName(dungeon.name) or "", query, 1, true) ~= nil
-        if kindOk and nameOk and band(dungeon) then table.insert(list, dungeon) end
-    end
-    return list
-end
-
-local function pickDungeon(id)
-    state.pickerOpen = false
-    if id == Guide.CurrentInstanceId() then Guide.FollowCurrent() else Guide.Select(id) end
-    GuideUI.Show(id)
-end
-
-local function buildPicker(view)
-    local picker = UI.CreateFrame("Frame", view)
-    picker:SetPoint("TOPLEFT", view, "TOPLEFT", 0, -48)
-    picker:SetPoint("BOTTOMRIGHT", view, "BOTTOMRIGHT", 0, 0)
-    Theme.Skin(picker, "bgRaised", "borderGold", 0.7)
-    pcall(picker.SetFrameLevel, picker, GuideUI.FrameLevel(view) + 20)
-    pcall(picker.EnableMouse, picker, true)
-    picker:Hide()
-    local header = UI.SectionHeader(picker, "Choose a dungeon")
-    header:SetPoint("TOPLEFT", picker, "TOPLEFT", 12, -10)
-    header:SetWidth(200)
-    picker.close = UI.IconButton(picker, "\195\151", { size = 20, role = "glyph", tooltip = "Close", onClick = function()
-        state.pickerOpen = false
-        GuideUI.Refresh()
-    end })
-    picker.close:SetPoint("TOPRIGHT", picker, "TOPRIGHT", -6, -6)
-    picker.here = UI.Button(picker, "Where I am", { width = 96, height = 22, variant = "primary", role = "small", onClick = function()
-        local current = Guide.CurrentInstanceId()
-        if current then pickDungeon(current) end
-    end })
-    picker.here:SetPoint("TOPRIGHT", picker, "TOPRIGHT", -12, -66)
-
-    picker.search = UI.Input(picker, 200, function(box) box:ClearFocus() end)
-    picker.search:SetPoint("TOPLEFT", picker, "TOPLEFT", 12, -38)
-    picker.searchIcon = picker.search:CreateTexture(nil, "OVERLAY")
-    picker.searchIcon:SetSize(12, 12)
-    picker.searchIcon:SetPoint("RIGHT", picker.search, "RIGHT", -6, 0)
-    pcall(picker.searchIcon.SetTexture, picker.searchIcon, ICONS.search)
-    picker.hint = UI.Text(picker.search, "label", "textFaint")
-    picker.hint:SetPoint("LEFT", picker.search, "LEFT", 7, 0)
-    picker.hint:SetText("Search dungeons")
-    picker.search:SetScript("OnTextChanged", function(box)
-        local ok, text = pcall(box.GetText, box)
-        state.picker.query = ok and text or ""
-        state.picker.page = 1
-        UI.SetShown(picker.hint, state.picker.query == "")
-        GuideUI.RefreshPicker()
-    end)
-    picker.band = UI.Segmented(picker, { { "all", "All levels" }, { "low", "10\226\128\14729" }, { "mid", "30\226\128\14749" }, { "high", "50+" } },
-        function() return state.picker.band end, function(value)
-            state.picker.band, state.picker.page = value, 1
-            GuideUI.RefreshPicker()
-        end, { segmentWidth = 66, height = 22 })
-    picker.band:SetPoint("TOPLEFT", picker, "TOPLEFT", 12, -66)
-    picker.kind = UI.Segmented(picker, { { "all", "All" }, { "dungeon", "Dungeons" }, { "raid", "Raids" } },
-        function() return state.picker.kind end, function(value)
-            state.picker.kind, state.picker.page = value, 1
-            GuideUI.RefreshPicker()
-        end, { segmentWidth = 72, height = 22 })
-    picker.kind:SetPoint("LEFT", picker.search, "RIGHT", 12, 0)
-
-    local columnWidth = (CONTENT_WIDTH - 24 - 12) / 2
-    picker.rows = {}
-    for index = 1, PICKER_ROWS * 2 do
-        local row = rowBase(picker, columnWidth, 22, function(data) pickDungeon(data.id) end)
-        local column = index > PICKER_ROWS and 1 or 0
-        row:SetPoint("TOPLEFT", picker, "TOPLEFT", 12 + column * (columnWidth + 12), -98 - ((index - 1) % PICKER_ROWS) * 22)
-        row.name = noWrap(UI.Text(row, "label", "text"))
-        row.name:SetPoint("LEFT", row, "LEFT", 6, 0)
-        row.levels = UI.Text(row, "small", "textMuted", "RIGHT")
-        row.levels:SetPoint("RIGHT", row, "RIGHT", -6, 0)
-        row.name:SetPoint("RIGHT", row.levels, "LEFT", -6, 0)
-        picker.rows[index] = row
-    end
-    picker.pager = pager(picker, function(step)
-        state.picker.page = state.picker.page + step
-        GuideUI.RefreshPicker()
-    end)
-    picker.pager:SetPoint("BOTTOMRIGHT", picker, "BOTTOMRIGHT", -10, 8)
-    picker.empty = emptyText(picker, CONTENT_WIDTH - 24)
-    picker.empty:SetPoint("TOPLEFT", picker, "TOPLEFT", 12, -102)
-    view.picker = picker
-end
-
-function GuideUI.RefreshPicker()
-    local view = GuideUI.view
-    local picker = view and view.picker
-    if not picker then return end
-    UI.SetShown(picker, state.pickerOpen == true)
-    if not state.pickerOpen then return end
-    picker.band:Refresh()
-    picker.kind:Refresh()
-    local current, shown = Guide.CurrentInstanceId(), selectedId()
-    UI.SetShown(picker.here, current ~= nil)
-    local list = GuideUI.PickerList()
-    local perPage = PICKER_ROWS * 2
-    local page, pages = clampPage(state.picker.page, #list, perPage)
-    state.picker.page = page
-    picker.pager:Set(page, pages)
-    for index, row in ipairs(picker.rows) do
-        local dungeon = list[(page - 1) * perPage + index]
-        if dungeon then
-            row.gwData = dungeon
-            local name = dungeon.name .. (dungeon.kind == "raid" and Theme.Colorize("  Raid", "textFaint") or "")
-            if dungeon.id == current then name = name .. Theme.Colorize("  here", "good") end
-            UI.SetText(row.name, name)
-            Theme.Tint(row.name, dungeon.id == shown and "goldBright" or "text")
-            UI.SetText(row.levels, Guide.LevelText(dungeon.lmin, dungeon.lmax) or "")
-            row:SetSelected(dungeon.id == shown)
-            row:Show()
-        else
-            row:Clear()
+        if kindOk and nameOk and band(dungeon) then
+            local rank = dungeon.id == current and 0 or (suits(dungeon, level) and 1 or 2)
+            table.insert(list, { dungeon = dungeon, rank = rank, order = order, suggested = rank == 1 })
         end
     end
-    UI.SetText(picker.empty, #list == 0 and "No dungeon matches. Clear the search or pick All levels." or "")
-    UI.SetShown(picker.empty, #list == 0)
-end
-
-local function openPicker()
-    state.pickerOpen = not state.pickerOpen
-    if state.pickerOpen and GuideUI.view and GuideUI.view.picker then
-        pcall(GuideUI.view.picker.search.SetText, GuideUI.view.picker.search, state.picker.query or "")
-    end
-    GuideUI.RefreshPicker()
-end
-
--- Tabs ----------------------------------------------------------------------------------------
-
-local OVERVIEW_ROWS, ENCOUNTER_ROWS, TRASH_ROWS, LOOT_ROWS = 9, 8, 12, 10
-
-local function goToBoss(view, index)
-    state.boss, state.detailPage, state.encounterPage = index, 1, nil
-    view.showAll = false
-    showTab(view, "bosses")
-    GuideUI.Refresh()
-end
-
-local function pinTooltip(pin, owner)
-    local tooltip = Globals.GameTooltip
-    if not tooltip or type(tooltip.SetOwner) ~= "function" then return end
-    GuideUI.AnchorTooltip(tooltip, owner)
-    pcall(tooltip.ClearLines, tooltip)
-    addLine(tooltip, pin.index .. ". " .. pin.creature.name, "goldBright")
-    local level = Guide.CreatureLevel(pin.creature)
-    if level then addLine(tooltip, "Level " .. level, "textMuted") end
-    for _, row in ipairs(Guide.TopMechanics(pin.creature, Guide.Role(), 2)) do addLine(tooltip, GuideUI.AbilityText(row), "text") end
-    addLine(tooltip, "Position from Blizzard's dungeon journal. Click for the encounter.", "textFaint", true)
-    pcall(tooltip.Show, tooltip)
-end
-
-local function buildOverview(view, body)
-    body.header = UI.SectionHeader(body, "Encounters")
-    body.header:SetPoint("TOPLEFT", body, "TOPLEFT", 0, 0)
-    body.header:SetWidth(LEFT_WIDTH)
-    body.list = {}
-    for index = 1, OVERVIEW_ROWS do
-        local row = encounterRow(body, LEFT_WIDTH, 30, function(data) goToBoss(view, data.index) end)
-        row:SetPoint("TOPLEFT", body, "TOPLEFT", 0, -24 - (index - 1) * 31)
-        body.list[index] = row
-    end
-    body.pager = pager(body, function(step)
-        state.listPage = state.listPage + step
-        GuideUI.Refresh()
+    table.sort(list, function(a, b)
+        if a.rank ~= b.rank then return a.rank < b.rank end
+        return a.order < b.order
     end)
-    body.pager:SetPoint("BOTTOMLEFT", body, "BOTTOMLEFT", 38, 0)
-    body.listEmpty = emptyText(body, LEFT_WIDTH)
-    body.listEmpty:SetPoint("TOPLEFT", body, "TOPLEFT", 0, -26)
-
-    body.map = DungeonMap.New(body, RIGHT_WIDTH - 2, {
-        onPin = function(pin) goToBoss(view, pin.index) end,
-        onPinEnter = pinTooltip,
-        onFloor = function(floor)
-            state.floor = floor
-            GuideUI.Refresh()
-        end,
-    })
-    body.map:SetPoint("TOPLEFT", body, "TOPLEFT", RIGHT_LEFT, 0)
-    body.summary = {}
-    for index = 1, 3 do
-        local line = noWrap(UI.Text(body, "label", "text"))
-        line:SetPoint("TOPLEFT", body, "TOPLEFT", RIGHT_LEFT, -(body.map.gwHeight + 34) - (index - 1) * 18)
-        line:SetWidth(RIGHT_WIDTH)
-        body.summary[index] = line
+    local result = {}
+    for _, entry in ipairs(list) do
+        entry.dungeon.gwSuggested = entry.suggested
+        table.insert(result, entry.dungeon)
     end
-    body.wishIcon = icon(body, 14, "OVERLAY")
-    setIcon(body.wishIcon, ICONS.wish, false)
-    body.quests = UI.CreateFrame("Button", body)
-    body.quests:SetSize(RIGHT_WIDTH, 18)
-    body.quests:SetPoint("TOPLEFT", body.summary[3], "TOPLEFT", 0, 2)
-    body.quests:SetScript("OnEnter", function(self)
-        local list = self.gwQuests
-        if not list or #list == 0 then return end
-        local tooltip = Globals.GameTooltip
-        if not tooltip or type(tooltip.SetOwner) ~= "function" then return end
-        GuideUI.AnchorTooltip(tooltip, self)
-        pcall(tooltip.ClearLines, tooltip)
-        addLine(tooltip, "Dungeon quests", "goldBright")
-        for index, quest in ipairs(list) do
-            if index > 12 then
-                addLine(tooltip, "+" .. (#list - 12) .. " more", "textFaint")
-                break
-            end
-            addLine(tooltip, (quest.lvl and ("[" .. quest.lvl .. "] ") or "") .. quest.name .. (quest.rew and Theme.Colorize("  reward", "textFaint") or ""), "text")
-        end
-        addLine(tooltip, Guide.REFERENCE_NOTE, "textFaint")
-        pcall(tooltip.Show, tooltip)
-    end)
-    body.quests:SetScript("OnLeave", GuideUI.HideTooltip)
-end
-
-local function refreshOverview(_, body, instanceId, dungeon)
-    local states = encounterStates(instanceId, dungeon)
-    body.header:SetTitle("Encounters (" .. #dungeon.bosses .. ")")
-    local page = clampPage(state.listPage, #dungeon.bosses, OVERVIEW_ROWS)
-    state.listPage = page
-    body.pager:Set(page, math.max(1, math.ceil(#dungeon.bosses / OVERVIEW_ROWS)))
-    for index, row in ipairs(body.list) do
-        local bossIndex = (page - 1) * OVERVIEW_ROWS + index
-        local boss = dungeon.bosses[bossIndex]
-        if boss then row:Fill(bossEntry(instanceId, boss, bossIndex, states, nil)) else row:Clear() end
-    end
-    UI.SetText(body.listEmpty, #dungeon.bosses == 0 and "No bosses in the atlas for this dungeon." or "")
-    UI.SetShown(body.listEmpty, #dungeon.bosses == 0)
-
-    local result = body.map:ShowDungeon(instanceId, state.floor or 1, nil, states)
-    if result == "deferred" then GuideUI.pending = true end
-
-    local entry = Guide.Index()[instanceId] or {}
-    local pins = Guide.Pins(instanceId)
-    local floors = Guide.Floors(instanceId)
-    local where = dungeon.entrance and ("Entrance: " .. tostring(entry.zone or dungeon.zone or "?") .. " " .. Guide.Coordinates(dungeon.entrance.x, dungeon.entrance.y))
-        or ("Entrance not known" .. (dungeon.zone and (" (" .. dungeon.zone .. ")") or ""))
-    local placed
-    if #floors == 0 then
-        placed = Theme.Colorize("No client map for this instance.", "textFaint")
-    elseif #pins < #dungeon.bosses then
-        placed = Theme.Colorize(#pins .. " of " .. #dungeon.bosses .. " bosses have a journal position; the rest are only listed.", "textFaint")
-    else
-        placed = Theme.Colorize("Boss positions from Blizzard's dungeon journal.", "textFaint")
-    end
-    local wanted = Guide.WantedCount(instanceId)
-    UI.SetText(body.summary[1], where)
-    UI.SetText(body.summary[2], placed)
-    local quests = Guide.Quests(instanceId)
-    body.quests.gwQuests = quests
-    local questText = #quests > 0 and (#quests .. (#quests == 1 and " quest" or " quests") .. Theme.Colorize("  (hover for the list)", "textFaint"))
-        or Theme.Colorize("No dungeon quests in the atlas for your faction", "textFaint")
-    if wanted > 0 then
-        UI.SetText(body.summary[3], "      " .. Theme.Colorize(wanted .. (wanted == 1 and " wishlist item drops here" or " wishlist items drop here"), "alertWishlist")
-            .. "   " .. DOT .. "   " .. questText)
-        body.wishIcon:ClearAllPoints()
-        body.wishIcon:SetPoint("LEFT", body.summary[3], "LEFT", 0, 0)
-        body.wishIcon:Show()
-    else
-        UI.SetText(body.summary[3], questText)
-        body.wishIcon:Hide()
-    end
-end
-
-local function buildEncounters(view, body)
-    body.list = {}
-    for index = 1, ENCOUNTER_ROWS do
-        local row = encounterRow(body, LEFT_WIDTH, 38, function(data)
-            state.boss, state.detailPage = data.index, 1
-            local pin = Guide.PinFor(selectedId(), data.creature)
-            if pin then state.floor = pin.floor end
-            GuideUI.Refresh()
-        end)
-        row:SetPoint("TOPLEFT", body, "TOPLEFT", 0, -(index - 1) * 39)
-        body.list[index] = row
-    end
-    body.pager = pager(body, function(step)
-        state.encounterPage = (state.encounterPage or 1) + step
-        GuideUI.Refresh()
-    end)
-    body.pager:SetPoint("BOTTOMLEFT", body, "BOTTOMLEFT", 38, 0)
-    body.listEmpty = emptyText(body, LEFT_WIDTH)
-    body.listEmpty:SetPoint("TOPLEFT", body, "TOPLEFT", 0, 0)
-    body.detail = detailPanel(view, body, RIGHT_WIDTH)
-    body.detail:SetPoint("TOPLEFT", body, "TOPLEFT", RIGHT_LEFT, 0)
-end
-
-local function refreshEncounters(view, body, instanceId, dungeon)
-    local states = encounterStates(instanceId, dungeon)
-    local selected = math.max(1, math.min(state.boss or 1, #dungeon.bosses))
-    state.boss = selected
-    -- The page that holds the selected boss, unless the player turned it.
-    local pages = math.max(1, math.ceil(#dungeon.bosses / ENCOUNTER_ROWS))
-    local page = math.max(1, math.min(state.encounterPage or (math.floor((selected - 1) / ENCOUNTER_ROWS) + 1), pages))
-    state.encounterPage = page
-    body.pager:Set(page, pages)
-    for index, row in ipairs(body.list) do
-        local bossIndex = (page - 1) * ENCOUNTER_ROWS + index
-        local boss = dungeon.bosses[bossIndex]
-        if boss then row:Fill(bossEntry(instanceId, boss, bossIndex, states, selected)) else row:Clear() end
-    end
-    UI.SetText(body.listEmpty, #dungeon.bosses == 0 and "No bosses in the atlas for this dungeon." or "")
-    UI.SetShown(body.listEmpty, #dungeon.bosses == 0)
-    local boss = dungeon.bosses[selected]
-    paintDetail(view, body.detail, instanceId, boss, "boss", boss and states[boss])
-end
-
--- Rares first, then dangerous trash, in one list.
-local function rareEntries(dungeon)
-    local list = {}
-    for _, rare in ipairs(dungeon.rares) do table.insert(list, { creature = rare, kind = "rare" }) end
-    for _, creature in ipairs(dungeon.trash) do table.insert(list, { creature = creature, kind = "trash" }) end
-    return list
-end
-
-local function buildRares(view, body)
-    body.list = {}
-    for index = 1, TRASH_ROWS do
-        local row = encounterRow(body, LEFT_WIDTH, 26, function(data)
-            state.rare, state.detailPage = data.index, 1
-            GuideUI.Refresh()
-        end)
-        row:SetPoint("TOPLEFT", body, "TOPLEFT", 0, -(index - 1) * 26)
-        body.list[index] = row
-    end
-    body.pager = pager(body, function(step)
-        state.trashPage = state.trashPage + step
-        GuideUI.Refresh()
-    end)
-    body.pager:SetPoint("BOTTOMLEFT", body, "BOTTOMLEFT", 38, 0)
-    body.listEmpty = emptyText(body, LEFT_WIDTH)
-    body.listEmpty:SetPoint("TOPLEFT", body, "TOPLEFT", 0, 0)
-    body.detail = detailPanel(view, body, RIGHT_WIDTH)
-    body.detail:SetPoint("TOPLEFT", body, "TOPLEFT", RIGHT_LEFT, 0)
-end
-
-local function refreshRares(view, body, instanceId, dungeon)
-    local list = rareEntries(dungeon)
-    local selected = math.max(1, math.min(state.rare or 1, #list))
-    state.rare = selected
-    local pages = math.max(1, math.ceil(#list / TRASH_ROWS))
-    local page = math.max(1, math.min(state.trashPage or 1, pages))
-    state.trashPage = page
-    body.pager:Set(page, pages)
-    local shownRare = false
-    for index, row in ipairs(body.list) do
-        local listIndex = (page - 1) * TRASH_ROWS + index
-        local entry = list[listIndex]
-        if entry then
-            local creature = entry.creature
-            if entry.kind == "rare" then shownRare = true end
-            local kick = false
-            for _, ability in ipairs(Guide.Abilities(creature)) do if ability.label == "KICK" then kick = true end end
-            local right = {}
-            if creature.n and creature.n > 1 then table.insert(right, "\195\151" .. creature.n) end
-            if kick then table.insert(right, Theme.Colorize("KICK", "info")) end
-            if #right == 0 then table.insert(right, Guide.CreatureLevel(creature) or "") end
-            local displayId = Guide.DisplayId(instanceId, creature)
-            row:Fill({ creature = creature, index = listIndex, kind = entry.kind, displayId = displayId,
-                icon = entry.kind == "rare" and ICONS.rare or ICONS.trash, state = listIndex == selected and "selected" or (displayId and "available" or "unknown"),
-                selected = listIndex == selected, sub = table.concat(right, " ") })
-        else
-            row:Clear()
-        end
-    end
-    UI.SetText(body.listEmpty, #list == 0 and "No rares or dangerous trash in the atlas for this dungeon." or "")
-    UI.SetShown(body.listEmpty, #list == 0)
-    local entry = list[selected]
-    paintDetail(view, body.detail, instanceId, entry and entry.creature, entry and entry.kind, nil)
-    return shownRare
-end
-
-local function buildLoot(_, body)
-    body.filter = UI.Segmented(body, { { "all", "All" }, { "wanted", "Wishlist" } }, function() return state.lootFilter end, function(value)
-        state.lootFilter = value
-        state.lootPage = 1
-        GuideUI.Refresh()
-    end, { segmentWidth = 72, height = 20 })
-    body.filter:SetPoint("TOPLEFT", body, "TOPLEFT", 0, 0)
-    body.pager = pager(body, function(step)
-        state.lootPage = state.lootPage + step
-        GuideUI.Refresh()
-    end)
-    body.pager:SetPoint("TOPRIGHT", body, "TOPRIGHT", 0, 1)
-    body.status = noWrap(UI.Text(body, "small", "textFaint"))
-    body.status:SetPoint("LEFT", body.filter, "RIGHT", 12, 0)
-    body.status:SetPoint("RIGHT", body.pager, "LEFT", -8, 0)
-    body.rows = {}
-    for index = 1, LOOT_ROWS do
-        local row = itemRow(body, CONTENT_WIDTH, 30, function(data)
-            if data.bossIndex then goToBoss(GuideUI.view, data.bossIndex) end
-        end)
-        row:SetPoint("TOPLEFT", body, "TOPLEFT", 0, -26 - (index - 1) * 30)
-        body.rows[index] = row
-    end
-    body.empty = emptyText(body, CONTENT_WIDTH)
-    body.empty:SetPoint("TOPLEFT", body, "TOPLEFT", 0, -30)
-end
-
-local function refreshLoot(_, body, instanceId)
-    local all = Guide.LootRows(instanceId)
-    local list = {}
-    for _, row in ipairs(all) do
-        if state.lootFilter ~= "wanted" or row.wanted then table.insert(list, row) end
-    end
-    local page, pages = clampPage(state.lootPage, #list, LOOT_ROWS)
-    state.lootPage = page
-    body.pager:Set(page, pages)
-    body.filter:Refresh()
-    local loot = GW.LootSync
-    local status = loot and loot.Status and loot.Status() or {}
-    UI.SetText(body.status, (status.matched and ("Wishlist: " .. tostring(status.characterName)) or "No website wishlist for this character")
-        .. "  " .. DOT .. "  " .. Guide.REFERENCE_NOTE)
-    for index, rowFrame in ipairs(body.rows) do
-        local row = list[(page - 1) * LOOT_ROWS + index]
-        if row then
-            rowFrame:Fill(row, row.from or (row.kind == "wishlist" and "Wishlist source" or nil))
-        else
-            rowFrame:Clear()
-        end
-    end
-    local empty = ""
-    if #all == 0 then
-        empty = "No reference loot for this dungeon in the packaged atlas."
-    elseif #list == 0 then
-        empty = "None of your wishlist items drop here."
-    end
-    UI.SetText(body.empty, empty)
-    UI.SetShown(body.empty, empty ~= "")
+    return result
 end
 
 -- The view ------------------------------------------------------------------------------------
 
-local function buildView(view)
-    GuideUI.view = view
-    -- The picker button: the dungeon's name with a menu arrow.
-    view.pick = UI.CreateFrame("Button", view)
-    view.pick:SetSize(320, 26)
-    view.pick:SetPoint("TOPLEFT", view, "TOPLEFT", -4, 2)
-    Theme.Skin(view.pick, { 0, 0, 0, 0 }, { 0, 0, 0, 0 })
-    pcall(view.pick.RegisterForClicks, view.pick, "LeftButtonUp")
-    view.title = noWrap(UI.Text(view.pick, "pageTitle", "goldBright"))
-    view.title:SetPoint("LEFT", view.pick, "LEFT", 4, 0)
-    view.arrow = view.pick:CreateTexture(nil, "OVERLAY")
-    view.arrow:SetSize(20, 20)
-    pcall(view.arrow.SetTexture, view.arrow, ICONS.arrow)
-    view.arrow:SetPoint("LEFT", view.title, "RIGHT", 4, 0)
-    view.pick:SetScript("OnClick", openPicker)
-    view.pick:SetScript("OnEnter", function(self)
-        Theme.SetBorder(self, "borderGold")
-        Theme.SetBackground(self, "bgHover")
-        UI.ShowTooltip(self, "Choose a dungeon", { "Search by name, filter by level or type." }, "ANCHOR_BOTTOMLEFT")
-    end)
-    view.pick:SetScript("OnLeave", function(self)
-        Theme.SetBorder(self, { 0, 0, 0, 0 })
-        Theme.SetBackground(self, { 0, 0, 0, 0 })
-        UI.HideTooltip()
-    end)
-    view.subtitle = noWrap(UI.Text(view, "label", "textMuted"))
-    view.subtitle:SetPoint("TOPLEFT", view, "TOPLEFT", 0, -28)
-    view.subtitle:SetWidth(CONTENT_WIDTH - 190)
-    view.here = UI.Button(view, "Where I am", { width = 92, height = 20, role = "small", tooltip = "Return to the dungeon you are in",
-        onClick = function()
-            local current = Guide.CurrentInstanceId()
-            if current then pickDungeon(current) end
-        end })
-    view.here:SetPoint("TOPRIGHT", view, "TOPRIGHT", 0, 0)
-    view.role = UI.Segmented(view, { { "auto", "Any" }, { "tank", "Tank" }, { "healer", "Heal" }, { "dps", "DPS" } },
-        function() return prefs().role or "auto" end,
-        function(value)
-            prefs().role = value
-            GuideUI.Refresh()
-        end, { segmentWidth = 44, height = 20 })
-    view.role:SetPoint("TOPRIGHT", view, "TOPRIGHT", 0, -26)
-    view.tabBar = UI.Segmented(view, TABS, function() return state.tab end, function(value)
-        showTab(view, value)
-        GuideUI.Refresh()
-    end, { segmentWidth = 104, height = 22 })
-    view.tabBar:SetPoint("TOPLEFT", view, "TOPLEFT", 0, -52)
-    view.tabs = {}
-    for _, tab in ipairs(TABS) do
-        local body = UI.CreateFrame("Frame", view)
-        body:SetPoint("TOPLEFT", view, "TOPLEFT", 0, BODY_TOP)
-        body:SetPoint("BOTTOMRIGHT", view, "BOTTOMRIGHT", 0, 0)
-        body:Hide()
-        view.tabs[tab[1]] = body
-    end
-    buildOverview(view, view.tabs.overview)
-    buildEncounters(view, view.tabs.bosses)
-    buildRares(view, view.tabs.rares)
-    buildLoot(view, view.tabs.loot)
-    view.missing = emptyText(view, CONTENT_WIDTH)
-    view.missing:SetPoint("TOPLEFT", view, "TOPLEFT", 0, BODY_TOP)
-    buildPicker(view)
-    showTab(view, state.tab or prefs().tab or "overview")
+local main = GW.MainFrame
+
+local function scrollArea(view, key, parent)
+    local area = UI.ScrollArea(parent, { step = 48 })
+    view.scrollAreas[key] = area
+    return area
 end
 
-local function refreshView(view)
-    local started = GW.Perf and GW.Perf.Begin and GW.Perf.Begin()
-    local instanceId = selectedId()
-    local dungeon = instanceId and Guide.Dungeon(instanceId)
+-- Top bar: Back, Forward, the breadcrumb, and the way to the current dungeon.
+local function buildTopBar(view)
+    local bar = UI.CreateFrame("Frame", view)
+    bar:SetHeight(TOP_BAR - 4)
+    bar:SetPoint("TOPLEFT", view, "TOPLEFT", 0, 0)
+    bar:SetPoint("TOPRIGHT", view, "TOPRIGHT", 0, 0)
+    bar.back = DungeonMap.Arrow(bar, DungeonMap.PREV, function() GuideUI.Back() end)
+    bar.back:SetPoint("LEFT", bar, "LEFT", -4, 0)
+    bar.back:SetScript("OnEnter", function(self) textTooltip(self, "Back", nil) end)
+    bar.back:SetScript("OnLeave", GuideUI.HideTooltip)
+    bar.forward = DungeonMap.Arrow(bar, DungeonMap.NEXT, function() GuideUI.Forward() end)
+    bar.forward:SetPoint("LEFT", bar.back, "RIGHT", 0, 0)
+    bar.forward:SetScript("OnEnter", function(self) textTooltip(self, "Forward", nil) end)
+    bar.forward:SetScript("OnLeave", GuideUI.HideTooltip)
+    bar.crumbs = {}
+    for index = 1, 3 do
+        local crumb = UI.CreateFrame("Button", bar)
+        crumb:SetHeight(20)
+        crumb.label = noWrap(UI.Text(crumb, "label", "gold"))
+        crumb.label:SetPoint("LEFT", crumb, "LEFT", 0, 0)
+        crumb.arrow = crumb:CreateTexture(nil, "ARTWORK")
+        crumb.arrow:SetSize(12, 12)
+        pcall(crumb.arrow.SetTexture, crumb.arrow, ICONS.crumb)
+        crumb.arrow:SetPoint("RIGHT", crumb, "LEFT", -5, 0)
+        pcall(crumb.RegisterForClicks, crumb, "LeftButtonUp")
+        crumb:SetScript("OnClick", function(self) if self.gwPage then GuideUI.Navigate(self.gwPage) end end)
+        crumb:SetScript("OnEnter", function(self) if self.gwPage then Theme.Tint(self.label, "goldBright") end end)
+        crumb:SetScript("OnLeave", function(self) if self.gwPage then Theme.Tint(self.label, "gold") end end)
+        if index == 1 then
+            crumb:SetPoint("LEFT", bar.forward, "RIGHT", 6, 0)
+        else
+            crumb:SetPoint("LEFT", bar.crumbs[index - 1], "RIGHT", 22, 0)
+        end
+        UI.SetShown(crumb.arrow, index > 1)
+        bar.crumbs[index] = crumb
+    end
+    bar.here = UI.Button(bar, "Current dungeon", { width = 124, height = 20, variant = "primary", role = "small",
+        tooltip = "Current dungeon", tooltipLines = { "Opens the dungeon you are in." },
+        onClick = function()
+            local current = Guide.CurrentInstanceId()
+            if current then
+                Guide.FollowCurrent()
+                GuideUI.Navigate(dungeonPage(current))
+            end
+        end })
+    bar.here:SetPoint("RIGHT", bar, "RIGHT", 0, 0)
+    view.topBar = bar
+end
+
+-- The open run: clock, state and bosses, with the timer, End run and the
+-- HUD's visibility. The HUD keeps everything else.
+local function buildStrip(view)
+    local strip = UI.Card(view)
+    strip:SetHeight(STRIP - 6)
+    strip:SetPoint("TOPLEFT", view, "TOPLEFT", 0, -TOP_BAR)
+    strip:SetPoint("TOPRIGHT", view, "TOPRIGHT", 0, -TOP_BAR)
+    strip.dot = UI.Dot(strip, 8)
+    strip.dot:SetPoint("LEFT", strip, "LEFT", 12, 0)
+    strip.name = UI.CreateFrame("Button", strip)
+    strip.name:SetSize(160, 20)
+    strip.name:SetPoint("LEFT", strip.dot, "RIGHT", 8, 0)
+    strip.name.label = noWrap(UI.Text(strip.name, "label", "gold"))
+    strip.name.label:SetAllPoints(strip.name)
+    pcall(strip.name.RegisterForClicks, strip.name, "LeftButtonUp")
+    strip.name:SetScript("OnClick", function()
+        local run = Guide.CurrentRun()
+        local id = run and tonumber(run.instanceId)
+        if id and Guide.Index()[id] then GuideUI.Navigate(dungeonPage(id)) end
+    end)
+    strip.clock = UI.Text(strip, "clockSmall", "text")
+    strip.clock:SetPoint("LEFT", strip.name, "RIGHT", 8, 0)
+    strip.state = noWrap(UI.Text(strip, "small", "textMuted"))
+    strip.state:SetPoint("LEFT", strip.clock, "RIGHT", 10, 0)
+    strip.hud = UI.Button(strip, "Show HUD", { width = 78, height = 20, variant = "ghost", role = "small", onClick = function()
+        local tracker = GW.DungeonHud
+        if tracker.IsEnabled() and not tracker.IsHiddenForRun() then tracker:SetEnabled(false) else tracker:ShowNow() end
+        GuideUI.Refresh()
+    end })
+    strip.hud:SetPoint("RIGHT", strip, "RIGHT", -8, 0)
+    strip.finish = UI.ConfirmButton(strip, "End run", "Click to end", { width = 84, height = 20,
+        tooltip = "End run", tooltipLines = { "Saves the run as completed and closes it. Pause only stops the clock." },
+        onClick = function()
+            if GW.DungeonSessions.Finish() then
+                GW.Print("Dungeon run saved as completed. It reaches the website after /reload or logout.")
+            end
+            GuideUI.Refresh()
+        end })
+    strip.finish:SetPoint("RIGHT", strip.hud, "LEFT", -6, 0)
+    strip.timer = UI.Button(strip, "Start", { width = 70, height = 20, variant = "primary", onClick = function()
+        GW.DungeonSessions.ToggleTimer()
+        GuideUI.Refresh()
+    end })
+    strip.timer:SetPoint("RIGHT", strip.finish, "LEFT", -6, 0)
+    strip.state:SetPoint("RIGHT", strip.timer, "LEFT", -10, 0)
+    strip:Hide()
+    view.strip = strip
+end
+
+local function refreshStrip(view)
+    local strip = view.strip
+    local run = GW.DungeonSessions and GW.DungeonSessions.Current() or nil
+    if not run then
+        strip:Hide()
+        return false
+    end
+    local hud = GW.DungeonHud
+    local displayState = hud.DisplayState(run)
+    UI.SetText(strip.name.label, tostring(run.name or "Instance"))
+    UI.SetText(strip.clock, hud.ClockText(run))
+    Theme.Tint(strip.clock, main.StateColor and main.StateColor(displayState) or "text")
+    strip.dot:SetStatus(displayState == "running" and "good" or (displayState == "paused" and "warn" or "textFaint"))
+    local parts = { hud.StateText(run) }
+    if run.bossesTotal or (run.bossesDefeated or 0) > 0 then
+        table.insert(parts, "Bosses " .. (run.bossesDefeated or 0) .. (run.bossesTotal and ("/" .. run.bossesTotal) or ""))
+    end
+    if (run.deaths or 0) > 0 then table.insert(parts, run.deaths .. (run.deaths == 1 and " death" or " deaths")) end
+    if not run.inside then table.insert(parts, "outside") end
+    UI.SetText(strip.state, table.concat(parts, SEP))
+    strip.timer:SetLabel(hud.TimerButtonText(run))
+    strip.timer:SetVariant(displayState == "running" and "secondary" or "primary")
+    strip.hud:SetLabel((hud.IsEnabled() and not hud.IsHiddenForRun()) and "Hide HUD" or "Show HUD")
+    strip:Show()
+    return true
+end
+
+-- Browser -----------------------------------------------------------------------------------
+
+local function dungeonCard(parent)
+    local card = UI.Card(parent, function(self)
+        if self.gwData then GuideUI.Navigate(dungeonPage(self.gwData.id)) end
+    end)
+    card:SetHeight(CARD_HEIGHT)
+    card.art = card:CreateTexture(nil, "BACKGROUND", nil, -5)
+    card.art:SetPoint("TOPLEFT", card, "TOPLEFT", 1, -1)
+    card.art:SetPoint("BOTTOMRIGHT", card, "BOTTOMRIGHT", -1, 1)
+    pcall(card.art.SetTexCoord, card.art, 0, 1, 0.3, 0.7)
+    pcall(card.art.SetAlpha, card.art, 0.32)
+    card.art:Hide()
+    -- A dark wash on the left keeps the text readable over the map.
+    card.wash = card:CreateTexture(nil, "BACKGROUND", nil, -4)
+    card.wash:SetPoint("TOPLEFT", card, "TOPLEFT", 1, -1)
+    card.wash:SetPoint("BOTTOMRIGHT", card, "BOTTOMRIGHT", -1, 1)
+    pcall(card.wash.SetTexture, card.wash, Theme.WHITE)
+    local shade = Theme.colors.bgRaised
+    if type(card.wash.SetGradient) ~= "function" or type(Globals.CreateColor) ~= "function"
+        or not pcall(card.wash.SetGradient, card.wash, "HORIZONTAL", Globals.CreateColor(shade[1], shade[2], shade[3], 0.95), Globals.CreateColor(shade[1], shade[2], shade[3], 0.15)) then
+        Theme.Fill(card.wash, "bgRaised", 0.55)
+    end
+    card.name = noWrap(UI.Text(card, "title", "goldBright"))
+    card.name:SetPoint("TOPLEFT", card, "TOPLEFT", 14, -12)
+    card.name:SetPoint("RIGHT", card, "RIGHT", -12, 0)
+    card.accent = Theme.Accent(card, 32)
+    card.accent:SetPoint("TOPLEFT", card.name, "BOTTOMLEFT", 0, -5)
+    card.meta = noWrap(UI.Text(card, "small", "textMuted"))
+    card.meta:SetPoint("TOPLEFT", card.accent, "BOTTOMLEFT", 0, -6)
+    card.meta:SetPoint("RIGHT", card, "RIGHT", -12, 0)
+    card.kind = noWrap(UI.Text(card, "caps", "textFaint"))
+    card.kind:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 14, 11)
+    card.flags = noWrap(UI.Text(card, "small", "text", "RIGHT"))
+    card.flags:SetPoint("BOTTOMRIGHT", card, "BOTTOMRIGHT", -12, 10)
+    card.wish = icon(card, 13, "OVERLAY")
+    setIcon(card.wish, ICONS.wish, false)
+    card.wish:SetPoint("RIGHT", card.flags, "LEFT", -3, 0)
+    card:SetScript("OnLeave", function(self) Theme.SetBorder(self, self.gwSelected and "gold" or "border") end)
+    function card:Fill(dungeon, info)
+        self.gwData = dungeon
+        UI.SetText(self.name, dungeon.name)
+        local meta = {}
+        local levels = Guide.LevelText(dungeon.lmin, dungeon.lmax)
+        if levels then table.insert(meta, "Levels " .. levels) end
+        if dungeon.zone then table.insert(meta, dungeon.zone) end
+        UI.SetText(self.meta, table.concat(meta, SEP))
+        local entry = Guide.Index()[dungeon.id] or {}
+        local kind = { dungeon.kind == "raid" and "RAID" or "DUNGEON" }
+        if entry.bosses and entry.bosses > 0 then table.insert(kind, entry.bosses .. (entry.bosses == 1 and " BOSS" or " BOSSES")) end
+        UI.SetText(self.kind, table.concat(kind, SEP))
+        local flags = {}
+        if info.wanted > 0 then table.insert(flags, Theme.Colorize(tostring(info.wanted), "alertWishlist")) end
+        if info.runs > 0 then table.insert(flags, Theme.Colorize(info.runs .. (info.runs == 1 and " run" or " runs"), "textMuted")) end
+        if info.here then
+            table.insert(flags, Theme.Colorize("You are here", "good"))
+        elseif dungeon.gwSuggested then
+            table.insert(flags, Theme.Colorize("Your level", "gold"))
+        end
+        UI.SetText(self.flags, table.concat(flags, "   "))
+        -- The diamond sits before the flags, of which the count is the first.
+        UI.SetShown(self.wish, info.wanted > 0)
+        -- The map strip, set once per card and never in combat.
+        local art = GuideUI.CardArt(dungeon.id)
+        if art and self.gwArt ~= art then
+            if inCombat() then
+                GuideUI.pending = true
+            else
+                self.gwArt = art
+                pcall(self.art.SetTexture, self.art, art)
+            end
+        end
+        UI.SetShown(self.art, art ~= nil and self.gwArt == art)
+        self.gwSelected = info.selected
+        Theme.SetBorder(self, info.selected and "gold" or "border")
+        self:Show()
+    end
+    function card:Clear()
+        self.gwData = nil
+        self:Hide()
+    end
+    return card
+end
+
+local function runRow(parent, onClick)
+    local row = rowBase(parent, 300, RUN_ROW, onClick)
+    row.title = noWrap(UI.Text(row, "label", "text"))
+    row.title:SetPoint("TOPLEFT", row, "TOPLEFT", 10, -6)
+    row.when = noWrap(UI.Text(row, "small", "textFaint"))
+    row.when:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 10, 6)
+    row.time = UI.Text(row, "clockSmall", "text", "RIGHT")
+    row.time:SetPoint("TOPRIGHT", row, "TOPRIGHT", -10, -5)
+    row.outcome = noWrap(UI.Text(row, "small", "textMuted", "RIGHT"))
+    row.outcome:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -10, 6)
+    row.title:SetPoint("RIGHT", row.time, "LEFT", -10, 0)
+    row.when:SetPoint("RIGHT", row.outcome, "LEFT", -10, 0)
+    row.rule = Theme.Rule(row, "border", 0.6)
+    row.rule:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 0, 0)
+    row.rule:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", 0, 0)
+    -- entry: a finished run from DungeonSessions' history.
+    function row:Fill(entry, showName)
+        self.gwData = entry
+        local date = main.ShortDate and main.ShortDate(entry.startedAt) or nil
+        UI.SetText(self.title, showName and tostring(entry.name or "Instance") or (date or "Run"))
+        local meta = {}
+        if showName and date then table.insert(meta, date) end
+        if entry.bossesTotal then
+            table.insert(meta, "Bosses " .. (entry.bossesDefeated or 0) .. "/" .. entry.bossesTotal)
+        elseif (entry.bossesDefeated or 0) > 0 then
+            table.insert(meta, entry.bossesDefeated .. " bosses")
+        end
+        if (entry.deaths or 0) > 0 then table.insert(meta, entry.deaths .. (entry.deaths == 1 and " death" or " deaths")) end
+        UI.SetText(self.when, table.concat(meta, SEP))
+        UI.SetText(self.time, duration(entry.timerSeconds or entry.durationSeconds))
+        local word, color = "", "textFaint"
+        if main.Outcome then word, color = main.Outcome(entry) end
+        UI.SetText(self.outcome, word)
+        Theme.Tint(self.outcome, color)
+        self:SetSelected(false)
+        self:Show()
+    end
+    return row
+end
+
+local function buildBrowser(view)
+    local page = UI.CreateFrame("Frame", view)
+    page.title = UI.Text(page, "pageTitle", "goldBright")
+    page.title:SetPoint("TOPLEFT", page, "TOPLEFT", 0, 0)
+    page.title:SetText("Dungeons")
+    page.mode = UI.Segmented(page, { { "dungeons", "Journal" }, { "runs", "My Runs" } }, function()
+        local current = GuideUI.CurrentPage()
+        return current and current.mode or "dungeons"
+    end, function(value) GuideUI.Navigate(browserPage(value)) end, { segmentWidth = 84, height = 22 })
+    page.mode:SetPoint("TOPRIGHT", page, "TOPRIGHT", 0, 0)
+
+    page.search = UI.Input(page, 160, function(box) box:ClearFocus() end)
+    page.search:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -32)
+    page.searchIcon = page.search:CreateTexture(nil, "OVERLAY")
+    page.searchIcon:SetSize(12, 12)
+    page.searchIcon:SetPoint("RIGHT", page.search, "RIGHT", -6, 0)
+    pcall(page.searchIcon.SetTexture, page.searchIcon, ICONS.search)
+    page.hint = UI.Text(page.search, "label", "textFaint")
+    page.hint:SetPoint("LEFT", page.search, "LEFT", 7, 0)
+    page.hint:SetText("Search dungeons")
+    page.search:SetScript("OnTextChanged", function(box)
+        local ok, text = pcall(box.GetText, box)
+        state.browser.query = ok and type(text) == "string" and text or ""
+        UI.SetShown(page.hint, state.browser.query == "")
+        GuideUI.Refresh()
+    end)
+    page.band = UI.Segmented(page, { { "all", "All" }, { "low", "10\226\128\14729" }, { "mid", "30\226\128\14749" }, { "high", "50+" } },
+        function() return state.browser.band end, function(value)
+            state.browser.band = value
+            GuideUI.Refresh()
+        end, { segmentWidth = 48, height = 22 })
+    page.band:SetPoint("LEFT", page.search, "RIGHT", 8, 0)
+    page.kind = UI.Segmented(page, { { "all", "All" }, { "dungeon", "Dungeons" }, { "raid", "Raids" } },
+        function() return state.browser.kind end, function(value)
+            state.browser.kind = value
+            GuideUI.Refresh()
+        end, { segmentWidth = 60, height = 22 })
+    page.kind:SetPoint("LEFT", page.band, "RIGHT", 8, 0)
+
+    page.grid = scrollArea(view, "grid", page)
+    page.grid:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -64)
+    page.cards = pool(function() return dungeonCard(page.grid.child) end)
+    page.empty = wrapText(page, "label", "textFaint", 400)
+    page.empty:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -70)
+
+    page.runs = scrollArea(view, "allRuns", page)
+    page.runs:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -34)
+    page.runRows = pool(function()
+        return runRow(page.runs.child, function(entry)
+            local id = Guide.RunInstanceId(entry)
+            if id then GuideUI.Navigate(dungeonPage(id, "runs")) end
+        end)
+    end)
+    view.browser = page
+end
+
+local function layoutBrowser(view, width, height)
+    local page = view.browser
+    page.gwWidth, page.gwHeight = width, height
+    local searchWidth = math.max(140, math.min(240, width - 8 - 192 - 8 - 180))
+    page.search:SetWidth(searchWidth)
+    page.grid:SetViewSize(width, height - 64)
+    page.runs:SetViewSize(width, height - 34)
+    page.columns = width >= 760 and 3 or 2
+end
+
+local function refreshBrowser(view, current)
+    local page = view.browser
+    local mode = current.mode or "dungeons"
+    page.mode:Refresh()
+    local journal = mode == "dungeons"
+    for _, widget in ipairs({ page.search, page.band, page.kind, page.grid }) do UI.SetShown(widget, journal) end
+    UI.SetShown(page.runs, not journal)
+    if not journal then
+        page.cards:Trim(0)
+        local runs = Guide.Runs(nil)
+        local width = page.runs:ContentWidth()
+        for index, entry in ipairs(runs) do
+            local row = page.runRows:Get(index)
+            row:SetWidth(width)
+            row:ClearAllPoints()
+            row:SetPoint("TOPLEFT", page.runs.child, "TOPLEFT", 0, -(index - 1) * RUN_ROW)
+            row:Fill(entry, true)
+        end
+        page.runRows:Trim(#runs)
+        page.runs:SetContentHeight(#runs * RUN_ROW)
+        UI.SetText(page.empty, #runs == 0 and "No finished runs yet. Runs are recorded on their own when you enter a dungeon or raid." or "")
+        page.empty:ClearAllPoints()
+        page.empty:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -40)
+        UI.SetShown(page.empty, #runs == 0)
+        return
+    end
+    page.band:Refresh()
+    page.kind:Refresh()
+    local list = GuideUI.BrowserList()
+    local here, selected = Guide.CurrentInstanceId(), tonumber(prefs().instanceId)
+    local wishes, runs = Guide.WishlistByDungeon(), {}
+    for _, entry in ipairs(Guide.Runs(nil)) do
+        local id = Guide.RunInstanceId(entry)
+        if id then runs[id] = (runs[id] or 0) + 1 end
+    end
+    local columns = page.columns or 2
+    local width = page.grid:ContentWidth()
+    local cardWidth = math.floor((width - CARD_GAP * (columns - 1)) / columns)
+    for index, dungeon in ipairs(list) do
+        local card = page.cards:Get(index)
+        card:SetWidth(cardWidth)
+        card:ClearAllPoints()
+        local column, line = (index - 1) % columns, math.floor((index - 1) / columns)
+        card:SetPoint("TOPLEFT", page.grid.child, "TOPLEFT", column * (cardWidth + CARD_GAP), -line * (CARD_HEIGHT + CARD_GAP))
+        card:Fill(dungeon, { here = dungeon.id == here, selected = dungeon.id == selected and dungeon.id ~= here,
+            wanted = Guide.DungeonWishlistCount(dungeon.id, wishes), runs = runs[dungeon.id] or 0 })
+    end
+    page.cards:Trim(#list)
+    page.runRows:Trim(0)
+    page.grid:SetContentHeight(math.ceil(#list / columns) * (CARD_HEIGHT + CARD_GAP) - CARD_GAP)
+    UI.SetText(page.empty, #list == 0 and "No dungeon matches. Clear the search or choose All." or "")
+    page.empty:ClearAllPoints()
+    page.empty:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -70)
+    UI.SetShown(page.empty, #list == 0)
+    view.gwShownCards = #list
+end
+
+-- Dungeon and creature pages ------------------------------------------------------------------
+
+local TABS = { { "overview", "Overview" }, { "quests", "Quests" }, { "runs", "My Runs" } }
+
+local function pinTooltip(pin, owner)
+    local lines = {}
+    local level = Guide.CreatureLevel(pin.creature)
+    if level then table.insert(lines, "Level " .. level) end
+    for _, row in ipairs(Guide.TopMechanics(pin.creature, nil, 2)) do table.insert(lines, GuideUI.AbilityText(row)) end
+    table.insert(lines, Theme.Colorize("Position from Blizzard's dungeon journal. Click for the encounter.", "textFaint"))
+    textTooltip(owner, pin.index .. ". " .. pin.creature.name, lines)
+end
+
+local function questRow(parent)
+    local row = UI.CreateFrame("Frame", parent)
+    row:SetSize(300, 60)
+    row.icon = row:CreateTexture(nil, "ARTWORK")
+    row.icon:SetSize(16, 16)
+    row.icon:SetPoint("TOPLEFT", row, "TOPLEFT", 0, -1)
+    row.name = noWrap(UI.Text(row, "label", "goldBright"))
+    row.name:SetPoint("TOPLEFT", row, "TOPLEFT", 22, 0)
+    row.facts = noWrap(UI.Text(row, "small", "textMuted", "RIGHT"))
+    row.facts:SetPoint("TOPRIGHT", row, "TOPRIGHT", 0, -1)
+    row.name:SetPoint("RIGHT", row.facts, "LEFT", -10, 0)
+    row.giver = noWrap(UI.Text(row, "small", "textMuted"))
+    row.giver:SetPoint("TOPLEFT", row, "TOPLEFT", 22, -18)
+    row.giver:SetPoint("RIGHT", row, "RIGHT", 0, 0)
+    row.objective = wrapText(row, "small", "text")
+    row.objective:SetPoint("TOPLEFT", row, "TOPLEFT", 22, -34)
+    row.objective:SetPoint("RIGHT", row, "RIGHT", 0, 0)
+    row.rewardLabel = UI.Text(row, "caps", "textFaint")
+    row.rewards = pool(function() return itemCell(row, REWARD_CELL) end)
+    row.rule = Theme.Rule(row, "border", 0.6)
+    row.rule:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 0, 0)
+    row.rule:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", 0, 0)
+    -- Lays the quest out; returns its height.
+    function row:Fill(quest)
+        self.gwData = quest
+        local done = Guide.QuestCompleted(quest.id)
+        setIcon(self.icon, done and ICONS.acquired or ICONS.quest, false)
+        UI.SetText(self.name, tostring(quest.name))
+        local facts = {}
+        if quest.lvl then table.insert(facts, "Level " .. quest.lvl) end
+        if quest.min then table.insert(facts, "Requires " .. quest.min) end
+        if quest.fac and FACTIONS[quest.fac] then table.insert(facts, FACTIONS[quest.fac]) end
+        if done then table.insert(facts, Theme.Colorize("Completed", "good")) end
+        UI.SetText(self.facts, table.concat(facts, SEP))
+        local giver = {}
+        if quest.giver then
+            local where = quest.where and (quest.where .. (quest.x and quest.y and (" " .. Guide.Coordinates(quest.x, quest.y)) or "")) or nil
+            table.insert(giver, "From " .. quest.giver .. (where and (", " .. where) or ""))
+        end
+        if quest.pre and quest.pre[1] then table.insert(giver, "After " .. table.concat(quest.pre, ", ")) end
+        UI.SetText(self.giver, #giver > 0 and table.concat(giver, SEP) or Theme.Colorize("No giver or objective in the atlas.", "textFaint"))
+        local y = -34
+        if quest.obj then
+            local width = select(1, UI.FrameSize(self, 300, 60)) or 300
+            self.objective:SetWidth(math.max(100, width - 22))
+            UI.SetText(self.objective, quest.obj)
+            local ok, measured = pcall(self.objective.GetStringHeight, self.objective)
+            measured = ok and tonumber(measured) or nil
+            self.objective:Show()
+            y = y - math.max(14, measured or 28) - 6
+        else
+            self.objective:Hide()
+        end
+        local rewards = {}
+        for _, itemId in ipairs(quest.rew or {}) do
+            table.insert(rewards, { itemId = itemId, item = Guide.Item(itemId), quest = true, wanted = Guide.Wanted(itemId) })
+        end
+        if #rewards > 0 then
+            UI.SetText(self.rewardLabel, quest.choice and "CHOOSE ONE" or "REWARDS")
+            self.rewardLabel:ClearAllPoints()
+            self.rewardLabel:SetPoint("TOPLEFT", self, "TOPLEFT", 22, y - 9)
+            self.rewardLabel:Show()
+            for index, reward in ipairs(rewards) do
+                local cell = self.rewards:Get(index)
+                cell:ClearAllPoints()
+                cell:SetPoint("TOPLEFT", self, "TOPLEFT", 108 + (index - 1) * (REWARD_CELL + 4), y)
+                cell:Fill(reward)
+            end
+            y = y - REWARD_CELL - 4
+        else
+            self.rewardLabel:Hide()
+        end
+        self.rewards:Trim(#rewards)
+        local height = -y + 10
+        self:SetHeight(height)
+        self:Show()
+        return height
+    end
+    function row:Clear() self:Hide() end
+    return row
+end
+
+local function buildDungeonPage(view)
+    local page = UI.CreateFrame("Frame", view)
+    page.title = noWrap(UI.Text(page, "pageTitle", "goldBright"))
+    page.title:SetPoint("TOPLEFT", page, "TOPLEFT", 0, 0)
+    page.sub = noWrap(UI.Text(page, "label", "textMuted"))
+    page.sub:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -24)
+    page.badge = sourceBadge(page)
+    page.badge:SetPoint("LEFT", page.sub, "RIGHT", 10, 0)
+    page.tabs = UI.Segmented(page, TABS, function()
+        local current = GuideUI.CurrentPage()
+        return current and current.level == "dungeon" and current.tab or "overview"
+    end, function(value)
+        local current = GuideUI.CurrentPage()
+        if current and current.id then GuideUI.Navigate(dungeonPage(current.id, value)) end
+    end, { segmentWidth = 84, height = 22 })
+    page.tabs:SetPoint("TOPRIGHT", page, "TOPRIGHT", 0, 0)
+    page.title:SetPoint("RIGHT", page.tabs, "LEFT", -12, 0)
+
+    -- Left: bosses, rares, dangerous trash and other loot.
+    page.list = scrollArea(view, "list", page)
+    page.list:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -52)
+    local function openCreature(entry)
+        local current = GuideUI.CurrentPage()
+        if current and current.id then GuideUI.Navigate(creaturePage(current.id, entry.kind, entry.index)) end
+    end
+    page.headers = {}
+    for index = 1, 4 do
+        local header = UI.SectionHeader(page.list.child, "")
+        page.headers[index] = header
+    end
+    page.bossRows = pool(function() return encounterRow(page.list.child, BOSS_ROW, openCreature) end)
+    page.smallRows = pool(function() return encounterRow(page.list.child, SMALL_ROW, openCreature) end)
+    page.listEmpty = wrapText(page.list.child, "label", "textFaint", 200)
+
+    -- Right: the map, or a creature.
+    page.right = UI.CreateFrame("Frame", page)
+    page.map = DungeonMap.New(page.right, 400, {
+        onPin = function(pin)
+            local current = GuideUI.CurrentPage()
+            if current and current.id then GuideUI.Navigate(creaturePage(current.id, "boss", pin.index)) end
+        end,
+        onPinEnter = pinTooltip,
+        onFloor = function(floor)
+            local current = GuideUI.CurrentPage()
+            if current and current.id then state.floors[current.id] = floor end
+            GuideUI.Refresh()
+        end,
+    })
+    page.map:SetPoint("TOPLEFT", page.right, "TOPLEFT", 0, 0)
+    page.foot = noWrap(UI.Text(page.right, "small", "textFaint"))
+    page.footWish = icon(page.right, 13, "OVERLAY")
+    setIcon(page.footWish, ICONS.wish, false)
+
+    page.detail = scrollArea(view, "detail", page.right)
+    page.detail:SetPoint("TOPLEFT", page.right, "TOPLEFT", 0, 0)
+    local d = page.detail.child
+    page.portrait = UI.Portrait(d, 72)
+    pcall(page.portrait.EnableMouse, page.portrait, false)
+    page.portrait:SetPoint("TOPLEFT", d, "TOPLEFT", 0, 0)
+    page.name = noWrap(UI.Text(d, "pageTitle", "goldBright"))
+    page.name:SetPoint("TOPLEFT", page.portrait, "TOPRIGHT", 12, -10)
+    page.name:SetPoint("RIGHT", d, "RIGHT", 0, 0)
+    page.facts = noWrap(UI.Text(d, "label", "textMuted"))
+    page.facts:SetPoint("TOPLEFT", page.name, "BOTTOMLEFT", 0, -6)
+    page.facts:SetPoint("RIGHT", d, "RIGHT", 0, 0)
+    page.detailBadge = sourceBadge(d)
+    page.detailBadge:SetPoint("TOPLEFT", page.facts, "BOTTOMLEFT", 0, -6)
+    page.keyHeader = UI.SectionHeader(d, "Key mechanics")
+    page.moreHeader = UI.SectionHeader(d, "Other abilities")
+    page.lootHeader = UI.SectionHeader(d, "Loot")
+    page.abilityRows = pool(function() return abilityRow(d) end)
+    page.cells = pool(function() return itemCell(d, CELL) end)
+    page.abilityEmpty = wrapText(d, "label", "textFaint", 300)
+    page.lootEmpty = wrapText(d, "label", "textFaint", 300)
+
+    -- Full width: quests and runs.
+    page.quests = scrollArea(view, "quests", page)
+    page.quests:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -52)
+    page.questRows = pool(function() return questRow(page.quests.child) end)
+    page.runs = scrollArea(view, "runs", page)
+    page.runs:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -52)
+    page.runRows = pool(function() return runRow(page.runs.child, nil) end)
+    page.empty = wrapText(page, "label", "textFaint", 400)
+    page.empty:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -58)
+    view.dungeon = page
+end
+
+local function layoutDungeonPage(view, width, height)
+    local page = view.dungeon
+    local body = height - 52
+    local left = math.max(200, math.min(280, math.floor(width * 0.3)))
+    page.leftWidth = left
+    page.list:SetViewSize(left, body)
+    local rightWidth = width - left - 16
+    page.right:ClearAllPoints()
+    page.right:SetPoint("TOPLEFT", page, "TOPLEFT", left + 16, -52)
+    page.right:SetSize(rightWidth, body)
+    -- The map as large as fits, under it the floor bar and one line.
+    local mapWidth = math.floor(math.min(rightWidth - 2, (body - 2 - 26 - 24) * DungeonMap.ASPECT))
+    page.map:SetMapWidth(mapWidth)
+    page.foot:ClearAllPoints()
+    page.foot:SetPoint("TOPLEFT", page.map, "BOTTOMLEFT", 0, -32)
+    page.foot:SetWidth(rightWidth)
+    page.detail:SetViewSize(rightWidth, body)
+    page.quests:SetViewSize(width, body)
+    page.runs:SetViewSize(width, body)
+    page.rightWidth = rightWidth
+    for _, row in ipairs(page.bossRows.items) do row:SetWidth(page.list:ContentWidth()) end
+    for _, row in ipairs(page.smallRows.items) do row:SetWidth(page.list:ContentWidth()) end
+end
+
+-- The left list: section headers and rows, top to bottom.
+local function refreshList(page, instanceId, dungeon, current, states)
+    local width = page.list:ContentWidth()
+    local y, headerIndex, bossCount, smallCount = 0, 0, 0, 0
+    local function header(title)
+        headerIndex = headerIndex + 1
+        local h = page.headers[headerIndex]
+        h:SetTitle(title)
+        h:SetWidth(width)
+        h:ClearAllPoints()
+        h:SetPoint("TOPLEFT", page.list.child, "TOPLEFT", 0, -y)
+        h:Show()
+        y = y + 24
+    end
+    local function place(row, height, entry)
+        row:SetWidth(width)
+        row:ClearAllPoints()
+        row:SetPoint("TOPLEFT", page.list.child, "TOPLEFT", 0, -y)
+        row:Fill(entry)
+        y = y + height + 1
+    end
+    local selectedKind = current.level == "creature" and current.kind or nil
+    if #dungeon.bosses > 0 then
+        header("Bosses (" .. #dungeon.bosses .. ")")
+        for index, boss in ipairs(dungeon.bosses) do
+            bossCount = bossCount + 1
+            local level = Guide.CreatureLevel(boss)
+            local parts = {}
+            if level then table.insert(parts, "Level " .. level) end
+            local observed = states[boss]
+            if observed then table.insert(parts, STATE_TEXT[observed]) end
+            local selected = selectedKind == "boss" and current.index == index
+            local displayId = Guide.DisplayId(instanceId, boss)
+            place(page.bossRows:Get(bossCount), BOSS_ROW, { creature = boss, kind = "boss", index = index, displayId = displayId,
+                state = (selected and "selected") or observed or (displayId and "available" or "unknown"),
+                mechanics = Guide.TopMechanics(boss, nil, MECHANIC_ICONS), wanted = wantedIn(Guide.SourceLoot(instanceId, boss)),
+                selected = selected, sub = table.concat(parts, SEP) })
+        end
+        y = y + 8
+    end
+    local function small(list, kind, title, iconFile)
+        if #list == 0 then return end
+        header(title)
+        for index, creature in ipairs(list) do
+            smallCount = smallCount + 1
+            local right = {}
+            if creature.n and creature.n > 1 then table.insert(right, TIMES .. creature.n) end
+            for _, ability in ipairs(Guide.Abilities(creature)) do
+                if ability.label == "KICK" then
+                    table.insert(right, Theme.Colorize("KICK", "info"))
+                    break
+                end
+            end
+            if #right == 0 then table.insert(right, Guide.CreatureLevel(creature) or "") end
+            local selected = selectedKind == kind and current.index == index
+            local displayId = Guide.DisplayId(instanceId, creature)
+            place(page.smallRows:Get(smallCount), SMALL_ROW, { creature = creature, kind = kind, index = index, displayId = displayId,
+                icon = iconFile, state = selected and "selected" or (displayId and "available" or "unknown"), selected = selected,
+                wanted = wantedIn(Guide.SourceLoot(instanceId, creature)), sub = table.concat(right, " ") })
+        end
+        y = y + 8
+    end
+    small(dungeon.rares, "rare", "Rares", ICONS.rare)
+    small(dungeon.trash, "trash", "Dangerous trash", ICONS.trash)
+    local other = Guide.OtherLoot(instanceId)
+    if #other > 0 then
+        header("Other dungeon loot")
+        smallCount = smallCount + 1
+        local selected = selectedKind == "other"
+        place(page.smallRows:Get(smallCount), SMALL_ROW, { creature = { name = "Other dungeon loot" }, kind = "other", index = 1,
+            icon = ICONS.other, state = selected and "selected" or "unknown", selected = selected, wanted = wantedIn(other),
+            sub = #other .. (#other == 1 and " item" or " items") })
+    end
+    for index = headerIndex + 1, #page.headers do page.headers[index]:Hide() end
+    page.bossRows:Trim(bossCount)
+    page.smallRows:Trim(smallCount)
+    UI.SetText(page.listEmpty, (bossCount + smallCount) == 0 and "No bosses or creatures in the atlas for this dungeon." or "")
+    page.listEmpty:ClearAllPoints()
+    page.listEmpty:SetPoint("TOPLEFT", page.list.child, "TOPLEFT", 0, 0)
+    UI.SetShown(page.listEmpty, (bossCount + smallCount) == 0)
+    page.list:SetContentHeight(y)
+end
+
+local function refreshMap(page, instanceId, dungeon, states)
+    local floor = state.floors[instanceId] or 1
+    local result = page.map:ShowDungeon(instanceId, floor, nil, states)
+    if result == "deferred" then GuideUI.pending = true end
+    local pins = Guide.Pins(instanceId)
+    local floors = Guide.Floors(instanceId)
+    local parts = {}
+    local wanted = Guide.WantedCount(instanceId)
+    if wanted > 0 then table.insert(parts, "     " .. Theme.Colorize(wanted .. (wanted == 1 and " wishlist item drops here" or " wishlist items drop here"), "alertWishlist")) end
+    if #floors > 0 and #dungeon.bosses > 0 then
+        table.insert(parts, #pins < #dungeon.bosses and (#pins .. " of " .. #dungeon.bosses .. " bosses placed from Blizzard's dungeon journal")
+            or "Boss positions from Blizzard's dungeon journal")
+    end
+    UI.SetText(page.foot, table.concat(parts, SEP))
+    page.footWish:ClearAllPoints()
+    page.footWish:SetPoint("LEFT", page.foot, "LEFT", 0, 0)
+    UI.SetShown(page.footWish, wanted > 0)
+end
+
+-- A creature's page: portrait and facts, key mechanics, the other
+-- abilities, and its loot as a grid. Also the "Other dungeon loot" page.
+local function refreshCreature(page, instanceId, dungeon, current, states)
+    local d = page.detail.child
+    local width = page.detail:ContentWidth()
+    local creature = pageCreature(dungeon, current)
+    local kind = current.kind
+    local loot, abilities, observed
+    if kind == "other" then
+        page.portrait:SetCreature(nil, ICONS.other)
+        page.portrait:SetState("unknown")
+        UI.SetText(page.name, "Other dungeon loot")
+        UI.SetText(page.facts, "Drops the atlas names no boss or creature in this dungeon for")
+        loot, abilities = Guide.OtherLoot(instanceId), {}
+    elseif creature then
+        local displayId = Guide.DisplayId(instanceId, creature)
+        observed = kind == "boss" and states[creature] or nil
+        page.portrait:SetCreature(displayId, kind == "rare" and ICONS.rare or (kind == "trash" and ICONS.trash or nil))
+        page.portrait:SetState(observed or (displayId and "available" or "unknown"))
+        UI.SetText(page.name, creature.name)
+        local facts = {}
+        local level = Guide.CreatureLevel(creature)
+        if level then table.insert(facts, "Level " .. level) end
+        local class = Guide.CreatureClass(creature)
+        if kind == "rare" then table.insert(facts, creature.elite and "Rare elite" or "Rare")
+        elseif kind == "trash" then table.insert(facts, "Dangerous trash" .. (creature.n and creature.n > 1 and ("  " .. TIMES .. creature.n) or ""))
+        elseif class then table.insert(facts, class) end
+        if observed then table.insert(facts, STATE_TEXT[observed] .. (observed == "defeated" and Theme.Colorize(" this run", "textMuted") or "")) end
+        UI.SetText(page.facts, table.concat(facts, SEP))
+        loot, abilities = Guide.SourceLoot(instanceId, creature), Guide.OrderedAbilities(creature)
+    else
+        loot, abilities = {}, {}
+        UI.SetText(page.name, "")
+        UI.SetText(page.facts, "")
+    end
+    local verified = false
+    for _, row in ipairs(abilities) do if Guide.IsVerified(row.spell) then verified = true end end
+    page.detailBadge:Set("Classic reference", { verified and "Some entries are verified on Forever." or (Guide.REFERENCE_NOTE .. "."),
+        "Mechanics, levels and loot come from Classic reference data and may differ on WoW Forever.", "Drop chances are not shown." })
+
+    local y = 92
+    local count = 0
+    local top = kind ~= "other" and Guide.TopMechanics(creature, nil, 4) or {}
+    local function place(ability)
+        count = count + 1
+        local frame = page.abilityRows:Get(count)
+        frame:SetWidth(width)
+        frame:ClearAllPoints()
+        frame:SetPoint("TOPLEFT", d, "TOPLEFT", 0, -y)
+        frame:Fill(ability)
+        y = y + ABILITY_ROW + 2
+    end
+    local function header(widget, title)
+        widget:SetTitle(title)
+        widget:SetWidth(width)
+        widget:ClearAllPoints()
+        widget:SetPoint("TOPLEFT", d, "TOPLEFT", 0, -y)
+        widget:Show()
+        y = y + 26
+    end
+    if kind ~= "other" then
+        header(page.keyHeader, "Key mechanics")
+        local shown = {}
+        for _, ability in ipairs(top) do
+            shown[ability] = true
+            place(ability)
+        end
+        UI.SetText(page.abilityEmpty, #abilities == 0 and "No abilities in the atlas for this creature. That does not mean it has none." or "")
+        page.abilityEmpty:SetWidth(width)
+        page.abilityEmpty:ClearAllPoints()
+        page.abilityEmpty:SetPoint("TOPLEFT", d, "TOPLEFT", 0, -y)
+        UI.SetShown(page.abilityEmpty, #abilities == 0)
+        if #abilities == 0 then y = y + 22 end
+        y = y + 8
+        local rest = {}
+        for _, ability in ipairs(abilities) do if not shown[ability] then table.insert(rest, ability) end end
+        if #rest > 0 then
+            header(page.moreHeader, "Other abilities")
+            for _, ability in ipairs(rest) do place(ability) end
+            y = y + 8
+        else
+            page.moreHeader:Hide()
+        end
+    else
+        page.keyHeader:Hide()
+        page.moreHeader:Hide()
+        page.abilityEmpty:Hide()
+    end
+    page.abilityRows:Trim(count)
+
+    header(page.lootHeader, "Loot" .. (#loot > 0 and (" (" .. #loot .. ")") or ""))
+    local gridHeight, columns = layoutGrid(page.cells, loot, d, 0, -y, width, CELL, CELL_GAP)
+    page.gwGridColumns = columns
+    y = y + gridHeight
+    UI.SetText(page.lootEmpty, #loot == 0 and ("No loot listed for " .. tostring(creature and creature.name or "this") .. ".") or "")
+    page.lootEmpty:SetWidth(width)
+    page.lootEmpty:ClearAllPoints()
+    page.lootEmpty:SetPoint("TOPLEFT", d, "TOPLEFT", 0, -y)
+    UI.SetShown(page.lootEmpty, #loot == 0)
+    if #loot == 0 then y = y + 22 end
+    page.detail:SetContentHeight(y + 8)
+    page.gwLootCount, page.gwAbilityCount = #loot, count
+end
+
+local function refreshQuests(page, instanceId)
+    local quests = Guide.Quests(instanceId)
+    local width = page.quests:ContentWidth()
+    local y = 0
+    for index, quest in ipairs(quests) do
+        local row = page.questRows:Get(index)
+        row:SetWidth(width)
+        row:ClearAllPoints()
+        row:SetPoint("TOPLEFT", page.quests.child, "TOPLEFT", 0, -y)
+        y = y + row:Fill(quest) + 10
+    end
+    page.questRows:Trim(#quests)
+    page.quests:SetContentHeight(y)
+    return #quests
+end
+
+local function refreshRuns(page, instanceId)
+    local runs = Guide.Runs(instanceId)
+    local width = page.runs:ContentWidth()
+    for index, entry in ipairs(runs) do
+        local row = page.runRows:Get(index)
+        row:SetWidth(width)
+        row:ClearAllPoints()
+        row:SetPoint("TOPLEFT", page.runs.child, "TOPLEFT", 0, -(index - 1) * RUN_ROW)
+        row:Fill(entry, false)
+    end
+    page.runRows:Trim(#runs)
+    page.runs:SetContentHeight(#runs * RUN_ROW)
+    return #runs
+end
+
+local function refreshDungeonPage(view, current)
+    local page = view.dungeon
+    local instanceId = current.id
+    local dungeon = Guide.Dungeon(instanceId)
     if state.shownId ~= instanceId then
         state.shownId = instanceId
-        state.boss, state.rare, state.lootPage, state.listPage, state.trashPage, state.detailPage, state.floor = 1, 1, 1, 1, 1, 1, nil
-        state.encounterPage = nil
-        view.showAll = false
         if dungeon and not inCombat() and Portraits then
             local ids = {}
             for _, boss in ipairs(dungeon.bosses) do table.insert(ids, Guide.DisplayId(instanceId, boss)) end
             Portraits.Prefetch(ids)
         end
     end
-    view.role:Refresh()
-    local current = Guide.CurrentInstanceId()
-    UI.SetShown(view.here, current ~= nil and current ~= instanceId)
-    GuideUI.RefreshPicker()
+    page.tabs:Refresh()
     if not dungeon then
-        UI.SetText(view.title, "Dungeon Guide")
-        UI.SetText(view.subtitle, Guide.Available() and "Pick a dungeon." or "No atlas data is packaged with this version.")
-        for _, body in pairs(view.tabs) do body:Hide() end
-        UI.SetText(view.missing, Guide.Available() and "Click the title to pick a dungeon." or "The Dungeon Atlas data file is missing.")
-        view.missing:Show()
+        UI.SetText(page.title, "Dungeons")
+        UI.SetText(page.sub, "")
+        for _, widget in ipairs({ page.list, page.right, page.quests, page.runs, page.badge }) do widget:Hide() end
+        UI.SetText(page.empty, "This dungeon is not in the packaged atlas.")
+        page.empty:Show()
         return
     end
-    view.missing:Hide()
+    UI.SetText(page.title, dungeon.name)
     local parts = { dungeon.kind == "raid" and "Raid" or "Dungeon" }
     local levels = Guide.LevelText(dungeon.lmin, dungeon.lmax)
     if levels then table.insert(parts, "Levels " .. levels) end
     if dungeon.zone then table.insert(parts, dungeon.zone) end
-    if instanceId == current then table.insert(parts, Theme.Colorize("You are here", "good")) end
-    UI.SetText(view.title, dungeon.name)
-    pcall(view.pick.SetWidth, view.pick, math.min(CONTENT_WIDTH - 110, (view.title.GetStringWidth and tonumber(view.title:GetStringWidth()) or 200) + 34))
-    UI.SetText(view.subtitle, table.concat(parts, "  " .. DOT .. "  "))
-    showTab(view, state.tab or "overview")
-    local body = view.tabs[state.tab]
-    if state.tab == "overview" then refreshOverview(view, body, instanceId, dungeon)
-    elseif state.tab == "bosses" then refreshEncounters(view, body, instanceId, dungeon)
-    elseif state.tab == "rares" then refreshRares(view, body, instanceId, dungeon)
-    elseif state.tab == "loot" then refreshLoot(view, body, instanceId) end
+    if instanceId == Guide.CurrentInstanceId() then table.insert(parts, Theme.Colorize("You are here", "good")) end
+    UI.SetText(page.sub, table.concat(parts, SEP))
+    local entry = Guide.Index()[instanceId] or {}
+    local where = dungeon.entrance and ("Entrance: " .. tostring(entry.zone or dungeon.zone or "?") .. " " .. Guide.Coordinates(dungeon.entrance.x, dungeon.entrance.y))
+        or ("Entrance not known" .. (dungeon.zone and (" (" .. dungeon.zone .. ")") or ""))
+    page.badge:Set("Classic reference", { where, Guide.REFERENCE_NOTE .. ": bosses, mechanics, loot and quests come from Classic reference data.",
+        "Maps, boss positions and faces are the client's own." })
+    page.badge:Show()
+    page.empty:Hide()
+
+    local tab = current.level == "creature" and "overview" or (current.tab or "overview")
+    local states = encounterStates(instanceId, dungeon)
+    local overview = tab == "overview"
+    UI.SetShown(page.list, overview)
+    UI.SetShown(page.right, overview)
+    UI.SetShown(page.quests, tab == "quests")
+    UI.SetShown(page.runs, tab == "runs")
+    if overview then
+        refreshList(page, instanceId, dungeon, current, states)
+        local creature = current.level == "creature"
+        UI.SetShown(page.map, not creature)
+        UI.SetShown(page.map.bar, not creature)
+        UI.SetShown(page.foot, not creature)
+        UI.SetShown(page.footWish, not creature)
+        UI.SetShown(page.detail, creature)
+        if creature then
+            refreshCreature(page, instanceId, dungeon, current, states)
+        else
+            refreshMap(page, instanceId, dungeon, states)
+        end
+    elseif tab == "quests" then
+        local count = refreshQuests(page, instanceId)
+        UI.SetText(page.empty, count == 0 and "No quests for this dungeon in the atlas for your faction." or "")
+        UI.SetShown(page.empty, count == 0)
+    else
+        local count = refreshRuns(page, instanceId)
+        UI.SetText(page.empty, count == 0 and ("No finished runs of " .. dungeon.name .. " yet. Runs are recorded on their own when you enter.") or "")
+        UI.SetShown(page.empty, count == 0)
+    end
+end
+
+-- Top bar and breadcrumb ----------------------------------------------------------------------
+
+local function crumbName(page)
+    if page.level == "browser" then return page.mode == "runs" and "My Runs" or nil end
+    local dungeon = Guide.Dungeon(page.id)
+    if page.level == "dungeon" then
+        if page.tab == "quests" then return "Quests" end
+        if page.tab == "runs" then return "My Runs" end
+        return nil
+    end
+    if page.kind == "other" then return "Other dungeon loot" end
+    local creature = pageCreature(dungeon, page)
+    return creature and creature.name or nil
+end
+
+local function refreshTopBar(view, current)
+    local bar = view.topBar
+    bar.back:SetActive(nav.index > 1)
+    bar.forward:SetActive(nav.index < #nav.history)
+    local crumbs = { { "Dungeons", current.level ~= "browser" and browserPage() or nil } }
+    if current.level ~= "browser" then
+        local entry = Guide.Index()[current.id]
+        local deeper = crumbName(current)
+        table.insert(crumbs, { entry and entry.name or "Dungeon", deeper and dungeonPage(current.id) or nil })
+        if deeper then table.insert(crumbs, { deeper, nil }) end
+    else
+        local deeper = crumbName(current)
+        if deeper then
+            crumbs[1][2] = browserPage()
+            table.insert(crumbs, { deeper, nil })
+        end
+    end
+    for index, crumb in ipairs(bar.crumbs) do
+        local data = crumbs[index]
+        if data then
+            UI.SetText(crumb.label, data[1])
+            crumb.gwPage = data[2]
+            Theme.Tint(crumb.label, data[2] and "gold" or "goldBright")
+            local width = tonumber(select(2, pcall(crumb.label.GetStringWidth, crumb.label))) or (#data[1] * 7)
+            crumb:SetWidth(math.max(20, width + 2))
+            crumb:Show()
+        else
+            crumb.gwPage = nil
+            crumb:Hide()
+        end
+    end
+    local here = Guide.CurrentInstanceId()
+    UI.SetShown(bar.here, here ~= nil and current.id ~= here)
+end
+
+-- Build, layout, refresh ------------------------------------------------------------------------
+
+local function buildView(view)
+    GuideUI.view = view
+    view.scrollAreas = {}
+    buildTopBar(view)
+    buildStrip(view)
+    buildBrowser(view)
+    buildDungeonPage(view)
+    if nav.index == 0 then
+        table.insert(nav.history, browserPage())
+        nav.index = 1
+    end
+end
+GuideUI.ResetHistory = function()
+    nav.history, nav.index = { browserPage() }, 1
+end
+
+-- Lays the view out for the content area. The pages start under the top
+-- bar, and under the run strip while a run is open.
+local function layoutView(view, width, height)
+    view.gwWidth, view.gwHeight = width, height
+    local top = TOP_BAR + (view.gwStrip and STRIP or 0)
+    view.gwTop = top
+    for _, page in ipairs({ view.browser, view.dungeon }) do
+        page:ClearAllPoints()
+        page:SetPoint("TOPLEFT", view, "TOPLEFT", 0, -top)
+        page:SetSize(width, height - top)
+    end
+    layoutBrowser(view, width, height - top)
+    layoutDungeonPage(view, width, height - top)
+end
+GuideUI.Layout = layoutView
+
+local function refreshView(view)
+    local started = GW.Perf and GW.Perf.Begin and GW.Perf.Begin()
+    local strip = refreshStrip(view)
+    if strip ~= (view.gwStrip == true) and not inCombat() then
+        view.gwStrip = strip
+        layoutView(view, view.gwWidth or 532, view.gwHeight or 418)
+    end
+    local current = GuideUI.CurrentPage() or browserPage()
+    refreshTopBar(view, current)
+    local browsing = current.level == "browser"
+    UI.SetShown(view.browser, browsing)
+    UI.SetShown(view.dungeon, not browsing)
+    if browsing then refreshBrowser(view, current) else refreshDungeonPage(view, current) end
+    -- Another page: its scroll offsets as it left them (a repaint of the
+    -- same page keeps where the player scrolled).
+    if view.gwShownPage ~= current then
+        view.gwShownPage = current
+        for key, area in pairs(view.scrollAreas) do
+            if area:IsShown() then area:ScrollTo(current.scroll and current.scroll[key] or 0) end
+        end
+    end
     if started then GW.Perf.End("guide:refresh", started) end
 end
 
--- Registers the view with the dashboard.
-local main = GW.MainFrame
+-- The sidebar's Dungeons: the dungeon cards (the dashboard repaints).
+local function onNav()
+    local current = GuideUI.CurrentPage()
+    if not (current and current.level == "browser" and (current.mode or "dungeons") == "dungeons") then
+        GuideUI.Navigate(browserPage(), true)
+    end
+end
+
+local function tick(view)
+    local strip = view.strip
+    if not strip:IsShown() then return end
+    local run = GW.DungeonSessions and GW.DungeonSessions.Current() or nil
+    if run then UI.SetText(strip.clock, GW.DungeonHud.ClockText(run)) end
+end
+
+-- Registers the journal as the dashboard's Dungeons view.
 if main and main.Views then
-    main.Views.guide = { build = buildView, refresh = refreshView }
+    main.Views.dungeon = { build = buildView, refresh = refreshView, layout = layoutView, onNav = onNav, tick = tick }
 end
 
 -- Public -----------------------------------------------------------------------------------
 
 function GuideUI.Refresh()
-    if main and main.current == "guide" and main.RefreshView then main:RefreshView() end
+    if main and main.current == "dungeon" and main.RefreshView then main:RefreshView() end
 end
 
--- Opens the guide on a dungeon (default: the selected one), optionally on
--- a boss (index in the atlas). In combat the dashboard is only shown when it
--- was already built: nothing large is created mid-fight.
+-- Opens the journal: on a boss (index in the atlas) of a dungeon, on a
+-- dungeon, or (no dungeon) on the dungeon the player is in, else where it
+-- was (the dungeon cards at first). In combat the dashboard is only shown
+-- when it was already built: nothing large is created mid-fight.
 function GuideUI.Show(instanceId, bossIndex)
     if not main or not main.Open then return false end
-    if inCombat() and not (main.views and main.views.guide) then
-        GW.Print("The Dungeon Guide opens out of combat.")
+    if inCombat() and not (main.views and main.views.dungeon) then
+        GW.Print("The dungeon journal opens out of combat.")
         return false
     end
     instanceId = tonumber(instanceId)
-    if instanceId and Guide.Index()[instanceId] then
-        state.instanceId = instanceId
-        if instanceId ~= Guide.CurrentInstanceId() then Guide.Select(instanceId) end
+    if instanceId and not Guide.Index()[instanceId] then instanceId = nil end
+    instanceId = instanceId or Guide.CurrentInstanceId()
+    if instanceId then
+        if instanceId == Guide.CurrentInstanceId() then Guide.FollowCurrent() end
+        local dungeon = Guide.Dungeon(instanceId)
+        local boss = bossIndex and dungeon and dungeon.bosses[bossIndex]
+        if boss then
+            local pin = Guide.PinFor(instanceId, boss)
+            if pin then state.floors[instanceId] = pin.floor end
+            GuideUI.Navigate(creaturePage(instanceId, "boss", bossIndex), true)
+        else
+            GuideUI.Navigate(dungeonPage(instanceId), true)
+        end
+    end
+    -- Open repaints (and builds the view the first time).
+    if main.current == "dungeon" and main:IsOpen() then
+        GuideUI.Refresh()
     else
-        state.instanceId = nil
+        main:Open("dungeon")
     end
-    state.pickerOpen = false
-    local shown = state.instanceId or Guide.SelectedInstanceId()
-    if state.shownId ~= shown then
-        state.shownId = shown
-        state.boss, state.rare, state.lootPage, state.listPage, state.trashPage, state.detailPage, state.floor = 1, 1, 1, 1, 1, 1, nil
-        state.encounterPage = nil
-    end
-    if bossIndex then
-        state.boss, state.detailPage, state.encounterPage = bossIndex, 1, nil
-        state.tab = "bosses"
-        prefs().tab = "bosses"
-        local boss = Guide.Dungeon(shown) and Guide.Dungeon(shown).bosses[bossIndex]
-        local pin = boss and Guide.PinFor(shown, boss)
-        if pin then state.floor = pin.floor end
-    end
-    main:Open("guide")
-    if GuideUI.view then showTab(GuideUI.view, state.tab or "overview") end
-    GuideUI.Refresh()
     return true
 end
 
--- Leaves the picked dungeon when the player enters another instance (the
--- guide follows the player unless they picked one while inside). Inside a
--- known dungeon, out of combat, its detail is built and its bosses' faces
--- start loading, so the HUD's tooltips and faces are ready in the fight.
+-- Entering a known dungeon out of combat builds it and starts loading its
+-- bosses' faces, so the HUD's tooltips and faces are ready in the fight.
 function GuideUI.OnInstanceChanged()
-    state.instanceId = nil
     local current = Guide.CurrentInstanceId()
     if current and not inCombat() then
         local dungeon = Guide.Dungeon(current)
@@ -1310,14 +1809,14 @@ function GuideUI.TooltipLines(instanceId, entry)
     local boss = GuideUI.BossForEntry(instanceId, entry)
     if not boss then return nil end
     local lines = {}
-    for _, row in ipairs(Guide.TopMechanics(boss, Guide.Role(), 3)) do table.insert(lines, GuideUI.AbilityText(row)) end
+    for _, row in ipairs(Guide.TopMechanics(boss, nil, 3)) do table.insert(lines, GuideUI.AbilityText(row)) end
     for _, row in ipairs(Guide.CreatureLoot(boss)) do
         if row.wanted and not row.acquired then
             table.insert(lines, Theme.Colorize("Wishlist: " .. ((row.item and row.item.n) or ("Item " .. row.itemId)), "alertWishlist"))
         end
     end
     if #lines == 0 then return nil end
-    table.insert(lines, Theme.Colorize(Guide.REFERENCE_NOTE .. ". Click for the guide.", "textFaint"))
+    table.insert(lines, Theme.Colorize(Guide.REFERENCE_NOTE .. ". Click for the journal.", "textFaint"))
     return lines
 end
 
@@ -1326,7 +1825,7 @@ function GuideUI.OpenForEntry(instanceId, entry)
     return GuideUI.Show(instanceId, index)
 end
 
--- The expanded HUD's guide line: the next boss's (or the fight's) top two
+-- The expanded HUD's line: the next boss's (or the fight's) top two
 -- mechanics. Cached per boss; nothing is built here in combat.
 local hudSection = { key = "guide", height = 34 }
 GuideUI.hudSection = hudSection
@@ -1361,7 +1860,7 @@ function hudSection.refresh(frame, run)
     if frame.gwBoss ~= boss then
         frame.gwBoss = boss
         local parts = {}
-        for _, row in ipairs(Guide.TopMechanics(boss, Guide.Role(), 2)) do
+        for _, row in ipairs(Guide.TopMechanics(boss, nil, 2)) do
             table.insert(parts, Theme.Colorize(row.label, Guide.LABEL_COLORS[row.label] or "textMuted") .. " " .. tostring(row.spell.n))
         end
         frame.gwHasText = #parts > 0

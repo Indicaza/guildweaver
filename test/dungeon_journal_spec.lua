@@ -1,7 +1,9 @@
--- The Dungeon Guide's journal: the client-art table (exporter and packaged
--- file), the map renderer, the shared portrait engine, encounter frames and
--- panels, item rows and their tooltips, the dungeon picker, the HUD's faces,
--- combat rules and what is never packaged (references/).
+-- The dungeon journal: the client-art table (exporter and packaged file),
+-- the map renderer, the shared portrait engine, the dungeon cards, Back /
+-- Forward and the breadcrumb, boss pages with their mechanics and loot grid,
+-- tooltips, quests, runs and the current-run strip, the HUD's faces and
+-- deep links, resizing, combat rules and what is never packaged
+-- (references/).
 --
 -- Fixtures: test/fixtures/journal_refs/ is an excerpt of the two MIT
 -- reference add-ons (OpenMap's Deadmines and Ragefire Chasm maps and the
@@ -295,45 +297,148 @@ do
     local _ = env
 end
 
--- The journal: encounter frames, the panel, loot rows and tooltips, the picker.
+-- The journal: the dungeon cards, Back/Forward and the breadcrumb, a boss's
+-- page with its mechanics and loot grid, tooltips, quests and runs.
 do
     local env, addon = boot()
     local main, guideUI, guide = addon.MainFrame, addon.DungeonGuideUI, addon.DungeonGuide
+    -- This client answers spell icons through C_Spell; the old global is gone.
+    _G.GetSpellTexture = nil
+    _G.C_Spell.GetSpellTexture = function(spellId) if spellId == 5174 then return nil end return 136000 + (spellId % 100) end
     env:resetCalls()
-    truthy(guideUI.Show(36, 7))
-    local view = main.views.guide
-    local body = view.tabs.bosses
-    local vancleef = body.list[7]
-    equal(vancleef.name.gwText, "Edwin VanCleef")
-    contains(vancleef.sub.gwText, "Level 21", "the frame shows the level")
-    equal(vancleef.portrait.gwDisplay, 2029, "and his portrait")
-    equal(vancleef.portrait.gwState, "selected")
-    truthy(vancleef.wish.shown, "a wishlist item drops from him")
-    truthy(vancleef.gwMarks >= 1, "mechanic spell icons")
-    local sneed = body.list[2]
-    equal(sneed.portrait.gwState, "unknown", "Sneed has no portrait: the unknown state")
-    -- The panel.
-    local panel = body.detail
-    equal(panel.name.gwText, "Edwin VanCleef")
-    equal(panel.portrait.gwDisplay, 2029)
-    contains(panel.facts.gwText, "Rare elite")
-    contains(panel.note.gwText, "unverified on Forever")
-    truthy(panel.watch[1].shown, "watch-for mechanics")
-    truthy(panel.watch[1].icon.gwFile, "with spell icons")
-    truthy(panel.abilities[1].shown, "abilities with icons")
-    -- Loot in the panel: item icons, quality, wishlist.
-    panel.switch.buttons[2]:Click()
-    equal(guideUI.state.detailTab, "loot")
+    -- One Dungeons entry in the sidebar, no Dungeon Guide.
+    local entries = {}
+    for _, entry in ipairs(main.NAV) do entries[entry.key] = entry.label end
+    equal(entries.dungeon, "Dungeons")
+    equal(entries.guide, nil, "no separate Dungeon Guide entry")
+    -- Dungeons: the cards, no dungeon opened by itself.
+    main:Open()
+    main:Select("dungeon", "nav")
+    local view = main.views.dungeon
+    truthy(view.browser.shown, "the dungeon cards are the landing page")
+    falsy(view.dungeon.shown, "no dungeon is opened on landing")
+    equal(guideUI.CurrentPage().level, "browser")
+    equal(view.gwShownCards, #guide.List(), "every dungeon has a card")
+    local cards = view.browser.cards.items
+    local function cardFor(id)
+        for _, card in ipairs(cards) do if card.shown ~= false and card.gwData and card.gwData.id == id then return card end end
+    end
+    local deadmines = cardFor(36)
+    truthy(deadmines, "a Deadmines card")
+    equal(deadmines.name.gwText, "Deadmines")
+    contains(deadmines.meta.gwText, "Levels 15")
+    contains(deadmines.meta.gwText, "Westfall")
+    contains(deadmines.kind.gwText, "DUNGEON")
+    contains(deadmines.kind.gwText, "7 BOSSES")
+    equal(deadmines.gwArt, guideUI.CardArt(36), "its art is a strip of the client's own map")
+    truthy(guideUI.CardArt(36), "a file ID, not a bundled picture")
+    contains(cardFor(409).kind.gwText, "RAID")
+    falsy(rawget(cardFor(533), "gwArt"), "Naxxramas: no map, no art")
+    -- Level 30 (the fake player): a dungeon for that level comes first.
+    truthy(cards[1].gwData.gwSuggested, "suggested dungeons first")
+    contains(cards[1].flags.gwText, "Your level")
+    -- Filters: search, level band, raids.
+    view.browser.search.GetText = function() return "dead" end
+    view.browser.search:GetScript("OnTextChanged")(view.browser.search)
+    equal(view.gwShownCards, 1, "search by name")
+    equal(cards[1].gwData.id, 36)
+    view.browser.search.GetText = function() return "" end
+    view.browser.search:GetScript("OnTextChanged")(view.browser.search)
+    view.browser.kind.buttons[3]:Click()
+    for index = 1, view.gwShownCards do equal(cards[index].gwData.kind, "raid", "raids only") end
+    view.browser.kind.buttons[1]:Click()
+    view.browser.band.buttons[4]:Click()
+    for index = 1, view.gwShownCards do truthy(cards[index].gwData.lmin >= 50, "level 50+ only") end
+    view.browser.band.buttons[1]:Click()
+    equal(view.gwShownCards, #guide.List(), "everything again")
+    -- The grid scrolls; nothing is laid out while it does.
+    local grid = view.browser.grid
+    truthy(grid.gwContent > grid.gwViewHeight, "more cards than fit: the grid scrolls")
+    grid:GetScript("OnMouseWheel")(grid, -1)
+    equal(grid:Offset(), 48, "a wheel notch moves it")
+
+    -- Click Deadmines: the overview with the map and its pins.
+    cardFor(36):GetScript("OnClick")(cardFor(36))
+    local page = view.dungeon
+    truthy(page.shown and not view.browser.shown)
+    equal(page.title.gwText, "Deadmines")
+    contains(page.sub.gwText, "Levels 15")
+    truthy(page.map.shown, "the map is the overview's centre")
+    equal(page.map.gwDrawn, "36:1")
+    equal(page.map.gwPinCount, 2, "Rhahk'Zor and Sneed on the first floor")
+    local crumbs = view.topBar.crumbs
+    equal(crumbs[1].label.gwText, "Dungeons")
+    equal(crumbs[2].label.gwText, "Deadmines")
+    falsy(crumbs[3].shown)
+    -- The list: bosses, the rare, dangerous trash, other loot.
+    local bosses = page.bossRows.items
+    equal(bosses[7].name.gwText, "Edwin VanCleef")
+    contains(bosses[7].sub.gwText, "Level 21")
+    equal(bosses[7].portrait.gwDisplay, 2029, "his portrait")
+    truthy(bosses[7].wish.shown, "a wishlist item drops from him")
+    truthy(bosses[7].gwMarks >= 1, "mechanic spell icons")
+    equal(bosses[2].portrait.gwState, "unknown", "Sneed has no portrait: the unknown state")
+    local small = page.smallRows.items
+    equal(small[1].name.gwText, "Miner Johnson")
+    equal(small[1].portrait.gwIcon, guideUI.ICONS.rare)
+    local otherRow
+    for _, row in ipairs(small) do if row.shown ~= false and row.gwData and row.gwData.kind == "other" then otherRow = row end end
+    truthy(otherRow, "loot with no verified source has its own entry")
+
+    -- Turn the floor, open Captain Greenskin from his pin.
+    page.map.bar.next:GetScript("OnClick")()
+    equal(page.map.gwDrawn, "36:2", "Ironclad Cove")
+    equal(guideUI.state.floors[36], 2, "the floor is remembered")
+    local greenskinPin
+    for _, pin in ipairs(page.map.pins) do if pin.shown ~= false and pin.gwPin and pin.gwPin.creature.name == "Captain Greenskin" then greenskinPin = pin end end
+    truthy(greenskinPin, "Greenskin's pin")
+    greenskinPin:GetScript("OnClick")(greenskinPin)
+    equal(guideUI.CurrentPage().level, "creature")
+    equal(page.name.gwText, "Captain Greenskin")
+    falsy(page.map.shown, "his page replaces the map")
+    equal(crumbs[3].label.gwText, "Captain Greenskin", "Dungeons > Deadmines > Captain Greenskin")
+    truthy(crumbs[2].gwPage, "Deadmines is a way up")
+    truthy(page.keyHeader.shown, "key mechanics")
+    truthy(page.abilityRows.items[1].shown and page.abilityRows.items[1].icon.gwFile, "with spell icons")
+    equal(page.gwLootCount, 3, "his three drops")
+    local cell = page.cells.items[1]
+    truthy(cell.shown ~= false and cell.icon.gwFile, "an item cell with the client's icon")
+    equal(page.gwGridColumns > 3, true, "several items per row")
+    equal(cell:GetScript("OnClick"), nil, "no click action on items: hover only")
+    -- The same page from the list.
+    guideUI.Back()
+    equal(guideUI.CurrentPage().level, "dungeon", "Back: the Deadmines")
+    equal(page.map.gwDrawn, "36:2", "on the floor it was left on")
+    bosses[4]:GetScript("OnClick")(bosses[4])
+    equal(page.name.gwText, "Captain Greenskin", "the list opens the same page")
+    -- Back twice: the cards; Forward: the Deadmines again.
+    guideUI.Back()
+    guideUI.Back()
+    truthy(view.browser.shown, "Back again: the dungeon cards")
+    equal(grid:Offset(), 48, "where the grid was scrolled")
+    guideUI.Forward()
+    equal(guideUI.CurrentPage().level, "dungeon", "Forward: the Deadmines")
+    guideUI.Forward()
+    equal(page.name.gwText, "Captain Greenskin", "Forward again: Greenskin")
+    falsy(view.topBar.forward.gwEnabled, "nothing further ahead")
+    crumbs[2]:GetScript("OnClick")(crumbs[2])
+    equal(guideUI.CurrentPage().level, "dungeon", "the Deadmines crumb goes up one level")
+    crumbs[1]:GetScript("OnClick")(crumbs[1])
+    truthy(view.browser.shown, "Dungeons goes to the cards")
+
+    -- VanCleef: the wanted item in the grid, the native tooltip at the cursor.
+    guideUI.Show(36, 7)
+    equal(page.name.gwText, "Edwin VanCleef")
+    contains(page.facts.gwText, "Rare elite")
+    truthy(page.detailBadge.gwLines, "the reference indicator")
     local barb
-    for _, row in ipairs(panel.loot) do
-        if row.shown and row.gwData and row.gwData.itemId == 5191 then barb = row end
+    for _, itemCell in ipairs(page.cells.items) do
+        if itemCell.shown ~= false and itemCell.gwData and itemCell.gwData.itemId == 5191 then barb = itemCell end
     end
     truthy(barb, "Cruel Barb in VanCleef's loot")
     equal(barb.icon.gwFile, 133000 + 5191, "the client's item icon")
-    equal(barb.mark.gwFile, guideUI.ICONS.wish, "marked as wanted")
-    contains(barb.name.gwText, "Cruel Barb")
-    contains(barb.facts.gwText or "", "ilvl", "slot, item level and requirement")
-    -- Hover: the native tooltip, next to the cursor, compare with shift.
+    equal(barb.gwWanted, true, "the wishlist diamond on the item")
+    equal(barb.gwAcquired, false, "not acquired")
     local tooltip = _G.GameTooltip
     local calls = {}
     tooltip.SetOwner = function(_, _, anchor) calls.anchor = anchor end
@@ -341,6 +446,7 @@ do
     tooltip.SetPoint = function(_, point, relative, relativePoint, x, y) calls.point = { point, relative, relativePoint, x, y } end
     tooltip.SetHyperlink = function(_, link) calls.link = link end
     tooltip.AddLine = function(_, text) calls.lines = (calls.lines or "") .. tostring(text) .. "\n" end
+    tooltip.ClearLines = function() end
     tooltip.Show = function() calls.shown = true end
     tooltip.Hide = function() calls.shown = false end
     _G.IsModifiedClick = function(name) return name == "COMPAREITEMS" and env.shift == true end
@@ -363,81 +469,73 @@ do
     falsy(guideUI.hoveredItem)
     env:dispatch("MODIFIER_STATE_CHANGED", "LSHIFT", 0)
     equal(calls.compared, 1, "nothing shows after the mouse left")
-    -- Spell rows: the client's spell tooltip with the label.
+    -- Spell rows: the client's spell tooltip with the label, at the cursor.
     tooltip.SetSpellByID = function(_, id) calls.spell = id end
-    calls.lines = ""
-    panel.switch.buttons[1]:Click()
-    panel.abilities[1]:GetScript("OnEnter")(panel.abilities[1])
+    calls.lines, calls.point = "", nil
+    local ability = page.abilityRows.items[1]
+    ability:GetScript("OnEnter")(ability)
     truthy(calls.spell, "spell tooltip by ID")
+    equal(calls.point[4], 618, "the same tooltip convention")
     contains(calls.lines, "unverified on Forever")
-    -- Loot tab rows.
-    view.tabBar.buttons[3]:Click()
-    local row = view.tabs.loot.rows[1]
-    truthy(row.shown and row.icon.gwFile, "loot rows have item icons")
-    truthy(row.source.gwText ~= "", "and the source")
-    -- Overview: the map with pins, clickable into the encounter.
-    view.tabBar.buttons[1]:Click()
-    local map = view.tabs.overview.map
-    truthy(map.gwPinCount > 0)
-    map.pins[1]:GetScript("OnClick")(map.pins[1])
-    equal(guideUI.state.tab, "bosses", "a pin opens its encounter")
-    equal(view.tabs.bosses.detail.name.gwText, map.pins[1].gwPin.creature.name)
-    -- Trash: compact rows with icons and the same panel.
-    view.tabBar.buttons[4]:Click()
-    local trash = view.tabs.rares
-    equal(trash.list[1].portrait.gwIcon, guideUI.ICONS.rare, "a rare's icon")
-    trash.list[2]:GetScript("OnClick")(trash.list[2])
-    contains(trash.detail.facts.gwText, "Dangerous trash")
-    falsy(trash.detail.switch.buttons[2].shown, "trash has no loot tab")
 
-    -- The picker: open, search, filters, pick, remembered.
-    view.pick:GetScript("OnClick")()
-    truthy(view.picker.shown, "the picker opens")
-    view.picker.search.GetText = function() return "dead" end
-    view.picker.search:GetScript("OnTextChanged")(view.picker.search)
-    equal(view.picker.rows[1].gwData.id, 36, "search by name")
-    falsy(view.picker.rows[2].shown)
-    view.picker.search.GetText = function() return "" end
-    view.picker.search:GetScript("OnTextChanged")(view.picker.search)
-    view.picker.kind.buttons[3]:Click()
-    for _, pickRow in ipairs(view.picker.rows) do
-        if pickRow.shown then equal(pickRow.gwData.kind, "raid", "raids only") end
+    -- Spell icons: C_Spell's answer; a spell without one gets the empty slot.
+    local icon, found = guideUI.SpellIcon(6306)
+    equal(icon, 136006, "the icon from C_Spell.GetSpellTexture")
+    truthy(found)
+    guideUI.Show(36, 6)
+    local slotted
+    for _, row in ipairs(page.abilityRows.items) do
+        if row.shown ~= false and row.gwData and row.gwData.id == 5174 then slotted = row end
     end
-    view.picker.kind.buttons[1]:Click()
-    view.picker.band.buttons[4]:Click()
-    for _, pickRow in ipairs(view.picker.rows) do
-        if pickRow.shown then truthy(pickRow.gwData.lmin >= 50, "level 50+ only") end
+    truthy(slotted, "Cookie's ability without a client icon is still listed")
+    equal(slotted.icon.gwFile, guideUI.ICONS.noSpell, "an empty slot, not a red question mark")
+    contains(slotted.text.gwText, slotted.gwData.spell.n, "with its name")
+    local kick = false
+    for _, row in ipairs(page.abilityRows.items) do
+        if row.shown ~= false and row.gwData and row.tag.gwText == "KICK" then kick = true end
     end
-    view.picker.band.buttons[1]:Click()
-    local shownCount = 0
-    for _, pickRow in ipairs(view.picker.rows) do if pickRow.shown then shownCount = shownCount + 1 end end
-    equal(shownCount, 22, "26 dungeons over two pages of 22")
-    truthy(view.picker.pager.shown)
-    local target
-    for _, pickRow in ipairs(view.picker.rows) do
-        if pickRow.shown and pickRow.gwData.id == 389 then target = pickRow end
-    end
-    target:GetScript("OnClick")(target)
-    falsy(view.picker.shown, "picking closes the picker")
-    equal(view.title.gwText, "Ragefire Chasm")
-    equal(GuildweaverDB.ui.dungeonGuide.instanceId, 389, "the pick is remembered")
+    truthy(kick, "Cookie's kick")
+    equal(page.abilityRows.items[1].tag.gwText, "KICK", "dangerous interrupts first")
+
+    -- Trash: a compact page, with the loot attributed to it by name.
+    guideUI.Navigate(guideUI.Pages.creature(36, "trash", 7))
+    equal(page.name.gwText, "Sneed's Shredder")
+    contains(page.facts.gwText, "Dangerous trash")
+    equal(page.gwLootCount, 1, "the drop the atlas names it as the source of")
+    -- Other dungeon loot: never attributed to a boss.
+    guideUI.Navigate(guideUI.Pages.creature(36, "other", 1))
+    equal(page.name.gwText, "Other dungeon loot")
+    falsy(page.keyHeader.shown, "no mechanics")
+    truthy(page.gwLootCount >= 4, "unsourced and unknown-source drops")
+
+    -- Quests: names, levels, givers, objectives and rewards.
+    guideUI.Navigate(guideUI.Pages.dungeon(36, "quests"))
+    truthy(page.quests.shown)
+    falsy(page.list.shown, "quests take the full width")
+    equal(crumbs[3].label.gwText, "Quests")
+    local quest = page.questRows.items[1]
+    equal(quest.name.gwText, "The Defias Brotherhood")
+    contains(quest.facts.gwText, "Level 22")
+    contains(quest.facts.gwText, "Alliance")
+    contains(quest.giver.gwText, "Gryan Stoutmantle")
+    contains(quest.objective.gwText, "Edwin VanCleef")
+    equal(quest.rewardLabel.gwText, "CHOOSE ONE")
+    truthy(quest.rewards.items[1].icon.gwFile, "reward item icons")
+    falsy(string.find(quest.facts.gwText, "Completed", 1, true), "not claimed completed")
+    _G.C_QuestLog = { IsQuestFlaggedCompleted = function(id) return id == 166 end }
+    main:RefreshView()
+    contains(quest.facts.gwText, "Completed", "only when the client confirms it")
+    _G.C_QuestLog = nil
+
     local itemQueries = env:callCount("GetItemInfo")
-    -- Inside a dungeon: "Where I am" returns to it.
-    zone(env, DEADMINES)
-    guideUI.Show(389)
-    truthy(view.here.shown, "the way back to the current dungeon")
-    view.here:Click()
-    equal(view.title.gwText, "Deadmines")
-    falsy(view.here.shown)
-    equal(guide.SelectedInstanceId(), 36)
-    equal(env.protectedCalls, 0)
     equal(itemQueries, 0, "item icons come without item queries")
+    equal(env.protectedCalls, 0)
 end
 
--- Observed encounter states in the journal and the HUD's faces from the same engine.
+-- Runs in the journal, the current-run strip, the HUD's faces and observed states.
 do
     local env, addon = boot()
-    local hud, sessions, guideUI = addon.DungeonHud, addon.DungeonSessions, addon.DungeonGuideUI
+    local hud, sessions, guideUI, main = addon.DungeonHud, addon.DungeonSessions, addon.DungeonGuideUI, addon.MainFrame
     zone(env, DEADMINES)
     truthy(addon.DungeonGuide.IsBuilt(36), "entering a known dungeon builds it (out of combat)")
     env:dispatch("PLAYER_REGEN_DISABLED")
@@ -448,23 +546,100 @@ do
     env:dispatch("ENCOUNTER_END", 2741, "Rhahk'Zor", 1, 5, 1)
     env:dispatch("ENCOUNTER_START", 2746, "Cookie", 1, 5)
     local entries = hud.Portraits(sessions.Current())
-    equal(entries[1].displayId, 14403, "Rhahk'Zor's face from the guide's art table")
+    equal(entries[1].displayId, 14403, "Rhahk'Zor's face from the journal's art table")
     equal(entries[2].kind, "engaged")
     equal(entries[2].displayId, 1305, "Cookie's")
     hud:SetMode("expanded")
     hud:Refresh()
-    guideUI.Show(36)
-    local list = addon.MainFrame.views.guide.tabs.bosses.list
-    guideUI.state.tab = "bosses"
-    addon.MainFrame:RefreshView()
-    equal(list[1].portrait.gwState, "selected", "the selected boss")
+    -- The HUD's ? opens the dungeon the run is in.
+    hud.guideButton:Click()
+    local view = main.views.dungeon
+    equal(guideUI.CurrentPage().level, "dungeon")
+    equal(guideUI.CurrentPage().id, 36)
+    -- The strip: the open run, compact.
+    truthy(view.strip.shown, "the current run's strip")
+    equal(view.strip.name.label.gwText, "The Deadmines", "the run, as the client names it")
+    contains(view.strip.state.gwText, "Bosses 1")
+    truthy(view.gwTop > 28, "the pages start under it")
+    falsy(view.topBar.here.shown, "already on the current dungeon")
+    local list = view.dungeon.bossRows.items
     equal(list[6].portrait.gwState, "engaged", "Cookie: fighting now, as the run observed")
     contains(list[6].sub.gwText, "In combat")
-    list[2]:GetScript("OnClick")(list[2])
     equal(list[1].portrait.gwState, "defeated", "Rhahk'Zor: killed in this run")
     contains(list[1].sub.gwText, "Defeated")
     equal(list[7].portrait.gwState, "available", "VanCleef: nothing observed")
+    -- A boss face in the HUD deep-links to that encounter.
+    hud.circles["boss:2741"].frame:GetScript("OnClick")()
+    equal(guideUI.CurrentPage().level, "creature")
+    equal(view.dungeon.name.gwText, "Rhahk'Zor")
+    contains(view.dungeon.facts.gwText, "Defeated")
+    -- Another dungeon: the way back to the current one.
+    guideUI.Show(389)
+    truthy(view.topBar.here.shown, "Current dungeon")
+    view.topBar.here:Click()
+    equal(guideUI.CurrentPage().id, 36)
+    -- End the run from the strip (twice), then it is under My Runs.
+    env:dispatch("ENCOUNTER_END", 2746, "Cookie", 1, 5, 1)
+    view.strip.finish:Click()
+    view.strip.finish:Click()
+    equal(sessions.Current(), nil, "two clicks end the run")
+    falsy(view.strip.shown, "no strip without a run")
+    equal(view.gwTop, 28)
+    guideUI.Navigate(guideUI.Pages.dungeon(36, "runs"))
+    local row = view.dungeon.runRows.items[1]
+    truthy(row and row.shown ~= false, "the run, under the Deadmines' runs")
+    contains(row.when.gwText, "Bosses 2")
+    truthy(row.time.gwText ~= "", "its duration")
+    truthy(row.outcome.gwText ~= "", "its outcome")
+    guideUI.Navigate(guideUI.Pages.browser("runs"))
+    equal(view.browser.runRows.items[1].title.gwText, "The Deadmines", "and under all runs")
+    view.browser.runRows.items[1]:GetScript("OnClick")(view.browser.runRows.items[1])
+    equal(guideUI.CurrentPage().tab, "runs", "a run opens its dungeon's runs")
+    equal(addon.DungeonGuide.RunInstanceId(sessions.History()[1]), 36)
     equal(env.protectedCalls, 0)
+end
+
+-- Resizing: the journal follows the window; the size is kept.
+do
+    local env, addon = boot()
+    local main, guideUI = addon.MainFrame, addon.DungeonGuideUI
+    main:Open("dungeon")
+    local width, height = main.frame:Size()
+    equal(width, 1050, "the default width")
+    equal(height, 700, "the default height")
+    truthy(main.frame.sizeGrip, "a grip in the corner")
+    guideUI.Show(36)
+    local page = main.views.dungeon.dungeon
+    local before = page.map.gwWidth
+    -- The grip: drag ends, the size is clamped, saved and laid out.
+    main.frame.GetWidth = function() return 600 end
+    main.frame.GetHeight = function() return 300 end
+    main.frame.sizeGrip:GetScript("OnMouseDown")()
+    main.frame.sizeGrip:GetScript("OnMouseUp")()
+    equal(GuildweaverDB.ui.dashboard.width, 740, "never narrower than the minimum")
+    equal(GuildweaverDB.ui.dashboard.height, 500)
+    truthy(page.map.gwWidth < before, "the map shrinks with the window")
+    truthy(page.map.gwWidth + page.leftWidth + 16 <= 532 + 1, "and fits the narrowest content area")
+    -- Larger than the screen: clamped to it.
+    _G.UIParent.GetWidth = function() return 1280 end
+    _G.UIParent.GetHeight = function() return 720 end
+    main:Resize(3000, 3000)
+    equal(GuildweaverDB.ui.dashboard.width, 1260, "within the screen")
+    equal(GuildweaverDB.ui.dashboard.height, 700)
+    main:Resize(1200, 680)
+    truthy(page.map.gwWidth > before, "the map grows")
+    -- In combat the layout waits.
+    env.inCombat = true
+    main:Resize(900, 600)
+    truthy(main.relayoutPending, "no layout in combat")
+    env.inCombat = false
+    env:dispatch("PLAYER_REGEN_ENABLED")
+    falsy(main.relayoutPending, "laid out when combat ends")
+    -- Every other view still opens at the new size.
+    for _, key in ipairs({ "overview", "farming", "sync", "settings", "dungeon" }) do
+        main:Select(key)
+        truthy(main.views[key].shown, key .. " shows after a resize")
+    end
 end
 
 -- Never packaged: the reference add-ons, and glyphs the game font lacks.

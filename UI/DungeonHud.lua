@@ -42,6 +42,9 @@ local DEFAULTS = {
 local SCALES = { 0.85, 1, 1.15, 1.3 }
 local MAX_SPLITS = 6
 local MAX_OBJECTIVES = 3
+-- Manual objectives were taken out of the interface: the HUD no longer
+-- shows them. DungeonObjectives and its saved list are untouched.
+Hud.SHOW_OBJECTIVES = false
 local MAX_BOSSES = 12
 local MAX_STATS = 8
 local PAD = 10
@@ -311,7 +314,7 @@ function Hud.Lines(run, mode)
         table.insert(lines, "PB " .. pb)
     end
     if mode == "compact" then
-        if run.objective then
+        if Hud.SHOW_OBJECTIVES and run.objective then
             table.insert(lines, "Next: " .. tostring(run.objective.text))
         end
         return lines
@@ -327,7 +330,7 @@ function Hud.Lines(run, mode)
         table.insert(lines, string.format("%s  %s  +%s%s", Hud.FormatDuration(split.at), tostring(split.name),
             Hud.FormatDuration(split.split or 0), pace and ("  " .. pace) or ""))
     end
-    local objectives = GW.DungeonObjectives and GW.DungeonObjectives.List and GW.DungeonObjectives.List() or {}
+    local objectives = Hud.SHOW_OBJECTIVES and GW.DungeonObjectives and GW.DungeonObjectives.List and GW.DungeonObjectives.List() or {}
     for index = 1, math.min(MAX_OBJECTIVES, #objectives) do
         local objective = objectives[index]
         table.insert(lines, (objective.done and "[x] " or "[ ] ") .. tostring(objective.text))
@@ -1007,7 +1010,7 @@ function Hud:Create()
     self.lessButton = UI.IconButton(frame, GLYPH.less, { size = 16, tooltip = "Less detail",
         onClick = function() Hud:SetMode(MODES[math.max(1, MODE_INDEX[Hud:DisplayMode()] - 1)]) end })
     self.guideButton = UI.IconButton(frame, "?", { size = 16, tooltip = "Dungeon Guide",
-        tooltipLines = { "Bosses, mechanics, loot and rares for this dungeon. Click a boss face for its guide." },
+        tooltipLines = { "The dungeon journal: map, bosses, mechanics and loot. Click a boss face for its page." },
         onClick = function() Hud.OpenGuide(nil) end })
 
     -- The clock and the timer controls.
@@ -1228,7 +1231,7 @@ function Hud:Paint(run, mode)
         self.splitList.gwHeight = 18 + 15 * shown
         has.splits = shown > 0
 
-        local objectives = GW.DungeonObjectives and GW.DungeonObjectives.List and GW.DungeonObjectives.List() or {}
+        local objectives = Hud.SHOW_OBJECTIVES and GW.DungeonObjectives and GW.DungeonObjectives.List and GW.DungeonObjectives.List() or {}
         local count = math.min(MAX_OBJECTIVES, #objectives)
         for index = 1, MAX_OBJECTIVES do
             local objective, line = objectives[index], self.objectiveList.rows[index]
@@ -1245,7 +1248,7 @@ function Hud:Paint(run, mode)
         has.hint = not run.encounterEvents and #splits == 0
     else
         -- Compact: the current objective on the note line.
-        local objective = run.objective and (Theme.Colorize("Next ", "goldDim") .. tostring(run.objective.text)) or nil
+        local objective = Hud.SHOW_OBJECTIVES and run.objective and (Theme.Colorize("Next ", "goldDim") .. tostring(run.objective.text)) or nil
         setText(self.pace, "pace", objective or "")
         has.pace = objective ~= nil
     end

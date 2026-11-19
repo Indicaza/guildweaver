@@ -239,7 +239,7 @@ SlashCmdList.GUILDWEAVER = function(message)
             else
                 GW.Print("No dungeon run is open. Runs start when you enter a dungeon or raid.")
             end
-            GW.Print("/gw dungeon start|stop (the timer also starts on your first pull), /gw dungeon split [name], /gw dungeon finish, /gw dungeon hud on|off, /gw dungeon mode [min|compact|full], /gw dungeon pb, /gw dungeon reset, /gw dungeon bosses (what the run knows about its bosses). Objectives: /gw obj.")
+            GW.Print("/gw dungeon start|stop (the timer also starts on your first pull), /gw dungeon split [name], /gw dungeon finish, /gw dungeon hud on|off, /gw dungeon mode [min|compact|full], /gw dungeon pb, /gw dungeon reset, /gw dungeon bosses (what the run knows about its bosses).")
         end
         return
     end

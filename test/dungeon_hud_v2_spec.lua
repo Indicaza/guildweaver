@@ -382,13 +382,16 @@ do
     equal(objectives.Current().text, "Kill Herod")
     zone(env, SM)
     addon.DungeonHud:SetMode("compact")
-    contains(addon.DungeonHud.lines, "Next: Kill Herod", "current objective in the HUD")
+    -- Manual objectives are no longer shown in the HUD; the list is kept.
+    for _, line in ipairs(addon.DungeonHud.lines) do
+        if string.find(line, "Kill Herod", 1, true) then error("the HUD shows no manual objective") end
+    end
     addon.DungeonSessions.Split("Courtyard")
     equal(objectives.List()[3].done, false, "a manual split is not proof")
     kill(env, 3, "Herod")
     equal(objectives.List()[2].done, true, "reported kill completes it")
     equal(objectives.List()[2].doneBy, "boss_kill")
-    contains(addon.DungeonHud.lines, "Next: Kill Courtyard")
+    equal(objectives.Current().text, "Kill Courtyard", "the list itself still moves on")
     SlashCmdList.GUILDWEAVER("obj remove 3")
     equal(#objectives.List(), 2)
     equal(objectives.Current(), nil)

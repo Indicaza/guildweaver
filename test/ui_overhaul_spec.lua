@@ -238,9 +238,12 @@ do
         main:Select(key)
     end
     local dungeon = main.views.dungeon
-    equal(dungeon.runCard.name.gwText, "No run open", "dungeon view without a run")
-    truthy(not dungeon.runCard.timer.shown, "no timer controls without a run")
-    truthy(dungeon.recentEmpty.shown, "empty recent runs say so")
+    truthy(dungeon.browser.shown, "Dungeons opens on the dungeon cards")
+    truthy(not dungeon.strip.shown, "no run strip (and no empty run panel) without a run")
+    equal(rawget(dungeon, "runCard"), nil, "the old run panel is gone")
+    equal(rawget(dungeon, "objectiveInput"), nil, "no manual objectives")
+    addon.DungeonGuideUI.Navigate(addon.DungeonGuideUI.Pages.browser("runs"))
+    truthy(dungeon.browser.empty.shown, "no runs yet: it says so")
     local farming = main.views.farming
     equal(farming.card.state.gwText, "Not timing")
     truthy(farming.fishingEmpty.shown, "fishing says it has nothing yet")
@@ -373,11 +376,11 @@ do
     env.serverTime = env.serverTime + 30
     env:advance(30)
     truthy(addon.DungeonSessions.Current().timerSeconds >= before + 30, "timer runs while hidden")
-    -- The dashboard brings it back.
+    -- The journal's run strip brings it back.
     addon.MainFrame:Open("dungeon")
-    local card = addon.MainFrame.views.dungeon.runCard
-    equal(card.hud:GetLabel(), "Show HUD")
-    click(card.hud)
+    local strip = addon.MainFrame.views.dungeon.strip
+    equal(strip.hud:GetLabel(), "Show HUD")
+    click(strip.hud)
     truthy(hud.visible, "Show HUD brings it back")
 
     -- Hidden again; a new run shows it again.
@@ -397,45 +400,65 @@ do
     equal(env.protectedCalls + env2.protectedCalls, 0, "no protected calls")
 end
 
--- Timer controls and End run from the dashboard -------------------------------------------
+-- Timer controls and End run from the journal's run strip -------------------------------
 do
     local env, addon = boot()
     local main, sessions = addon.MainFrame, addon.DungeonSessions
     zone(env, SM)
     main:Open("dungeon")
-    local card = main.views.dungeon.runCard
-    equal(card.timer:GetLabel(), "Start")
-    click(card.timer)
+    local view = main.views.dungeon
+    local strip = view.strip
+    truthy(strip.shown, "a run is open: the strip")
+    equal(strip.timer:GetLabel(), "Start")
+    click(strip.timer)
     equal(sessions.TimerState(), "running")
-    equal(card.timer:GetLabel(), "Pause")
-    click(card.timer)
+    equal(strip.timer:GetLabel(), "Pause")
+    env.serverTime = env.serverTime + 65
+    env:advance(1.1)
+    truthy(strip.clock.gwText ~= "0:00", "the clock ticks while the window is open")
+    click(strip.timer)
     equal(sessions.TimerState(), "stopped", "Pause stops the clock")
     truthy(sessions.Current(), "but the run stays open")
-    equal(card.timer:GetLabel(), "Resume")
-    click(card.split)
-    equal(#sessions.Current().splits, 1, "Split from the dashboard")
+    equal(strip.timer:GetLabel(), "Resume")
+    equal(rawget(strip, "split"), nil, "splits stay in the HUD")
+    click(addon.DungeonHud.splitButton)
+    equal(#sessions.Current().splits, 1, "Split from the HUD")
     -- End run needs a second click.
-    click(card.finish)
+    click(strip.finish)
     truthy(sessions.Current(), "one click only arms End run")
-    equal(card.finish:GetLabel(), "Click to end")
+    equal(strip.finish:GetLabel(), "Click to end")
     env:advance(5)
-    equal(card.finish:GetLabel(), "End run", "it disarms by itself")
-    click(card.finish)
-    click(card.finish)
+    equal(strip.finish:GetLabel(), "End run", "it disarms by itself")
+    click(strip.finish)
+    click(strip.finish)
     equal(sessions.Current(), nil, "two clicks end the run")
     equal(sessions.History()[1].status, "completed")
-    equal(main.views.dungeon.recentRows[1].name.gwText, "Scarlet Monastery", "it is listed under recent runs")
+    truthy(not strip.shown, "the strip goes with the run")
+    addon.DungeonGuideUI.Navigate(addon.DungeonGuideUI.Pages.browser("runs"))
+    equal(view.browser.runRows.items[1].title.gwText, "Scarlet Monastery", "it is listed under My Runs")
+    -- Saved objectives are kept, only no longer shown.
+    addon.DungeonObjectives.Add("Kill Herod")
+    equal(addon.DungeonObjectives.List()[1].text, "Kill Herod", "the objective system still works")
+    main:RefreshView()
+    equal(rawget(view, "objectiveRows"), nil, "but the journal shows no objectives")
+end
 
-    -- Objectives from the dashboard.
-    local view = main.views.dungeon
-    -- The fake client's edit box holds no text: give it some.
-    view.objectiveInput.GetText = function() return "Kill Herod" end
-    view.objectiveInput:GetScript("OnEnterPressed")(view.objectiveInput)
-    equal(addon.DungeonObjectives.List()[1].text, "Kill Herod", "objective added")
-    click(view.objectiveRows[1])
-    equal(addon.DungeonObjectives.List()[1].done, true, "click marks it done")
-    click(view.objectiveRows[1].remove)
-    equal(#addon.DungeonObjectives.List(), 0, "removed")
+-- The window: resizable, its size kept across /reload ----------------------------------
+do
+    local env, addon = boot()
+    local main = addon.MainFrame
+    main:Open("overview")
+    equal(select(1, main.frame:Size()), 1050, "1050 x 700 by default")
+    main:Resize(1180, 760)
+    equal(GuildweaverDB.ui.dashboard.width, 1180, "saved with the dashboard's preferences")
+    local _, addon2 = relog(env)
+    addon2.MainFrame:Open()
+    local width, height = addon2.MainFrame.frame:Size()
+    equal(width, 1180, "the width after /reload")
+    equal(height, 760, "the height after /reload")
+    addon2.MainFrame:ResetPosition()
+    equal(select(1, addon2.MainFrame.frame:Size()), 1050, "Reset window restores the default size")
+    equal(GuildweaverDB.ui.dashboard.width, nil)
 end
 
 -- Sync now: blocked in combat, otherwise asks twice, then reloads ------------------------
