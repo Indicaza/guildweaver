@@ -599,48 +599,7 @@ do
     equal(env.protectedCalls, 0)
 end
 
--- Resizing: the journal follows the window; the size is kept.
-do
-    local env, addon = boot()
-    local main, guideUI = addon.MainFrame, addon.DungeonGuideUI
-    main:Open("dungeon")
-    local width, height = main.frame:Size()
-    equal(width, 1050, "the default width")
-    equal(height, 700, "the default height")
-    truthy(main.frame.sizeGrip, "a grip in the corner")
-    guideUI.Show(36)
-    local page = main.views.dungeon.dungeon
-    local before = page.map.gwWidth
-    -- The grip: drag ends, the size is clamped, saved and laid out.
-    main.frame.GetWidth = function() return 600 end
-    main.frame.GetHeight = function() return 300 end
-    main.frame.sizeGrip:GetScript("OnMouseDown")()
-    main.frame.sizeGrip:GetScript("OnMouseUp")()
-    equal(GuildweaverDB.ui.dashboard.width, 740, "never narrower than the minimum")
-    equal(GuildweaverDB.ui.dashboard.height, 500)
-    truthy(page.map.gwWidth < before, "the map shrinks with the window")
-    truthy(page.map.gwWidth + page.leftWidth + 16 <= 532 + 1, "and fits the narrowest content area")
-    -- Larger than the screen: clamped to it.
-    _G.UIParent.GetWidth = function() return 1280 end
-    _G.UIParent.GetHeight = function() return 720 end
-    main:Resize(3000, 3000)
-    equal(GuildweaverDB.ui.dashboard.width, 1260, "within the screen")
-    equal(GuildweaverDB.ui.dashboard.height, 700)
-    main:Resize(1200, 680)
-    truthy(page.map.gwWidth > before, "the map grows")
-    -- In combat the layout waits.
-    env.inCombat = true
-    main:Resize(900, 600)
-    truthy(main.relayoutPending, "no layout in combat")
-    env.inCombat = false
-    env:dispatch("PLAYER_REGEN_ENABLED")
-    falsy(main.relayoutPending, "laid out when combat ends")
-    -- Every other view still opens at the new size.
-    for _, key in ipairs({ "overview", "farming", "sync", "settings", "dungeon" }) do
-        main:Select(key)
-        truthy(main.views[key].shown, key .. " shows after a resize")
-    end
-end
+-- Resizing: test/dungeon_journal_layout_spec.lua.
 
 -- Never packaged: the reference add-ons, and glyphs the game font lacks.
 do

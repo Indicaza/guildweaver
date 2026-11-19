@@ -549,24 +549,69 @@ function UI.Window(opts)
         if screenH and screenH > 0 then height = math.min(height, math.max(minHeight, screenH - 20)) end
         return math.floor(math.max(minWidth, width) + 0.5), math.floor(math.max(minHeight, height) + 0.5)
     end
+    local function regrain(width, height)
+        local size = Theme.GRAIN_SIZE
+        pcall(frame.grain.SetTexCoord, frame.grain, 0, width / size, 0, height / size)
+        pcall(header.gwGrain.SetTexCoord, header.gwGrain, 0, width / size, 0, (opts.headerHeight or 42) / size)
+    end
     function frame:ApplySize(width, height)
         width, height = self:ClampSize(width, height)
         self.gwWidth, self.gwHeight = width, height
         self:SetSize(width, height)
-        local size = Theme.GRAIN_SIZE
-        pcall(self.grain.SetTexCoord, self.grain, 0, width / size, 0, height / size)
-        pcall(header.gwGrain.SetTexCoord, header.gwGrain, 0, width / size, 0, (opts.headerHeight or 42) / size)
+        regrain(width, height)
         return width, height
     end
-    function frame:Size() return self.gwWidth, self.gwHeight end
+    -- The window's size as the client has it now (during a drag too), else
+    -- the last size set.
+    function frame:Size()
+        return frameSize(self, self.gwWidth, self.gwHeight)
+    end
     local savedW, savedH
     if opts.getSize then savedW, savedH = opts.getSize() end
     frame:ApplySize(savedW or opts.width, savedH or opts.height)
 
+    -- Every size change, whatever caused it (the grip while it is dragged,
+    -- a clamp to a smaller screen, the client), is announced: the content
+    -- follows the window, not one particular event.
+    frame:SetScript("OnSizeChanged", function(self, width, height)
+        width, height = tonumber(width), tonumber(height)
+        if not width or not height then return end
+        self.gwWidth, self.gwHeight = width, height
+        regrain(width, height)
+        if opts.onSizeChanged then opts.onSizeChanged(width, height, self.gwSizing == true) end
+    end)
+
     if opts.resizable then
         pcall(frame.SetResizable, frame, true)
-        if not pcall(frame.SetResizeBounds, frame, minWidth, minHeight) then
-            pcall(frame.SetMinResize, frame, minWidth, minHeight)
+        -- Bounds: the minimum, and the screen as it is when a drag starts.
+        local function bounds()
+            local screenW, screenH = frameSize(Globals.UIParent, 0, 0)
+            local maxW = (screenW and screenW > 0) and math.max(minWidth, screenW - 20) or nil
+            local maxH = (screenH and screenH > 0) and math.max(minHeight, screenH - 20) or nil
+            if not pcall(frame.SetResizeBounds, frame, minWidth, minHeight, maxW, maxH) then
+                pcall(frame.SetMinResize, frame, minWidth, minHeight)
+                if maxW and maxH then pcall(frame.SetMaxResize, frame, maxW, maxH) end
+            end
+        end
+        bounds()
+        -- The end of a resize: clamp, save the size and where the window
+        -- now is, announce it.
+        local function finish(width, height)
+            width, height = frame:ApplySize(width, height)
+            if opts.saveSize then opts.saveSize(width, height) end
+            if opts.savePosition then
+                local ok, point, _, relativePoint, x, y = pcall(frame.GetPoint, frame, 1)
+                if ok and type(point) == "string" then opts.savePosition(point, relativePoint, x, y) end
+            end
+            if opts.onResized then opts.onResized(width, height) end
+            return width, height
+        end
+        function frame:FinishSizing()
+            if not self.gwSizing then return false end
+            self.gwSizing = false
+            pcall(self.StopMovingOrSizing, self)
+            finish(self:Size())
+            return true
         end
         local grip = create("Button", frame)
         grip:SetSize(16, 16)
@@ -576,32 +621,34 @@ function UI.Window(opts)
         pcall(grip.SetHighlightTexture, grip, SIZE_GRIP .. "-Highlight")
         pcall(grip.SetPushedTexture, grip, SIZE_GRIP .. "-Down")
         grip:SetScript("OnMouseDown", function()
+            bounds()
             frame.gwSizing = true
             pcall(frame.StartSizing, frame, "BOTTOMRIGHT")
         end)
-        grip:SetScript("OnMouseUp", function()
-            if not frame.gwSizing then return end
-            frame.gwSizing = nil
-            pcall(frame.StopMovingOrSizing, frame)
-            local width, height = frame:ApplySize(frameSize(frame, frame.gwWidth, frame.gwHeight))
-            if opts.saveSize then opts.saveSize(width, height) end
-            -- Sizing may re-anchor the window: keep where it now is.
-            if opts.savePosition then
-                local ok, point, _, relativePoint, x, y = pcall(frame.GetPoint, frame, 1)
-                if ok and type(point) == "string" then opts.savePosition(point, relativePoint, x, y) end
-            end
-            if opts.onResized then opts.onResized(width, height) end
-        end)
+        grip:SetScript("OnMouseUp", function() frame:FinishSizing() end)
+        -- A release the grip never heard (the window hid mid-drag) still ends it.
+        frame:HookScript("OnHide", function() frame:FinishSizing() end)
         grip:SetScript("OnEnter", function(self) UI.ShowTooltip(self, "Resize", { "Drag to resize the window. Its size is remembered." }) end)
         grip:SetScript("OnLeave", UI.HideTooltip)
         frame.sizeGrip = grip
+        frame.gwSizing = false
         -- Sets and saves a size (Settings' reset, tests).
         function frame:Resize(width, height)
-            width, height = self:ApplySize(width, height)
-            if opts.saveSize then opts.saveSize(width, height) end
-            if opts.onResized then opts.onResized(width, height) end
-            return width, height
+            return finish(width, height)
         end
+        -- The screen changed (UI scale, resolution): the window is clamped
+        -- to it again and laid out; the saved size is kept for a larger screen.
+        local screen = create("Frame", frame)
+        pcall(screen.RegisterEvent, screen, "UI_SCALE_CHANGED")
+        pcall(screen.RegisterEvent, screen, "DISPLAY_SIZE_CHANGED")
+        screen:SetScript("OnEvent", function()
+            bounds()
+            local wantW, wantH = savedW, savedH
+            if opts.getSize then wantW, wantH = opts.getSize() end
+            local width, height = frame:ApplySize(wantW or opts.width, wantH or opts.height)
+            if opts.onResized then opts.onResized(width, height) end
+        end)
+        frame.screenEvents = screen
     end
 
     if opts.name and type(Globals.UISpecialFrames) == "table" then

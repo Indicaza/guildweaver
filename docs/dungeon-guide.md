@@ -113,11 +113,33 @@ opened) and the dashboard's size.
 ## How it behaves
 
 The window opens at 1050 x 700 and can be resized from the grip in its
-bottom-right corner (never below 740 x 500, never beyond the screen). The
-size is saved with the dashboard's preferences and restored after `/reload`;
-Settings -> **Reset window** restores the default size and position. Every
-dashboard view lays itself out for the size once the drag ends (in combat:
-when combat ends).
+bottom-right corner, never below 740 x 500 (a 531 x 417 content area, what
+every dashboard view is built for) and never beyond the screen. The size and
+position are saved with the dashboard's preferences and restored after
+`/reload`; Settings -> **Reset window** restores the default size and
+position. A UI scale or resolution change clamps the window to the new
+screen and restores the chosen size when there is room again.
+
+The content follows the window's real size: every size change (the grip
+while it is dragged, a clamp, the client) schedules one light layout at most
+every 50 ms, which only moves and sizes existing frames (cards, rows, the
+map, the loot grid, quests, the breadcrumb) and reads no data; the end of
+the drag repaints. In combat the layout waits until combat ends. Layout:
+
+- **Cards:** as many columns of at least 240 px as fit the grid, one to
+  three (531 px: two, 841 px: three).
+- **Search and filters:** one row when they fit; else the switches wrap
+  under the search; else each on its own row.
+- **Overview:** the list (200 to 280 px) beside the map; under 520 px the
+  list sits over the map. The map takes the room left, its 1002 x 668
+  aspect kept, and its pins move with it.
+- **A boss:** the loot grid has as many 40 px columns as the panel holds.
+- **Breadcrumb:** the deepest crumbs shorten (and truncate) to leave room
+  for the arrows and **Current dungeon**; the run strip's name gives way to
+  its buttons; the dungeon's subtitle stops before the Reference indicator.
+
+(One column and the stacked overview only occur below the window's minimum
+content width; they are tested directly, not reachable by resizing.)
 
 One navigation, three levels: **Dungeons** -> a dungeon -> a boss or
 creature. **Back** and **Forward** (the arrows top left) walk the journal's
@@ -235,7 +257,12 @@ and the breadcrumb, a boss's page and its loot grid, tooltips at the cursor
 and shift comparison, spell icons through `C_Spell` and the empty-slot
 fallback, trash and other loot, quests (completed only when the client says
 so), runs and the run strip, the HUD's faces and deep links, resizing
-(minimum, screen, combat, every view), and that nothing from `references/`
+(test/dungeon_journal_layout_spec.lua: the minimum, medium and large
+windows, three/two/one columns, wrapping controls, the compact overview,
+the map's aspect, loot grid reflow, the breadcrumb's bounds, repeated
+shrinking and growing without new frames, a drag that reads no data,
+combat, /reload, UI scale and screen changes, every other view), and that
+nothing from `references/`
 (or a glyph the game font lacks) is shipped. `test/ui_overhaul_spec.lua`
 covers the dashboard: one Dungeons entry, the strip's timer and End run,
 and the window size kept across `/reload`.
@@ -253,9 +280,14 @@ first; no Lua error should appear at any step.
    stretched badly); Naxxramas plain. Your-level dungeons first. Scroll with
    the wheel and the bar.
 3. Search "dead", filter Raids, then 50+, then All: the grid follows.
-4. Drag the bottom-right grip smaller and larger: the cards go 2 / 3
-   columns, nothing overlaps or clips; `/reload` keeps the size; Settings ->
-   Reset window restores it. Try a smaller UI scale.
+4. Drag the bottom-right grip smaller and larger, slowly and quickly, on
+   the cards, a dungeon's map, VanCleef's page and Quests: the content
+   follows during the drag; cards go 3 -> 2 columns; the search, filters and
+   Journal / My Runs stay inside the window; the map keeps its shape and
+   its pins stay on the bosses; the loot grid rewraps. Try to drag past the
+   screen edge and below the minimum. `/reload` keeps size and position;
+   Settings -> Reset window restores them. Change the UI scale (Interface
+   options) with the window open: it stays on screen and lays out again.
 5. Click Deadmines: a large map of the mine with Rhahk'Zor and Sneed
    pinned; the arrow turns to Ironclad Cove with five pins, each on its
    boss's spot. Ragefire Chasm: map, no pins.
