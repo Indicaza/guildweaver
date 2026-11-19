@@ -229,6 +229,14 @@ function DungeonMap.New(parent, width, opts)
                 texture:SetSize(place.w, place.h)
             end
         end
+        -- The pins shown keep their place on the picture.
+        for _, button in ipairs(self.pins) do
+            local place = rawget(button, "gwPin")
+            if place then
+                button:ClearAllPoints()
+                button:SetPoint("CENTER", self.canvas, "TOPLEFT", place.x * newWidth, -place.y * newHeight)
+            end
+        end
         return true
     end
 

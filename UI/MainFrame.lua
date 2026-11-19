@@ -662,6 +662,7 @@ function Main:Build()
         getSize = function() return Prefs.WindowSize() end,
         saveSize = function(width, height) Prefs.SetWindowSize(width, height) end,
         onResized = function() Main:Relayout() end,
+        onSizeChanged = function() Main:ScheduleRelayout() end,
     })
     self.frame = frame
     local version = UI.Text(frame.header, "small", "textFaint")
@@ -737,9 +738,11 @@ local function layoutView(key, view)
     end
 end
 
--- After a resize: every built view lays itself out again (the shown one now,
--- the others when next shown). Never in combat: then once combat ends.
-function Main:Relayout()
+-- After a size change: every built view lays itself out again (the shown
+-- one now, the others when next shown). Never in combat: then once combat
+-- ends. light (while the grip is dragged): only sizes and positions (a
+-- view's reflow), no repaint; the end of the drag repaints.
+function Main:Relayout(light)
     if not self.frame then return end
     if inCombat() then
         self.relayoutPending = true
@@ -749,11 +752,35 @@ function Main:Relayout()
     local _, height = self.frame:Size()
     pcall(self.sidebarGrain.SetTexCoord, self.sidebarGrain, 0, SIDEBAR / Theme.GRAIN_SIZE, 0, (height - HEADER) / Theme.GRAIN_SIZE)
     local width, contentHeight = self:ContentSize()
+    local size = width .. "x" .. contentHeight
     for key, view in pairs(self.views or {}) do
-        if view:IsShown() or key == self.current then layoutView(key, view) end
-        if view.gwLaidOut ~= width .. "x" .. contentHeight then view.gwLayoutStale = true end
+        if view:IsShown() or key == self.current then
+            if not light or view.gwLaidOut ~= size then
+                layoutView(key, view)
+                local spec = Views[key]
+                if light and spec and spec.reflow then spec.reflow(view) end
+            end
+        end
+        if view.gwLaidOut ~= size then view.gwLayoutStale = true end
     end
-    self:RefreshView()
+    if not light then self:RefreshView() end
+end
+
+-- The window's size changed (a drag in progress, a clamp, the client): one
+-- light layout soon, however many changes come in meanwhile.
+function Main:ScheduleRelayout()
+    if not self.frame or not self.views then return end
+    local timer = Globals.C_Timer
+    if not (timer and type(timer.After) == "function") then
+        self:Relayout(true)
+        return
+    end
+    if self.relayoutScheduled then return end
+    self.relayoutScheduled = true
+    timer.After(0.05, function()
+        Main.relayoutScheduled = nil
+        Main:Relayout(true)
+    end)
 end
 
 -- Sets the window's size (as a drag of the grip would).

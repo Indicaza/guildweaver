@@ -64,7 +64,12 @@ local FACTIONS = { A = "Alliance", H = "Horde", B = "Both factions" }
 local CELL, CELL_GAP = 40, 4
 local REWARD_CELL = 28
 local BOSS_ROW, SMALL_ROW, ABILITY_ROW, RUN_ROW = 42, 30, 26, 42
-local CARD_HEIGHT, CARD_GAP = 100, 10
+local CARD_HEIGHT, CARD_GAP, CARD_MIN = 100, 10, 240
+-- The browser's controls: search (140 to 240 wide), the level band and the
+-- type switch, and the gap between them.
+local SEARCH_MIN, SEARCH_MAX, BAND_WIDTH, KIND_WIDTH, CONTROL_GAP, CONTROL_ROW = 140, 240, 4 * 48, 3 * 60, 8, 30
+-- Below this content width the overview stacks the list over the map.
+local COMPACT_WIDTH = 520
 local TOP_BAR, STRIP = 28, 38
 local MECHANIC_ICONS = 3
 
@@ -536,18 +541,19 @@ local function pool(make)
     return list
 end
 
--- Lays item rows out as a grid in `parent` from (x, y), `width` wide.
--- Returns the grid's height and its number of columns.
-local function layoutGrid(cells, rows, parent, x, y, width, size, gap)
+-- Lays item rows out as a grid in `parent` from (x, y), `width` wide: as
+-- many columns of `size` as fit. Returns the grid's height and its number
+-- of columns. placeOnly: the cells already show these rows; only move them.
+local function layoutGrid(cells, rows, parent, x, y, width, size, gap, placeOnly)
     local columns = math.max(1, math.floor((width + gap) / (size + gap)))
     for index, row in ipairs(rows) do
         local cell = cells:Get(index)
         local column, line = (index - 1) % columns, math.floor((index - 1) / columns)
         cell:ClearAllPoints()
         cell:SetPoint("TOPLEFT", parent, "TOPLEFT", x + column * (size + gap), y - line * (size + gap))
-        cell:Fill(row)
+        if not placeOnly then cell:Fill(row) end
     end
-    cells:Trim(#rows)
+    if not placeOnly then cells:Trim(#rows) end
     if #rows == 0 then return 0, columns end
     return math.ceil(#rows / columns) * (size + gap) - gap, columns
 end
@@ -734,6 +740,8 @@ local function buildTopBar(view)
         crumb:SetHeight(20)
         crumb.label = noWrap(UI.Text(crumb, "label", "gold"))
         crumb.label:SetPoint("LEFT", crumb, "LEFT", 0, 0)
+        -- Bounded by the crumb: a crumb shortened to fit truncates its name.
+        crumb.label:SetPoint("RIGHT", crumb, "RIGHT", 0, 0)
         crumb.arrow = crumb:CreateTexture(nil, "ARTWORK")
         crumb.arrow:SetSize(12, 12)
         pcall(crumb.arrow.SetTexture, crumb.arrow, ICONS.crumb)
@@ -1019,14 +1027,84 @@ local function buildBrowser(view)
     view.browser = page
 end
 
+-- Card columns for a grid `width` wide: as many cards of at least
+-- CARD_MIN as fit, one to three.
+function GuideUI.Columns(width)
+    return math.max(1, math.min(3, math.floor(((tonumber(width) or 0) + CARD_GAP) / (CARD_MIN + CARD_GAP))))
+end
+
+-- The browser's controls in rows that fit `width`: one row when they all
+-- fit, else the search alone and the two switches together, else each on
+-- its own row. Returns the rows' widths (for the tests) and where the grid
+-- starts.
+local function layoutControls(page, width)
+    local rows
+    local search
+    if width >= SEARCH_MIN + BAND_WIDTH + KIND_WIDTH + CONTROL_GAP * 2 then
+        search = math.min(SEARCH_MAX, width - BAND_WIDTH - KIND_WIDTH - CONTROL_GAP * 2)
+        page.band:ClearAllPoints()
+        page.band:SetPoint("LEFT", page.search, "RIGHT", CONTROL_GAP, 0)
+        page.kind:ClearAllPoints()
+        page.kind:SetPoint("LEFT", page.band, "RIGHT", CONTROL_GAP, 0)
+        rows = { search + CONTROL_GAP + BAND_WIDTH + CONTROL_GAP + KIND_WIDTH }
+    elseif width >= BAND_WIDTH + KIND_WIDTH + CONTROL_GAP then
+        search = math.min(SEARCH_MAX, width)
+        page.band:ClearAllPoints()
+        page.band:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -32 - CONTROL_ROW)
+        page.kind:ClearAllPoints()
+        page.kind:SetPoint("LEFT", page.band, "RIGHT", CONTROL_GAP, 0)
+        rows = { search, BAND_WIDTH + CONTROL_GAP + KIND_WIDTH }
+    else
+        search = math.min(SEARCH_MAX, width)
+        page.band:ClearAllPoints()
+        page.band:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -32 - CONTROL_ROW)
+        page.kind:ClearAllPoints()
+        page.kind:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -32 - CONTROL_ROW * 2)
+        rows = { search, BAND_WIDTH, KIND_WIDTH }
+    end
+    page.search:SetWidth(search)
+    page.gwControlRows = rows
+    return 32 + #rows * CONTROL_ROW + 2
+end
+
 local function layoutBrowser(view, width, height)
     local page = view.browser
     page.gwWidth, page.gwHeight = width, height
-    local searchWidth = math.max(140, math.min(240, width - 8 - 192 - 8 - 180))
-    page.search:SetWidth(searchWidth)
-    page.grid:SetViewSize(width, height - 64)
+    local gridTop = layoutControls(page, width)
+    page.gwGridTop = gridTop
+    page.grid:ClearAllPoints()
+    page.grid:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -gridTop)
+    page.grid:SetViewSize(width, height - gridTop)
     page.runs:SetViewSize(width, height - 34)
-    page.columns = width >= 760 and 3 or 2
+    page.empty:SetWidth(math.min(400, width))
+    page.columns = GuideUI.Columns(page.grid:ContentWidth())
+end
+
+-- Places the cards shown in the grid's columns (no data is read).
+local function placeCards(page, count)
+    local columns = page.columns or 1
+    local width = page.grid:ContentWidth()
+    local cardWidth = math.floor((width - CARD_GAP * (columns - 1)) / columns)
+    page.gwCardWidth = cardWidth
+    for index = 1, count do
+        local card = page.cards:Get(index)
+        card:SetWidth(cardWidth)
+        card:ClearAllPoints()
+        local column, line = (index - 1) % columns, math.floor((index - 1) / columns)
+        card:SetPoint("TOPLEFT", page.grid.child, "TOPLEFT", column * (cardWidth + CARD_GAP), -line * (CARD_HEIGHT + CARD_GAP))
+    end
+    page.grid:SetContentHeight(count > 0 and (math.ceil(count / columns) * (CARD_HEIGHT + CARD_GAP) - CARD_GAP) or 0)
+end
+
+local function placeRunRows(area, rows, count)
+    local width = area:ContentWidth()
+    for index = 1, count do
+        local row = rows:Get(index)
+        row:SetWidth(width)
+        row:ClearAllPoints()
+        row:SetPoint("TOPLEFT", area.child, "TOPLEFT", 0, -(index - 1) * RUN_ROW)
+    end
+    area:SetContentHeight(count * RUN_ROW)
 end
 
 local function refreshBrowser(view, current)
@@ -1038,17 +1116,12 @@ local function refreshBrowser(view, current)
     UI.SetShown(page.runs, not journal)
     if not journal then
         page.cards:Trim(0)
+        view.gwShownCards = 0
         local runs = Guide.Runs(nil)
-        local width = page.runs:ContentWidth()
-        for index, entry in ipairs(runs) do
-            local row = page.runRows:Get(index)
-            row:SetWidth(width)
-            row:ClearAllPoints()
-            row:SetPoint("TOPLEFT", page.runs.child, "TOPLEFT", 0, -(index - 1) * RUN_ROW)
-            row:Fill(entry, true)
-        end
+        for index, entry in ipairs(runs) do page.runRows:Get(index):Fill(entry, true) end
         page.runRows:Trim(#runs)
-        page.runs:SetContentHeight(#runs * RUN_ROW)
+        page.gwRunCount = #runs
+        placeRunRows(page.runs, page.runRows, #runs)
         UI.SetText(page.empty, #runs == 0 and "No finished runs yet. Runs are recorded on their own when you enter a dungeon or raid." or "")
         page.empty:ClearAllPoints()
         page.empty:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -40)
@@ -1064,24 +1137,17 @@ local function refreshBrowser(view, current)
         local id = Guide.RunInstanceId(entry)
         if id then runs[id] = (runs[id] or 0) + 1 end
     end
-    local columns = page.columns or 2
-    local width = page.grid:ContentWidth()
-    local cardWidth = math.floor((width - CARD_GAP * (columns - 1)) / columns)
     for index, dungeon in ipairs(list) do
-        local card = page.cards:Get(index)
-        card:SetWidth(cardWidth)
-        card:ClearAllPoints()
-        local column, line = (index - 1) % columns, math.floor((index - 1) / columns)
-        card:SetPoint("TOPLEFT", page.grid.child, "TOPLEFT", column * (cardWidth + CARD_GAP), -line * (CARD_HEIGHT + CARD_GAP))
-        card:Fill(dungeon, { here = dungeon.id == here, selected = dungeon.id == selected and dungeon.id ~= here,
+        page.cards:Get(index):Fill(dungeon, { here = dungeon.id == here, selected = dungeon.id == selected and dungeon.id ~= here,
             wanted = Guide.DungeonWishlistCount(dungeon.id, wishes), runs = runs[dungeon.id] or 0 })
     end
     page.cards:Trim(#list)
     page.runRows:Trim(0)
-    page.grid:SetContentHeight(math.ceil(#list / columns) * (CARD_HEIGHT + CARD_GAP) - CARD_GAP)
+    page.gwRunCount = 0
+    placeCards(page, #list)
     UI.SetText(page.empty, #list == 0 and "No dungeon matches. Clear the search or choose All." or "")
     page.empty:ClearAllPoints()
-    page.empty:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -70)
+    page.empty:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -(page.gwGridTop or 64) - 6)
     UI.SetShown(page.empty, #list == 0)
     view.gwShownCards = #list
 end
@@ -1140,11 +1206,27 @@ local function questRow(parent)
         end
         if quest.pre and quest.pre[1] then table.insert(giver, "After " .. table.concat(quest.pre, ", ")) end
         UI.SetText(self.giver, #giver > 0 and table.concat(giver, SEP) or Theme.Colorize("No giver or objective in the atlas.", "textFaint"))
+        UI.SetText(self.objective, quest.obj or "")
+        local rewards = {}
+        for _, itemId in ipairs(quest.rew or {}) do
+            table.insert(rewards, { itemId = itemId, item = Guide.Item(itemId), quest = true, wanted = Guide.Wanted(itemId) })
+        end
+        for index, reward in ipairs(rewards) do self.rewards:Get(index):Fill(reward) end
+        self.rewards:Trim(#rewards)
+        self.gwRewards = rewards
+        UI.SetText(self.rewardLabel, quest.choice and "CHOOSE ONE" or "REWARDS")
+        self:Show()
+        return self:Layout(self.gwWidth or 300)
+    end
+    -- Places the quest's parts for a row `width` wide (the objective wraps,
+    -- rewards wrap onto more lines). Returns its height.
+    function row:Layout(width)
+        self.gwWidth = width
+        self:SetWidth(width)
+        local quest = self.gwData
         local y = -34
         if quest.obj then
-            local width = select(1, UI.FrameSize(self, 300, 60)) or 300
-            self.objective:SetWidth(math.max(100, width - 22))
-            UI.SetText(self.objective, quest.obj)
+            self.objective:SetWidth(math.max(60, width - 22))
             local ok, measured = pcall(self.objective.GetStringHeight, self.objective)
             measured = ok and tonumber(measured) or nil
             self.objective:Show()
@@ -1152,29 +1234,18 @@ local function questRow(parent)
         else
             self.objective:Hide()
         end
-        local rewards = {}
-        for _, itemId in ipairs(quest.rew or {}) do
-            table.insert(rewards, { itemId = itemId, item = Guide.Item(itemId), quest = true, wanted = Guide.Wanted(itemId) })
-        end
+        local rewards = self.gwRewards or {}
         if #rewards > 0 then
-            UI.SetText(self.rewardLabel, quest.choice and "CHOOSE ONE" or "REWARDS")
             self.rewardLabel:ClearAllPoints()
             self.rewardLabel:SetPoint("TOPLEFT", self, "TOPLEFT", 22, y - 9)
             self.rewardLabel:Show()
-            for index, reward in ipairs(rewards) do
-                local cell = self.rewards:Get(index)
-                cell:ClearAllPoints()
-                cell:SetPoint("TOPLEFT", self, "TOPLEFT", 108 + (index - 1) * (REWARD_CELL + 4), y)
-                cell:Fill(reward)
-            end
-            y = y - REWARD_CELL - 4
+            local height = layoutGrid(self.rewards, rewards, self, 108, y, math.max(REWARD_CELL, width - 108), REWARD_CELL, 4, true)
+            y = y - height - 4
         else
             self.rewardLabel:Hide()
         end
-        self.rewards:Trim(#rewards)
         local height = -y + 10
         self:SetHeight(height)
-        self:Show()
         return height
     end
     function row:Clear() self:Hide() end
@@ -1185,10 +1256,11 @@ local function buildDungeonPage(view)
     local page = UI.CreateFrame("Frame", view)
     page.title = noWrap(UI.Text(page, "pageTitle", "goldBright"))
     page.title:SetPoint("TOPLEFT", page, "TOPLEFT", 0, 0)
+    page.badge = sourceBadge(page)
+    page.badge:SetPoint("TOPRIGHT", page, "TOPRIGHT", 0, -25)
     page.sub = noWrap(UI.Text(page, "label", "textMuted"))
     page.sub:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -24)
-    page.badge = sourceBadge(page)
-    page.badge:SetPoint("LEFT", page.sub, "RIGHT", 10, 0)
+    page.sub:SetPoint("RIGHT", page.badge, "LEFT", -10, 0)
     page.tabs = UI.Segmented(page, TABS, function()
         local current = GuideUI.CurrentPage()
         return current and current.level == "dungeon" and current.tab or "overview"
@@ -1268,28 +1340,45 @@ local function buildDungeonPage(view)
     view.dungeon = page
 end
 
+-- Two columns (the list left, the map or a creature right) when both fit;
+-- below COMPACT_WIDTH the list sits over the map or creature instead.
 local function layoutDungeonPage(view, width, height)
     local page = view.dungeon
     local body = height - 52
-    local left = math.max(200, math.min(280, math.floor(width * 0.3)))
-    page.leftWidth = left
-    page.list:SetViewSize(left, body)
-    local rightWidth = width - left - 16
+    local compact = width < COMPACT_WIDTH
+    page.gwCompact = compact
+    local rightX, rightY, rightWidth, rightHeight
+    if compact then
+        local listHeight = math.max(120, math.floor(body * 0.38))
+        page.leftWidth = width
+        page.list:SetViewSize(width, listHeight)
+        rightX, rightY, rightWidth, rightHeight = 0, 52 + listHeight + 10, width, body - listHeight - 10
+    else
+        local left = math.max(200, math.min(280, math.floor(width * 0.3)))
+        page.leftWidth = left
+        page.list:SetViewSize(left, body)
+        rightX, rightY, rightWidth, rightHeight = left + 16, 52, width - left - 16, body
+    end
     page.right:ClearAllPoints()
-    page.right:SetPoint("TOPLEFT", page, "TOPLEFT", left + 16, -52)
-    page.right:SetSize(rightWidth, body)
-    -- The map as large as fits, under it the floor bar and one line.
-    local mapWidth = math.floor(math.min(rightWidth - 2, (body - 2 - 26 - 24) * DungeonMap.ASPECT))
+    page.right:SetPoint("TOPLEFT", page, "TOPLEFT", rightX, -rightY)
+    page.right:SetSize(rightWidth, rightHeight)
+    -- The map as large as fits (its aspect kept), under it the floor bar
+    -- and one line.
+    local mapWidth = math.floor(math.min(rightWidth - 2, (rightHeight - 2 - 26 - 24) * DungeonMap.ASPECT))
     page.map:SetMapWidth(mapWidth)
     page.foot:ClearAllPoints()
     page.foot:SetPoint("TOPLEFT", page.map, "BOTTOMLEFT", 0, -32)
     page.foot:SetWidth(rightWidth)
-    page.detail:SetViewSize(rightWidth, body)
+    page.detail:SetViewSize(rightWidth, rightHeight)
     page.quests:SetViewSize(width, body)
     page.runs:SetViewSize(width, body)
-    page.rightWidth = rightWidth
-    for _, row in ipairs(page.bossRows.items) do row:SetWidth(page.list:ContentWidth()) end
-    for _, row in ipairs(page.smallRows.items) do row:SetWidth(page.list:ContentWidth()) end
+    page.empty:SetWidth(math.min(400, width))
+    page.rightWidth, page.rightHeight = rightWidth, rightHeight
+    local listWidth = page.list:ContentWidth()
+    for _, row in ipairs(page.bossRows.items) do row:SetWidth(listWidth) end
+    for _, row in ipairs(page.smallRows.items) do row:SetWidth(listWidth) end
+    for _, header in ipairs(page.headers) do header:SetWidth(listWidth) end
+    page.listEmpty:SetWidth(listWidth)
 end
 
 -- The left list: section headers and rows, top to bottom.
@@ -1434,45 +1523,63 @@ local function refreshCreature(page, instanceId, dungeon, current, states)
     page.detailBadge:Set("Classic reference", { verified and "Some entries are verified on Forever." or (Guide.REFERENCE_NOTE .. "."),
         "Mechanics, levels and loot come from Classic reference data and may differ on WoW Forever.", "Drop chances are not shown." })
 
-    local y = 92
-    local count = 0
-    local top = kind ~= "other" and Guide.TopMechanics(creature, nil, 4) or {}
-    local function place(ability)
-        count = count + 1
-        local frame = page.abilityRows:Get(count)
-        frame:SetWidth(width)
-        frame:ClearAllPoints()
-        frame:SetPoint("TOPLEFT", d, "TOPLEFT", 0, -y)
-        frame:Fill(ability)
-        y = y + ABILITY_ROW + 2
+    -- Fill: key mechanics first, then the rest, then the loot.
+    local count, topCount = 0, 0
+    if kind ~= "other" then
+        local shown = {}
+        for _, ability in ipairs(Guide.TopMechanics(creature, nil, 4)) do
+            shown[ability] = true
+            count = count + 1
+            page.abilityRows:Get(count):Fill(ability)
+        end
+        topCount = count
+        for _, ability in ipairs(abilities) do
+            if not shown[ability] then
+                count = count + 1
+                page.abilityRows:Get(count):Fill(ability)
+            end
+        end
     end
-    local function header(widget, title)
-        widget:SetTitle(title)
+    page.abilityRows:Trim(count)
+    page.keyHeader:SetTitle("Key mechanics")
+    page.moreHeader:SetTitle("Other abilities")
+    page.lootHeader:SetTitle("Loot" .. (#loot > 0 and (" (" .. #loot .. ")") or ""))
+    UI.SetText(page.abilityEmpty, #abilities == 0 and "No abilities in the atlas for this creature. That does not mean it has none." or "")
+    UI.SetText(page.lootEmpty, #loot == 0 and ("No loot listed for " .. tostring(creature and creature.name or "this") .. ".") or "")
+    layoutGrid(page.cells, loot, d, 0, 0, width, CELL, CELL_GAP)
+    page.gwCreature = { kind = kind, top = topCount, count = count, loot = loot, noAbilities = #abilities == 0 }
+    page.gwLootCount, page.gwAbilityCount = #loot, count
+    GuideUI.LayoutCreature(page)
+end
+
+-- Places a creature page's parts for the panel's width: headers, ability
+-- rows, the loot grid (as many columns as fit) and the empty notes. Reads
+-- no data; a resize repeats it.
+function GuideUI.LayoutCreature(page)
+    local shown = rawget(page, "gwCreature")
+    if not shown then return end
+    local d = page.detail.child
+    local width = page.detail:ContentWidth()
+    local y = 92
+    local function place(widget, height)
         widget:SetWidth(width)
         widget:ClearAllPoints()
         widget:SetPoint("TOPLEFT", d, "TOPLEFT", 0, -y)
         widget:Show()
-        y = y + 26
+        y = y + height
     end
-    if kind ~= "other" then
-        header(page.keyHeader, "Key mechanics")
-        local shown = {}
-        for _, ability in ipairs(top) do
-            shown[ability] = true
-            place(ability)
+    if shown.kind ~= "other" then
+        place(page.keyHeader, 26)
+        for index = 1, shown.top do place(page.abilityRows:Get(index), ABILITY_ROW + 2) end
+        if shown.noAbilities then
+            place(page.abilityEmpty, 22)
+        else
+            page.abilityEmpty:Hide()
         end
-        UI.SetText(page.abilityEmpty, #abilities == 0 and "No abilities in the atlas for this creature. That does not mean it has none." or "")
-        page.abilityEmpty:SetWidth(width)
-        page.abilityEmpty:ClearAllPoints()
-        page.abilityEmpty:SetPoint("TOPLEFT", d, "TOPLEFT", 0, -y)
-        UI.SetShown(page.abilityEmpty, #abilities == 0)
-        if #abilities == 0 then y = y + 22 end
         y = y + 8
-        local rest = {}
-        for _, ability in ipairs(abilities) do if not shown[ability] then table.insert(rest, ability) end end
-        if #rest > 0 then
-            header(page.moreHeader, "Other abilities")
-            for _, ability in ipairs(rest) do place(ability) end
+        if shown.count > shown.top then
+            place(page.moreHeader, 26)
+            for index = shown.top + 1, shown.count do place(page.abilityRows:Get(index), ABILITY_ROW + 2) end
             y = y + 8
         else
             page.moreHeader:Hide()
@@ -1482,50 +1589,51 @@ local function refreshCreature(page, instanceId, dungeon, current, states)
         page.moreHeader:Hide()
         page.abilityEmpty:Hide()
     end
-    page.abilityRows:Trim(count)
-
-    header(page.lootHeader, "Loot" .. (#loot > 0 and (" (" .. #loot .. ")") or ""))
-    local gridHeight, columns = layoutGrid(page.cells, loot, d, 0, -y, width, CELL, CELL_GAP)
-    page.gwGridColumns = columns
+    place(page.lootHeader, 26)
+    local gridHeight, columns = layoutGrid(page.cells, shown.loot, d, 0, -y, width, CELL, CELL_GAP, true)
+    page.gwGridColumns, page.gwGridWidth = columns, columns * (CELL + CELL_GAP) - CELL_GAP
     y = y + gridHeight
-    UI.SetText(page.lootEmpty, #loot == 0 and ("No loot listed for " .. tostring(creature and creature.name or "this") .. ".") or "")
-    page.lootEmpty:SetWidth(width)
-    page.lootEmpty:ClearAllPoints()
-    page.lootEmpty:SetPoint("TOPLEFT", d, "TOPLEFT", 0, -y)
-    UI.SetShown(page.lootEmpty, #loot == 0)
-    if #loot == 0 then y = y + 22 end
+    if #shown.loot == 0 then
+        place(page.lootEmpty, 22)
+    else
+        page.lootEmpty:Hide()
+    end
     page.detail:SetContentHeight(y + 8)
-    page.gwLootCount, page.gwAbilityCount = #loot, count
+end
+
+-- Stacks the quest rows shown for the area's width.
+local function layoutQuests(page)
+    local width = page.quests:ContentWidth()
+    local y = 0
+    for index = 1, rawget(page, "gwQuestCount") or 0 do
+        local row = page.questRows:Get(index)
+        row:ClearAllPoints()
+        row:SetPoint("TOPLEFT", page.quests.child, "TOPLEFT", 0, -y)
+        y = y + row:Layout(width) + 10
+    end
+    page.quests:SetContentHeight(y)
 end
 
 local function refreshQuests(page, instanceId)
     local quests = Guide.Quests(instanceId)
     local width = page.quests:ContentWidth()
-    local y = 0
     for index, quest in ipairs(quests) do
         local row = page.questRows:Get(index)
-        row:SetWidth(width)
-        row:ClearAllPoints()
-        row:SetPoint("TOPLEFT", page.quests.child, "TOPLEFT", 0, -y)
-        y = y + row:Fill(quest) + 10
+        row.gwWidth = width
+        row:Fill(quest)
     end
     page.questRows:Trim(#quests)
-    page.quests:SetContentHeight(y)
+    page.gwQuestCount = #quests
+    layoutQuests(page)
     return #quests
 end
 
 local function refreshRuns(page, instanceId)
     local runs = Guide.Runs(instanceId)
-    local width = page.runs:ContentWidth()
-    for index, entry in ipairs(runs) do
-        local row = page.runRows:Get(index)
-        row:SetWidth(width)
-        row:ClearAllPoints()
-        row:SetPoint("TOPLEFT", page.runs.child, "TOPLEFT", 0, -(index - 1) * RUN_ROW)
-        row:Fill(entry, false)
-    end
+    for index, entry in ipairs(runs) do page.runRows:Get(index):Fill(entry, false) end
     page.runRows:Trim(#runs)
-    page.runs:SetContentHeight(#runs * RUN_ROW)
+    page.gwRunCount = #runs
+    placeRunRows(page.runs, page.runRows, #runs)
     return #runs
 end
 
@@ -1583,6 +1691,7 @@ local function refreshDungeonPage(view, current)
         if creature then
             refreshCreature(page, instanceId, dungeon, current, states)
         else
+            page.gwCreature = nil
             refreshMap(page, instanceId, dungeon, states)
         end
     elseif tab == "quests" then
@@ -1635,15 +1744,44 @@ local function refreshTopBar(view, current)
             crumb.gwPage = data[2]
             Theme.Tint(crumb.label, data[2] and "gold" or "goldBright")
             local width = tonumber(select(2, pcall(crumb.label.GetStringWidth, crumb.label))) or (#data[1] * 7)
-            crumb:SetWidth(math.max(20, width + 2))
+            crumb.gwNatural = math.max(20, width + 2)
             crumb:Show()
         else
-            crumb.gwPage = nil
+            crumb.gwPage, crumb.gwNatural = nil, nil
             crumb:Hide()
         end
     end
     local here = Guide.CurrentInstanceId()
-    UI.SetShown(bar.here, here ~= nil and current.id ~= here)
+    bar.gwHere = here ~= nil and current.id ~= here
+    UI.SetShown(bar.here, bar.gwHere)
+    GuideUI.FitCrumbs(view)
+end
+
+-- The breadcrumb in the room the top bar leaves (after the arrows, before
+-- "Current dungeon"): the deepest crumbs give way first, down to 40 px, and
+-- truncate their names.
+local ARROWS_WIDTH, CRUMB_GAP, HERE_WIDTH = 50, 22, 130
+function GuideUI.FitCrumbs(view)
+    local bar = view.topBar
+    local room = (view.gwWidth or 532) - ARROWS_WIDTH - (bar.gwHere and HERE_WIDTH or 0)
+    local widths, total = {}, 0
+    for index, crumb in ipairs(bar.crumbs) do
+        local natural = rawget(crumb, "gwNatural")
+        if natural then
+            widths[index] = natural
+            total = total + natural + (index > 1 and CRUMB_GAP or 0)
+        end
+    end
+    for index = #widths, 1, -1 do
+        if total <= room then break end
+        local cut = math.min(total - room, widths[index] - 40)
+        if cut > 0 then
+            widths[index] = widths[index] - cut
+            total = total - cut
+        end
+    end
+    for index, width in ipairs(widths) do bar.crumbs[index]:SetWidth(width) end
+    bar.gwCrumbsWidth, bar.gwCrumbRoom = total, room
 end
 
 -- Build, layout, refresh ------------------------------------------------------------------------
@@ -1675,10 +1813,26 @@ local function layoutView(view, width, height)
         page:SetPoint("TOPLEFT", view, "TOPLEFT", 0, -top)
         page:SetSize(width, height - top)
     end
+    -- The strip's run name gives way to its buttons.
+    view.strip.name:SetWidth(math.max(60, math.min(160, width - 430)))
     layoutBrowser(view, width, height - top)
     layoutDungeonPage(view, width, height - top)
 end
 GuideUI.Layout = layoutView
+
+-- After a layout, puts what the page already shows in its new places:
+-- cards, rows, the loot grid, quests, the breadcrumb. No data is read, no
+-- frame is filled again; the drag of the grip runs this.
+local function reflowView(view)
+    GuideUI.FitCrumbs(view)
+    local browser, page = view.browser, view.dungeon
+    placeCards(browser, rawget(view, "gwShownCards") or 0)
+    placeRunRows(browser.runs, browser.runRows, rawget(browser, "gwRunCount") or 0)
+    if rawget(page, "gwCreature") then GuideUI.LayoutCreature(page) end
+    layoutQuests(page)
+    placeRunRows(page.runs, page.runRows, rawget(page, "gwRunCount") or 0)
+end
+GuideUI.Reflow = reflowView
 
 local function refreshView(view)
     local started = GW.Perf and GW.Perf.Begin and GW.Perf.Begin()
@@ -1721,7 +1875,7 @@ end
 
 -- Registers the journal as the dashboard's Dungeons view.
 if main and main.Views then
-    main.Views.dungeon = { build = buildView, refresh = refreshView, layout = layoutView, onNav = onNav, tick = tick }
+    main.Views.dungeon = { build = buildView, refresh = refreshView, layout = layoutView, reflow = reflowView, onNav = onNav, tick = tick }
 end
 
 -- Public -----------------------------------------------------------------------------------
