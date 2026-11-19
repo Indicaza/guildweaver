@@ -43,18 +43,23 @@ inputs. The output is deterministic: the same inputs and commit give the same
 bytes. The exporter refuses an atlas with problems (an ability claiming
 Forever verification from a Classic source, an encounter in two dungeons, a
 loot item without facts, a spell classified two ways, coordinates out of
-range) and a file over 480 KB.
+range), a creature with more drops than `MAX_LOOT` (64; it fails rather than
+cutting the list) and a file over 480 KB.
 
-The packaged file's header names the Holdfast commit: currently `c608ea3`
-(Indicaza/holdfast#300, dungeon wings; the atlas and loot data are unchanged
-since `46af21b`). Regenerate it whenever the
+The packaged file's header names the Holdfast commit: currently `74f0d9b`
+(Indicaza/holdfast#301: reference loot from AzerothCore and DungeonPlanner,
+chests, named shared drops; the wings of #300). Regenerate it whenever the
 atlas or the reference loot changes on Holdfast `main`.
 
 What is exported (only what the game shows): names, level bands, zone and
 entrance, encounter and NPC IDs, up to 12 abilities per creature (name,
 category, priority, interruptible, the client's short summary), dangerous
 trash, rares, up to 40 quests per dungeon (objective, giver and where,
-rewards, prerequisites, faction), boss/rare/other loot item IDs, item facts,
+rewards, prerequisites, faction; a known limit: the zone quests of
+Zul'Gurub, Ahn'Qiraj Temple and Naxxramas run past 40), boss/rare/other loot
+item IDs with who lists each (`ls`: 1 AzerothCore, 2 DungeonPlanner, 3 both;
+shown in the item tooltip), a boss's own chest (`chest`), shared drops named
+by their creatures or chest, item facts,
 the spawn layout's 1% grid cells (kept in the file; the journal no longer
 draws them), and provenance lines. Left out: art URLs,
 provenance URLs, area triggers, long descriptions, drop chances (none exist).
@@ -102,10 +107,10 @@ with two display IDs.
 
 | | |
 | --- | --- |
-| Atlas file | 437 KB (budget 480 KB, enforced by the exporter and the spec) |
-| Atlas, Lua memory at login | about 840 KB (compiled data; no tables are built) |
+| Atlas file | 459 KB (470,353 bytes; budget 480 KB, enforced by the exporter and the spec) |
+| Atlas, Lua memory at login | about 920 KB (compiled data; no tables are built) |
 | Art file | 23 KB; about 89 KB of compiled Lua at login, tables built on first use |
-| Atlas coverage | 26 dungeons and raids, 240 bosses (203 with reference loot, 176 with abilities), 173 dangerous trash, 27 rares, 275 quests, 786 spells (173 interruptible casts), 2,027 items |
+| Atlas coverage | 26 dungeons and raids, 240 bosses (230 with reference loot, 176 with abilities), 173 dangerous trash, 27 rares (all with loot), 275 quests, 786 spells (173 interruptible casts), 2,204 items, 205 shared drops (every one named) |
 
 At login only small indexes exist. A dungeon's detail, the spell, item and
 art tables are built the first time the guide (or entering that dungeon)
