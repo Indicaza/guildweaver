@@ -835,7 +835,7 @@ local function refreshStrip(view)
     strip.dot:SetStatus(displayState == "running" and "good" or (displayState == "paused" and "warn" or "textFaint"))
     local parts = { hud.StateText(run) }
     if run.bossesTotal or (run.bossesDefeated or 0) > 0 then
-        table.insert(parts, "Bosses " .. (run.bossesDefeated or 0) .. (run.bossesTotal and ("/" .. run.bossesTotal) or ""))
+        table.insert(parts, "Bosses " .. hud.BossCountText(run))
     end
     if (run.deaths or 0) > 0 then table.insert(parts, run.deaths .. (run.deaths == 1 and " death" or " deaths")) end
     if not run.inside then table.insert(parts, "outside") end
@@ -953,10 +953,8 @@ local function runRow(parent, onClick)
         UI.SetText(self.title, showName and tostring(entry.name or "Instance") or (date or "Run"))
         local meta = {}
         if showName and date then table.insert(meta, date) end
-        if entry.bossesTotal then
-            table.insert(meta, "Bosses " .. (entry.bossesDefeated or 0) .. "/" .. entry.bossesTotal)
-        elseif (entry.bossesDefeated or 0) > 0 then
-            table.insert(meta, entry.bossesDefeated .. " bosses")
+        if entry.bossesTotal or (entry.bossesDefeated or 0) > 0 then
+            table.insert(meta, "Bosses " .. GW.DungeonHud.BossCountText(entry))
         end
         if (entry.deaths or 0) > 0 then table.insert(meta, entry.deaths .. (entry.deaths == 1 and " death" or " deaths")) end
         UI.SetText(self.when, table.concat(meta, SEP))

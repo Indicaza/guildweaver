@@ -141,7 +141,7 @@ do
     truthy(hud.visible, "HUD shows inside")
     equal(#hud.lines, 2, "compact with nothing to show yet: title and clock line only")
     contains(hud.lines, "Scarlet Monastery (Normal)")
-    contains(hud.lines, "Bosses 0/3")
+    contains(hud.lines, "Bosses 0 of 3 listed") -- no known roster: the lockout count is no total
     for _, line in ipairs(hud.lines) do
         truthy(not line:find("PB: none yet", 1, true), "no PB placeholder")
         truthy(not line:find("-/h", 1, true), "no XP/hour placeholder")
@@ -154,7 +154,7 @@ do
 
     hud:SetMode("minimized")
     equal(#hud.lines, 1, "minimized is one line")
-    contains(hud.lines, "Bosses 0/3")
+    contains(hud.lines, "Bosses 0 of 3 listed") -- no known roster: the lockout count is no total
     truthy(not hud.clockRow.shown and not hud.header.shown, "minimized: just the clock")
     hud:CycleMode()
     equal(hud.Mode(), "compact")

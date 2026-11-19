@@ -190,6 +190,10 @@ do
     truthy(run.splits[1].elapsedAt > 200, "and keeps the elapsed time apart")
     kill(env2, 1, "Houndmaster Loksey")
     kill(env2, 2, "Arcanist Doan")
+    -- The lockout counts the last kill a moment later; the addon reads it
+    -- again and stops the clock at the kill, not at the re-read.
+    equal(sessions.Current().timer.state, "running", "a kill count alone is not a clear")
+    wait(env2, 2)
     run = sessions.Current()
     equal(run.timer.state, "stopped", "the clear stops the timer")
     equal(run.timer.stoppedBy, "complete")
@@ -263,7 +267,7 @@ do
     equal(progress.total, 3, "three bosses")
     equal(progress.defeated, 0)
     truthy(hud.bossRow.shown, "the boss frames show")
-    equal(hud.shown.bossLabel, "0/3", "with the count")
+    equal(hud.shown.bossLabel, "0 of 3 listed", "with the count, not a fraction to finish")
 
     -- A boss fight: its circle takes the boss frame's face and health.
     env:dispatch("ENCOUNTER_START", 1, "Houndmaster Loksey", 1, 5)
@@ -363,7 +367,7 @@ do
     hud:SetMode("minimized")
     truthy(not hud.bossRow.shown, "no boss frames when minimized")
     equal(#hud.lines, 1)
-    contains(hud.lines, "Bosses 0/3")
+    contains(hud.lines, "Bosses 0 of 3 listed") -- no known roster: the lockout count is no total
     truthy(not hud.bossRow.shown, "no row when minimized")
     hud:SetMode("compact")
 end
@@ -432,6 +436,7 @@ do
         pull(env)
         wait(env, seconds)
         env:dispatch("BOSS_KILL", 1, "Loksey")
+        world.lock.complete = 1 -- the lockout counts it: a verified clear
         zone(env, nil)
     end
     clear(300, 150)

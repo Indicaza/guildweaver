@@ -12,7 +12,12 @@ local _, GW = ...
 -- invented: an ID, NPC ID or creature display ID that has not been seen is
 -- left out, and a boss whose role is not established is "unknown".
 --
--- Completion uses only the final boss:
+-- A definition marked complete = true lists every encounter of the dungeon
+-- with a known role; only then is its mandatory roster (required and final
+-- bosses) known, and killing all of it is a full clear. Optional encounters
+-- (rares, side bosses) never block a clear and never count toward one.
+--
+-- The final boss alone also completes a run:
 --   * an "observed" final boss matched by encounter ID proves the clear
 --     (completion basis "final_boss", eligible for personal bests);
 --   * a "documented" final boss matched by name only completes the run but
@@ -102,4 +107,38 @@ end
 function Bosses.DisplayId(instanceId, encounterId, name)
     local entry = Bosses.Match(instanceId, encounterId, name)
     return entry and tonumber(entry.displayId) or nil
+end
+
+local ROLES = { required = true, final = true, optional = true }
+
+-- The role of an encounter: "required", "final", "optional", or "unknown"
+-- (not in the registry, or listed without an established role). Also the
+-- registry entry and how it matched ("id" or "name"). An unknown encounter
+-- is never assumed to be required or optional.
+function Bosses.Role(instanceId, encounterId, name)
+    local entry, how = Bosses.Match(instanceId, encounterId, name)
+    if not entry or not ROLES[entry.role] then
+        return "unknown", entry, how
+    end
+    return entry.role, entry, how
+end
+
+-- The bosses a dungeon clear needs (roles "required" and "final"), only when
+-- the definition is marked complete: every encounter of the dungeon listed,
+-- none of unknown role. Nil otherwise: the mandatory roster is not known.
+function Bosses.MandatoryRoster(instanceId)
+    local definition = Bosses.For(instanceId)
+    if not definition or definition.complete ~= true then
+        return nil
+    end
+    local roster = {}
+    for _, entry in ipairs(definition.encounters) do
+        if not ROLES[entry.role] then
+            return nil
+        end
+        if entry.role ~= "optional" then
+            table.insert(roster, entry)
+        end
+    end
+    return #roster > 0 and roster or nil
 end

@@ -376,13 +376,18 @@ local function startTimer(run, source)
     return true
 end
 
--- source: manual, complete.
-local function stopTimer(run, source)
+-- source: manual, complete. at: the timer's time to stop at, when the stop
+-- is recognised after the moment it belongs to (never later than now).
+local function stopTimer(run, source, at)
     local timer = timerOf(run)
     if timer.state ~= "running" then
         return false
     end
     accountTime(run)
+    at = tonumber(at)
+    if at and at >= 0 and at < (timer.seconds or 0) then
+        timer.seconds = at
+    end
     timer.state = "stopped"
     timer.stoppedBy = source
     addEvent(run, "timer_stop", { source = source, seconds = timerOffset(run) })
@@ -450,29 +455,137 @@ local function refreshBosses(run)
     end
 end
 
--- Every encounter the lockout lists is down: a full clear. The lockout's
--- total counts optional encounters too, so this alone misses clears that
--- skipped one (see the final-boss rule below).
-local function bossesDone(run)
-    local bosses = run.bosses
-    if not bosses.total then
-        return false
+-- The boss kills of this run that the client reported (never manual
+-- splits), one per boss: checkpoints are already de-duplicated.
+local function bossKills(run)
+    local list = {}
+    for _, entry in ipairs(checkpoints(run)) do
+        if entry.kind == "boss" and entry.source ~= "manual" then
+            table.insert(list, entry)
+        end
     end
-    local complete = math.max(bosses.lockComplete or 0, bosses.defeated or 0)
-    return complete >= bosses.total
+    return list
 end
 
--- The dungeon is done: a full clear, or its final boss (from the boss
--- registry, Data/DungeonBosses.lua) reported dead by the client.
+-- The lockout's own encounter list says every encounter is down: by its own
+-- killed flag, or a kill of the same name in this run (the lockout can lag
+-- behind the kill). Nil when the client gave no list.
+local function lockListDown(run)
+    local list = run.bosses.lockEncounters
+    if type(list) ~= "table" or #list == 0 then
+        return nil
+    end
+    local killedNames = run.bosses.killedNames or {}
+    for _, entry in ipairs(list) do
+        if not entry.killed and not (entry.name and killedNames[string.lower(entry.name)]) then
+            return false
+        end
+    end
+    return true
+end
+
+-- Every encounter the lockout lists is down (a 100% clear), from the
+-- client's lockout only: its complete count, or its encounter list. The
+-- run's own kill count never proves it: a rare that is not on the lockout
+-- would stand in for a boss that is.
+local function bossesDone(run)
+    local bosses = run.bosses
+    if bosses.total and (bosses.lockComplete or 0) >= bosses.total then
+        return true
+    end
+    return bosses.total ~= nil and lockListDown(run) == true
+end
+
+-- What this run's kills mean, by the role the boss registry
+-- (Data/DungeonBosses.lua) gives each boss:
+--   required, final, optional, unknown   kills of each role
+--   mandatoryTotal, mandatoryDefeated    the bosses a clear needs and how
+--                                        many are down; nil when the
+--                                        mandatory roster is not known
+--   mandatoryVerified                    every mandatory kill matched an
+--                                        observed boss by encounter ID
+--   coverage   "roster"  a complete registry roster
+--              "lockout" the lockout's list, every name's role known
+--              "unknown" neither: progress is a count, not a fraction
+-- Optional kills are bonus kills: they never count toward the mandatory
+-- bosses, and unknown kills are neither.
+local function bossLedger(run)
+    local registry = GW.DungeonBosses
+    local instanceId = run.instance and run.instance.instanceId
+    local ledger = { required = 0, final = 0, optional = 0, unknown = 0, kills = {}, coverage = "unknown" }
+    local byId, byName = {}, {}
+    for _, entry in ipairs(bossKills(run)) do
+        local role, match, how = "unknown", nil, nil
+        if registry and registry.Role then
+            role, match, how = registry.Role(instanceId, entry.encounterId, entry.name)
+        end
+        ledger[role] = ledger[role] + 1
+        local kill = { encounterId = entry.encounterId, name = entry.name, role = role, how = how,
+            confidence = match and match.confidence or nil }
+        table.insert(ledger.kills, kill)
+        if entry.encounterId then byId[entry.encounterId] = kill end
+        if entry.name then byName[string.lower(entry.name)] = kill end
+    end
+    local roster = registry and registry.MandatoryRoster and registry.MandatoryRoster(instanceId)
+    if roster then
+        local down, verified = 0, true
+        for _, boss in ipairs(roster) do
+            local kill = (boss.encounterId and byId[boss.encounterId]) or (boss.name and byName[string.lower(boss.name)])
+            if kill then
+                down = down + 1
+                if not (boss.encounterId and kill.encounterId == boss.encounterId and boss.confidence == "observed") then
+                    verified = false
+                end
+            end
+        end
+        ledger.coverage, ledger.mandatoryTotal, ledger.mandatoryDefeated, ledger.mandatoryVerified = "roster", #roster, down, verified
+        return ledger
+    end
+    -- The lockout's own list, when the registry knows the role of every
+    -- encounter on it. Kills come from the lockout's flags (or a kill of
+    -- the same name here); a role only from the registry.
+    local list = run.bosses.lockEncounters
+    if registry and registry.Role and type(list) == "table" and #list > 0 then
+        local total, down, verified = 0, 0, true
+        for _, boss in ipairs(list) do
+            local role, match = registry.Role(instanceId, nil, boss.name)
+            if role == "unknown" then
+                return ledger
+            end
+            if match.confidence ~= "observed" then verified = false end
+            if role ~= "optional" then
+                total = total + 1
+                if boss.killed or (boss.name and byName[string.lower(boss.name)]) then down = down + 1 end
+            end
+        end
+        if total > 0 then
+            ledger.coverage, ledger.mandatoryTotal, ledger.mandatoryDefeated, ledger.mandatoryVerified = "lockout", total, down, verified
+        end
+    end
+    return ledger
+end
+Sessions.BossLedger = bossLedger
+
+-- Every mandatory boss is down: a full clear. Only with a known mandatory
+-- roster; an optional kill never stands in for a mandatory boss.
+local function mandatoryDone(ledger)
+    return ledger.mandatoryTotal ~= nil and ledger.mandatoryTotal > 0 and ledger.mandatoryDefeated >= ledger.mandatoryTotal
+end
+
+-- The dungeon is done: every lockout encounter down, every mandatory boss
+-- down, or its final boss (from the boss registry) reported dead by the
+-- client.
 local function isComplete(run)
-    return bossesDone(run) or run.bosses.finalBoss ~= nil
+    return bossesDone(run) or mandatoryDone(bossLedger(run)) or run.bosses.finalBoss ~= nil
 end
 Sessions.IsComplete = isComplete
 
--- What proved a clear, strongest first: the lockout's own count, every
--- encounter's kill event, the final boss by encounter ID ("final_boss"),
--- the final boss by name only ("final_boss_unconfirmed"), the player's
--- word ("manual"), or nothing.
+-- What proved a clear, strongest first: the lockout's own count
+-- ("lockout"), the lockout's encounter list ("encounters"), every mandatory
+-- boss ("required_bosses", or "required_bosses_unconfirmed" when a boss
+-- matched by name or is not yet observed), the final boss by encounter ID
+-- ("final_boss"), the final boss by name only ("final_boss_unconfirmed"),
+-- the player's word ("manual"), or nothing.
 local function completionBasis(run, status, endReason)
     if status ~= "completed" then
         return "none"
@@ -481,8 +594,12 @@ local function completionBasis(run, status, endReason)
     if bosses.total and (bosses.lockComplete or 0) >= bosses.total then
         return "lockout"
     end
-    if bosses.total and (bosses.defeated or 0) >= bosses.total then
+    if bosses.total and lockListDown(run) then
         return "encounters"
+    end
+    local ledger = bossLedger(run)
+    if mandatoryDone(ledger) then
+        return ledger.mandatoryVerified and "required_bosses" or "required_bosses_unconfirmed"
     end
     if bosses.finalBoss and bosses.finalBoss.proof then
         return bosses.finalBoss.proof
@@ -577,12 +694,20 @@ local function payloadFor(run, status, endReason)
     end
     local bosses = {}
     local points = {}
+    local ledger = bossLedger(run)
+    local roles = {}
+    for _, kill in ipairs(ledger.kills) do
+        if kill.encounterId then roles["id:" .. kill.encounterId] = kill.role end
+        if kill.name then roles["name:" .. string.lower(kill.name)] = kill.role end
+    end
     for index, entry in ipairs(checkpoints(run)) do
         local copy = {}
         for key, value in pairs(entry) do copy[key] = value end
         points[index] = copy
         if entry.kind == "boss" then
-            table.insert(bosses, { encounterId = entry.encounterId, name = entry.name, at = entry.at, source = entry.source })
+            local role = entry.source ~= "manual" and ((entry.encounterId and roles["id:" .. entry.encounterId])
+                or (entry.name and roles["name:" .. string.lower(entry.name)])) or nil
+            table.insert(bosses, { encounterId = entry.encounterId, name = entry.name, at = entry.at, source = entry.source, role = role })
         end
     end
     return {
@@ -624,6 +749,14 @@ local function payloadFor(run, status, endReason)
             encounterEvents = run.encounterEvents == true,
             duplicatesIgnored = run.bosses.duplicatesIgnored or 0,
             list = bosses,
+            -- Kills by role, and the mandatory bosses when they are known
+            -- (coverage "unknown": they are not, and total is the lockout's
+            -- count, optional encounters included).
+            mandatoryDefeated = ledger.mandatoryDefeated,
+            mandatoryTotal = ledger.mandatoryTotal,
+            optionalDefeated = ledger.optional,
+            unknownDefeated = ledger.unknown,
+            coverage = ledger.coverage,
         },
         loot = { observations = run.lootObservations },
         timeline = timeline,
@@ -727,19 +860,28 @@ local function repeatsEarlierRun(run, keys)
 end
 
 -- What a run achieved, from boss evidence only:
---   hundred_clear  every encounter the lockout lists is down (its total
---                  counts optional encounters too)
---   full_clear     every standard boss of a registry roster marked complete
---                  is down (optional ones excluded)
+--   hundred_clear  every encounter the lockout lists is down (by the
+--                  lockout itself; its total counts optional encounters)
+--   full_clear     every mandatory boss is down (a complete registry
+--                  roster, or a lockout list whose roles are all known);
+--                  optional bosses skipped
 --   dungeon_clear  the final boss is down (or the player finished it)
 --   boss_farm      a repeat of a recent run of the same bosses
 --   partial        anything else, including no boss at all
--- verification: verified (lockout, kill events, an observed final boss),
--- unconfirmed (final boss by name only), manual (the player's word), none.
+-- verification: verified (lockout, observed bosses by encounter ID),
+-- unconfirmed (a boss matched by name only or not yet observed), manual
+-- (the player's word), unknown (a partial run whose kills match the
+-- lockout's count but nothing proves the clear), none.
+-- Also the kills by role: mandatoryDefeated/mandatoryTotal (nil when the
+-- mandatory roster is unknown: coverage "unknown"), optionalDefeated (bonus
+-- kills), unknownDefeated. bossesDefeated/bossesTotal stay the raw counts.
 classify = function(run, status, endReason)
     local bosses = run.bosses
     local defeated = bosses.defeated or 0
-    local base = { bossesDefeated = defeated, bossesTotal = bosses.total }
+    local ledger = bossLedger(run)
+    local base = { bossesDefeated = defeated, bossesTotal = bosses.total, mandatoryDefeated = ledger.mandatoryDefeated,
+        mandatoryTotal = ledger.mandatoryTotal, optionalDefeated = ledger.optional, unknownDefeated = ledger.unknown,
+        coverage = ledger.coverage, finalDefeated = bosses.finalBoss ~= nil }
     local function result(kind, verification)
         base.kind, base.verification = kind, verification
         return base
@@ -747,16 +889,8 @@ classify = function(run, status, endReason)
     if bossesDone(run) then
         return result("hundred_clear", "verified")
     end
-    local registry = GW.DungeonBosses
-    local definition = registry and registry.For and registry.For(run.instance and run.instance.instanceId)
-    if definition and definition.complete then
-        local killed = {}
-        for _, value in ipairs(killKeys(run)) do killed[value] = true end
-        local all = true
-        for _, entry in ipairs(definition.encounters) do
-            if entry.role ~= "optional" and not (entry.encounterId and killed["id:" .. entry.encounterId]) then all = false end
-        end
-        if all then return result("full_clear", "verified") end
+    if mandatoryDone(ledger) then
+        return result("full_clear", ledger.mandatoryVerified and "verified" or "unconfirmed")
     end
     if bosses.finalBoss then
         return result("dungeon_clear", bosses.finalBoss.proof == "final_boss" and "verified" or "unconfirmed")
@@ -766,6 +900,12 @@ classify = function(run, status, endReason)
     end
     if status ~= "open" and repeatsEarlierRun(run, killKeys(run)) then
         return result("boss_farm", "verified")
+    end
+    -- As many kills as the lockout lists encounters, but nothing proves a
+    -- clear (no lockout confirmation, no known roster or final boss): the
+    -- completion is unknown, never assumed either way.
+    if ledger.coverage == "unknown" and bosses.total and (ledger.required + ledger.final + ledger.unknown) >= bosses.total then
+        return result("partial", "unknown")
     end
     return result("partial", "none")
 end
@@ -778,10 +918,11 @@ local function pbKind(kind)
 end
 
 local function notePb(dungeon, run, status, endReason)
-    -- A full clear, or an observed final boss matched by encounter ID. Never
-    -- a name-only match, a hand-finished or a partial run.
+    -- A 100% clear, every mandatory boss verified, or an observed final
+    -- boss matched by encounter ID. Never a name-only match, a hand-finished
+    -- or a partial run.
     local basis = completionBasis(run, status, endReason)
-    if basis ~= "lockout" and basis ~= "encounters" and basis ~= "final_boss" then
+    if basis ~= "lockout" and basis ~= "encounters" and basis ~= "required_bosses" and basis ~= "final_boss" then
         return false
     end
     local key = instanceKey(run.instance)
@@ -813,6 +954,7 @@ end
 local function remember(dungeon, run, status, endReason)
     notePb(dungeon, run, status, endReason)
     local history = dungeon.history
+    local classification = classify(run, status, endReason)
     table.insert(history, 1, {
         runId = run.runId,
         characterId = run.characterId,
@@ -829,8 +971,13 @@ local function remember(dungeon, run, status, endReason)
         bossesTotal = run.bosses.total,
         instanceKey = instanceKey(run.instance),
         completionBasis = completionBasis(run, status, endReason),
-        classification = classify(run, status, endReason).kind,
-        verification = classify(run, status, endReason).verification,
+        classification = classification.kind,
+        verification = classification.verification,
+        -- Added later: older entries have none of these.
+        mandatoryDefeated = classification.mandatoryDefeated,
+        mandatoryTotal = classification.mandatoryTotal,
+        optionalDefeated = classification.optionalDefeated,
+        coverage = classification.coverage,
         killKeys = killKeys(run),
     })
     while #history > MAX_HISTORY do
@@ -891,7 +1038,8 @@ local function statusWhenLeft(run)
 end
 
 local function completeReason(run)
-    return bossesDone(run) and "all_bosses_defeated" or "final_boss_defeated"
+    if bossesDone(run) then return "all_bosses_defeated" end
+    return mandatoryDone(bossLedger(run)) and "required_bosses_defeated" or "final_boss_defeated"
 end
 
 local function boundActive(dungeon)
@@ -957,6 +1105,49 @@ local function scheduleSweep()
     end)
 end
 
+-- The run is done: a "complete" event once, and the clock stops; the run
+-- stays open for loot until the player leaves.
+local function markComplete(run)
+    if run.completeMarked or not isComplete(run) then
+        return false
+    end
+    run.completeMarked = true
+    local reason
+    if bossesDone(run) then
+        reason = "all_bosses"
+    elseif mandatoryDone(bossLedger(run)) then
+        reason = "required_bosses"
+    else
+        reason = run.bosses.finalBoss and run.bosses.finalBoss.proof or "final_boss"
+    end
+    addEvent(run, "complete", { reason = reason })
+    -- The clock stops at the last boss, even when the lockout confirmed the
+    -- clear a moment later.
+    local kills = bossKills(run)
+    local last = kills[#kills]
+    stopTimer(run, "complete", last and last.timerAt)
+    return true
+end
+
+-- The lockout updates a moment after the kill: read it again then (a
+-- clear it proves, or a full clear becoming a 100% clear).
+local LOCK_REREAD_SECONDS = 2
+local function rereadLockout(run)
+    local timer = Globals.C_Timer
+    if not timer or type(timer.After) ~= "function" then
+        return
+    end
+    local runId = run.runId
+    timer.After(LOCK_REREAD_SECONDS, function()
+        local current = currentRun()
+        if current and current.runId == runId and current.inside and not current.suspended then
+            refreshBosses(current)
+            markComplete(current)
+            refreshUi()
+        end
+    end)
+end
+
 local function leave(run)
     if not run.inside then
         -- Already outside (after a /reload or login): end it once the
@@ -970,6 +1161,8 @@ local function leave(run)
         return
     end
     accountTime(run)
+    refreshBosses(run)
+    markComplete(run)
     run.inside = false
     run.leftAt = serverNow()
     run.leftDurationSeconds = run.durationSeconds
@@ -1113,13 +1306,8 @@ local function recordKill(run, id, name, source)
             bosses.finalBoss = { encounterId = id, name = name, proof = proof, confidence = entry.confidence, at = now, source = source }
         end
     end
-    if isComplete(run) and not run.completeMarked then
-        run.completeMarked = true
-        addEvent(run, "complete", { reason = bossesDone(run) and "all_bosses" or bosses.finalBoss.proof })
-        -- The dungeon is done: the clock stops; the run stays open for loot
-        -- until the player leaves.
-        stopTimer(run, "complete")
-    end
+    markComplete(run)
+    rereadLockout(run)
     local objectives = GW.DungeonObjectives
     if objectives and objectives.NoteBossKill and name then
         pcall(objectives.NoteBossKill, run.characterId, name, run.instance and run.instance.name)
@@ -1476,13 +1664,24 @@ function Sessions.Diagnostics()
     else
         add("Final boss: not recognised" .. (definition and " yet." or " (no definition)."))
     end
-    if isComplete(run) then
-        add("Status: complete (" .. (bossesDone(run) and "every lockout encounter down" or "final boss") .. "); the run ends when you leave.")
-    elseif bosses.total then
-        add(string.format("Status: not complete: %d of %d lockout encounters down and no known final boss killed.",
-            math.max(bosses.defeated or 0, bosses.lockComplete or 0), bosses.total))
+    local ledger = bossLedger(run)
+    add(string.format("Kills by role: %d required, %d final, %d optional, %d unknown.", ledger.required, ledger.final,
+        ledger.optional, ledger.unknown))
+    if ledger.mandatoryTotal then
+        add(string.format("Mandatory bosses (%s): %d of %d down%s.", ledger.coverage == "roster" and "complete registry roster" or "lockout list",
+            ledger.mandatoryDefeated, ledger.mandatoryTotal, ledger.mandatoryVerified and "" or ", not all verified by encounter ID"))
     else
-        add("Status: not complete: no lockout total and no known final boss killed.")
+        add("Mandatory bosses: not known for this dungeon; kills are counted, not compared with a total.")
+    end
+    if isComplete(run) then
+        local why = bossesDone(run) and "every lockout encounter down"
+            or (mandatoryDone(ledger) and "every mandatory boss down" or "final boss")
+        add("Status: complete (" .. why .. "); the run ends when you leave.")
+    elseif bosses.total then
+        add(string.format("Status: not complete: the lockout has %d of %d encounters down, and no known final boss or mandatory roster is complete.",
+            bosses.lockComplete or 0, bosses.total))
+    else
+        add("Status: not complete: no lockout total, and no known final boss or mandatory roster is complete.")
     end
     return lines
 end
