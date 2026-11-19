@@ -174,7 +174,7 @@ do
         end
         truthy(#dungeon.quests <= Export.MAX_QUESTS, "quests bounded")
     end
-    equal(dungeons, 26, "26 dungeons and raids")
+    equal(dungeons, 35, "35 dungeons and raids: 26 original, 9 WoW Forever")
 end
 
 -- The add-on in the fake client --------------------------------------------------------
@@ -182,7 +182,7 @@ end
 local world
 local DEADMINES = { name = "The Deadmines", type = "party", difficultyId = 1, difficultyName = "Normal", maxPlayers = 5, id = 36 }
 local WAILING = { name = "Wailing Caverns", type = "party", difficultyId = 1, difficultyName = "Normal", maxPlayers = 5, id = 43 }
-local UNKNOWN = { name = "Excavation Site: Wetlands", type = "party", difficultyId = 1, difficultyName = "Normal", maxPlayers = 5, id = 2998 }
+local UNKNOWN = { name = "Nameless Crypt", type = "party", difficultyId = 1, difficultyName = "Normal", maxPlayers = 5, id = 9002 }
 
 local function installWorld(env)
     local G = _G
@@ -253,8 +253,17 @@ do
     equal(byName and byName.name, "Mr. Smite", "names match without case or punctuation")
     equal(nameHow, "name")
     equal(guide.FindBoss(36, 999, "Cookie"), nil, "a different known encounter ID is not overridden by a name")
-    equal(guide.FindBoss(2998, 3480, "Saltspine"), nil, "a dungeon the atlas does not know has no guide")
-    equal(guide.Dungeon(2998), nil)
+    equal(guide.FindBoss(9002, 1, "Somebody"), nil, "a dungeon the atlas does not know has no guide")
+    equal(guide.Dungeon(9002), nil)
+    -- WoW Forever's own dungeons: the client's bosses, observed encounter IDs only.
+    equal(guide.InstanceFor(3480), 2998, "Saltspine's observed encounter -> Excavation Site: Wetlands")
+    local saltspine, _, saltHow = guide.FindBoss(2998, 3480, "Saltspine")
+    equal(saltspine and saltspine.name, "Saltspine")
+    equal(saltHow, "encounter")
+    truthy(guide.IsForever(2998))
+    falsy(guide.IsForever(36), "the Deadmines is an original dungeon")
+    equal(guide.SourceNote(2998), guide.FOREVER_NOTE)
+    equal(guide.SourceNote(36), guide.REFERENCE_NOTE)
     truthy(guide.IsBuilt(36), "built on first use")
     equal(guide.Dungeon(36), guide.Dungeon(36), "and cached")
 
@@ -367,7 +376,9 @@ do
     local guide = addon.DungeonGuide
     truthy(guide.Select(43))
     equal(guide.SelectedInstanceId(), 43)
-    falsy(guide.Select(2998), "a dungeon the atlas does not know cannot be picked")
+    falsy(guide.Select(9002), "a dungeon the atlas does not know cannot be picked")
+    truthy(guide.Select(3065), "a WoW Forever dungeon can be picked")
+    truthy(guide.Select(43))
     local saved = GuildweaverDB
     local env2, again = boot({ db = saved })
     equal(again.DungeonGuide.SelectedInstanceId(), 43, "the pick is kept across /reload")

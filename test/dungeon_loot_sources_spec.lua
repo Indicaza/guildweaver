@@ -90,7 +90,7 @@ do
     env:advance(3)
     local guide = addon.DungeonGuide
     local data = addon.DungeonAtlasData
-    equal(data.source.commit, "74f0d9b0b5ac3475bc7f9a71b5e4b7222cb2904a", "Holdfast main after #301")
+    equal(data.source.commit, "7e9ab4642e2096c4db7e99921c882ad4f1a5c93e", "Holdfast #303 (WoW Forever dungeons)")
 
     -- Lazy: nothing built at login.
     for id in pairs(guide.Index()) do falsy(guide.IsBuilt(id), "dungeon " .. id .. " is built only when asked") end

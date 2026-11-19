@@ -34,6 +34,7 @@ lua5.1 scripts/exportDungeonAtlas.lua \
   --atlas ../web/holdfast/backend/src/Atlas/data/atlas.json \
   --loot  ../web/holdfast/backend/src/Atlas/data/reference-loot.json \
   --wings ../web/holdfast/backend/src/Atlas/data/wing-manifest.json \
+  --quests ../web/holdfast/backend/src/Atlas/data/quest-catalog.json \
   --commit $(git -C ../web/holdfast rev-parse HEAD)
 cp ../web/holdfast/backend/src/Atlas/data/wing-manifest.json test/fixtures/wing-manifest.json
 ```
@@ -46,10 +47,54 @@ loot item without facts, a spell classified two ways, coordinates out of
 range), a creature with more drops than `MAX_LOOT` (64; it fails rather than
 cutting the list) and a file over 480 KB.
 
-The packaged file's header names the Holdfast commit: currently `74f0d9b`
-(Indicaza/holdfast#301: reference loot from AzerothCore and DungeonPlanner,
-chests, named shared drops; the wings of #300). Regenerate it whenever the
-atlas or the reference loot changes on Holdfast `main`.
+The packaged file's header names the Holdfast commit: currently `7e9ab46`
+(Indicaza/holdfast#303: the nine WoW Forever dungeons, on top of #301's
+reference loot and #300's wings). Regenerate it whenever the atlas, the
+reference loot or the quest catalog changes on Holdfast `main` (after #303
+merges, regenerate from `main` so the header names a `main` commit).
+
+The item table is packed: each item is a positional row whose repeated
+strings (slot, armour or weapon type, bind, set) are indexes into one list,
+and `A.items()` unpacks it into the same tables as before when the guide first
+asks. This keeps all 2,204 items and the nine new dungeons well under budget
+without dropping anything.
+
+### WoW Forever's own dungeons
+
+City of Dalaran (2959), The Drowned City (2970), Blackmaw Hold (2974), Alcaz
+Prison (2994), Excavation Site: Wetlands (2998), Ruins of Lordaeron (2999),
+Shaper's Terrace (3001), Krol'dok Stronghold (3039) and The Hall of Thanes
+(3065) come from Holdfast with `origin = "forever"`: IDs, level bands,
+entrances and the bosses' names from the Forever client's own tables
+(OpenMap). Per dungeon the file adds `origin`, `cov` (what is known:
+`enc` encounter IDs, `npc` NPC IDs, `maps`, `ab` abilities), `floors` (floor
+names), `qlist = false` when no quest list exists (Blackmaw Hold, Shaper's
+Terrace: unknown, not zero), and `unres`: drops a guide lists by item ID that
+have no item facts (WoW Forever's own items), on the boss or rare when its
+NPC ID matches, else on the dungeon. The same `unres` lists Forever's new
+drops in original dungeons. Quests come from Holdfast's quest catalog with
+`prek = false`: their chains are not known.
+
+Nothing is guessed: only the two observed encounter IDs (3480 Saltspine,
+3481 Shadetooth) are set, no abilities or maps are claimed, and the guide
+labels these pages "WoW Forever" instead of "Classic reference". A run in one
+is tracked like any instance: kills of encounters the boss registry does not
+know count as "unknown", never toward a clear; the client's lockout count is
+what completes it.
+
+### Instances the atlas does not know (`/gw dungeon catalog`)
+
+`Systems/DungeonCatalog.lua` keeps, in SavedVariables only
+(`dungeon.catalog`), up to 20 instances entered that the atlas does not know
+(client name, type, difficulty, size, lockout encounter count, visits) and,
+for the nine Forever dungeons, the client's name and lockout count. It writes
+when DungeonSessions reads the instance on entering the world or changing
+zone, never per frame or on the combat path. Nothing is published.
+`/gw dungeon catalog` prints the atlas's coverage, those facts (flagging a
+lockout count that differs from the atlas's boss count), the candidates and,
+out of combat only, LFG activities whose instance map the atlas lacks
+(`C_LFGList`, read defensively). A maintainer checks them and adds them to
+Holdfast by hand.
 
 What is exported (only what the game shows): names, level bands, zone and
 entrance, encounter and NPC IDs, up to 12 abilities per creature (name,
@@ -107,10 +152,10 @@ with two display IDs.
 
 | | |
 | --- | --- |
-| Atlas file | 459 KB (470,353 bytes; budget 480 KB, enforced by the exporter and the spec) |
-| Atlas, Lua memory at login | about 920 KB (compiled data; no tables are built) |
+| Atlas file | 404 KB (413,250 bytes; budget 480 KB, enforced by the exporter and the spec). Before packing the items, the same data was 479,123 bytes |
+| Atlas, Lua memory at login | about 940 KB (compiled data; no tables are built). The unpacked item table costs what it did before packing |
 | Art file | 23 KB; about 89 KB of compiled Lua at login, tables built on first use |
-| Atlas coverage | 26 dungeons and raids, 240 bosses (230 with reference loot, 176 with abilities), 173 dangerous trash, 27 rares (all with loot), 275 quests, 786 spells (173 interruptible casts), 2,204 items, 205 shared drops (every one named) |
+| Atlas coverage | 35 dungeons and raids (26 original, 9 WoW Forever), 298 bosses (WoW Forever: 58, 35 with NPC IDs, 2 with encounter IDs), 339 quests (64 in WoW Forever dungeons), 191 drops by item ID without facts (135 in WoW Forever dungeons). The original 26: 240 bosses (230 with reference loot, 176 with abilities), 173 dangerous trash, 27 rares (all with loot), 275 quests, 786 spells (173 interruptible casts), 2,204 items, 205 shared drops (every one named) |
 
 At login only small indexes exist. A dungeon's detail, the spell, item and
 art tables are built the first time the guide (or entering that dungeon)
@@ -275,9 +320,36 @@ nothing from `references/`
 covers the dashboard: one Dungeons entry, the strip's timer and End run,
 and the window size kept across `/reload`.
 
+`test/dungeon_forever_spec.lua` covers WoW Forever's own dungeons: the
+exporter's Forever fields (origin, coverage, floors, quests without known
+chains, `qlist = false`, drops by item ID on their boss or the dungeon), the
+packed item table unpacking to the same facts, the packaged nine (only
+observed encounter IDs, no Classic loot or abilities claimed), a run in one
+(unknown encounters never complete it; the lockout does), saved runs after
+`/reload`, and the catalog (candidates bounded, never on the combat path,
+never published; the report with and without an LFG list, not scanned in
+combat).
+
 The fake client proves behaviour, not looks: it draws nothing.
 
 ## In-game checklist (not yet done in the client)
+
+WoW Forever dungeons (each of 2959, 2970, 2974, 2994, 2998, 2999, 3001,
+3039, 3065):
+
+- Entering it opens its guide page ("WoW Forever" badge) and starts a run.
+- `/gw dungeon catalog`: the client's name matches the atlas's, and the
+  lockout's encounter count matches the atlas's boss count (a mismatch says
+  "counts differ").
+- `/gw dungeon bosses` after each kill: note each encounter ID and name, to
+  add to `Data/DungeonBosses.lua` (and Holdfast's `FOREVER_OBSERVED`), with its
+  role once the final boss is known.
+- Boss pages list "N drops listed without item details yet (item ...)"; a
+  boss name in the client's own words.
+- The run completes only when the lockout shows every encounter down.
+- Any instance entered that the atlas lacks shows as a candidate in
+  `/gw dungeon catalog`; LFG activities for unknown maps are listed there.
+
 
 Nothing below has been tried in the WoW client yet. `/console scriptErrors 1`
 first; no Lua error should appear at any step.

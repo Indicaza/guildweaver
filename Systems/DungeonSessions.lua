@@ -1381,6 +1381,13 @@ function Sessions.Evaluate(reason)
             startTimer(run, "combat")
         end
         noteWingFloor(run)
+        -- An instance the atlas does not know, or what the client says of a
+        -- WoW Forever dungeon: kept for maintainers (DungeonCatalog). Never
+        -- on the combat path.
+        local catalog = GW.DungeonCatalog
+        if reason ~= "combat" and catalog and catalog.Note then
+            pcall(catalog.Note, instance, run.bosses and run.bosses.total)
+        end
     elseif run then
         leave(run)
     end

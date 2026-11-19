@@ -23,6 +23,10 @@ local Guide = GW.DungeonGuide
 local Globals = _G or {}
 
 Guide.REFERENCE_NOTE = "Classic reference \194\183 unverified on Forever"
+-- WoW Forever's own dungeons (origin "forever" in the atlas): bosses, level
+-- band and entrance from the Forever client; abilities, maps and most item
+-- facts are not known yet, and nothing stands in for them.
+Guide.FOREVER_NOTE = "WoW Forever dungeon \194\183 from the game client"
 
 -- Short labels for ability categories. KICK only for a cast the client marks
 -- interruptible; an interrupt-category spell without that mark says CAST.
@@ -117,6 +121,23 @@ function Guide.Entry(id)
     entry.bosses, entry.rares = #(wing.npcs or {}), #(wing.rares or {})
     cache.entries[id] = entry
     return entry
+end
+
+-- A WoW Forever dungeon (or a wing of one)?
+function Guide.IsForever(id)
+    local entry = Guide.Entry(id)
+    return type(entry) == "table" and entry.origin == "forever"
+end
+
+-- Where a page's facts come from, in one short line.
+function Guide.SourceNote(id)
+    return Guide.IsForever(id) and Guide.FOREVER_NOTE or Guide.REFERENCE_NOTE
+end
+
+-- Drops a guide lists for a creature (or, given a dungeon, for no creature)
+-- by item ID that have no item facts yet: IDs only, never a guessed name.
+function Guide.UnresolvedLoot(holder)
+    return type(holder) == "table" and type(holder.unres) == "table" and holder.unres or {}
 end
 
 -- The wing a boss (by encounter or NPC ID) belongs to, or nil: unassigned,
