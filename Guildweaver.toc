@@ -63,6 +63,7 @@ Systems/LootRolls.lua
 Systems/LootJournal.lua
 Systems/Quests.lua
 Systems/DungeonGuide.lua
+Systems/DungeonCatalog.lua
 Telemetry/Compatibility.lua
 UI/Theme.lua
 UI/Widgets.lua

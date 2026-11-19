@@ -1204,6 +1204,8 @@ local function questRow(parent)
         if quest.lvl then table.insert(facts, "Level " .. quest.lvl) end
         if quest.min then table.insert(facts, "Requires " .. quest.min) end
         if quest.fac and FACTIONS[quest.fac] then table.insert(facts, FACTIONS[quest.fac]) end
+        -- No source records its chain: prerequisites unknown, not none.
+        if quest.prek == false then table.insert(facts, Theme.Colorize("Prerequisites not known", "textFaint")) end
         if done then table.insert(facts, Theme.Colorize("Completed", "good")) end
         UI.SetText(self.facts, table.concat(facts, SEP))
         local giver = {}
@@ -1529,8 +1531,12 @@ local function refreshCreature(page, instanceId, dungeon, current, states)
     end
     local verified = false
     for _, row in ipairs(abilities) do if Guide.IsVerified(row.spell) then verified = true end end
-    page.detailBadge:Set("Classic reference", { verified and "Some entries are verified on Forever." or (Guide.REFERENCE_NOTE .. "."),
-        "Mechanics, levels and loot come from Classic reference data and may differ on WoW Forever.", "Drop chances are not shown." })
+    if Guide.IsForever(instanceId) then
+        page.detailBadge:Set("WoW Forever", { "Name from the WoW Forever client.", "Abilities and item details are not known yet." })
+    else
+        page.detailBadge:Set("Classic reference", { verified and "Some entries are verified on Forever." or (Guide.REFERENCE_NOTE .. "."),
+            "Mechanics, levels and loot come from Classic reference data and may differ on WoW Forever.", "Drop chances are not shown." })
+    end
 
     -- Fill: key mechanics first, then the rest, then the loot.
     local count, topCount = 0, 0
@@ -1555,9 +1561,19 @@ local function refreshCreature(page, instanceId, dungeon, current, states)
     page.lootHeader:SetTitle("Loot" .. (#loot > 0 and (" (" .. #loot .. ")") or ""))
     UI.SetText(page.abilityEmpty, #abilities == 0 and "No abilities in the atlas for this creature. That does not mean it has none." or "")
     -- An empty list only says no reference source links an item to it.
-    UI.SetText(page.lootEmpty, #loot == 0 and ("No loot data for " .. tostring(creature and creature.name or "this") .. " yet. That does not mean it drops nothing.") or "")
+    -- Drops listed by item ID without item facts (WoW Forever's own items).
+    local unresolved = Guide.UnresolvedLoot(kind == "other" and dungeon or creature)
+    local lootEmpty = ""
+    if #unresolved > 0 then
+        lootEmpty = string.format("%d drop%s listed without item details yet (item %s).", #unresolved, #unresolved == 1 and " is" or "s are",
+            table.concat(unresolved, ", "))
+    elseif #loot == 0 then
+        lootEmpty = "No loot data for " .. tostring(creature and creature.name or "this") .. " yet. That does not mean it drops nothing."
+    end
+    UI.SetText(page.lootEmpty, lootEmpty)
     layoutGrid(page.cells, loot, d, 0, 0, width, CELL, CELL_GAP)
     page.gwCreature = { kind = kind, top = topCount, count = count, loot = loot, noAbilities = #abilities == 0 }
+    page.gwUnresolved = #unresolved > 0 or nil
     page.gwLootCount, page.gwAbilityCount = #loot, count
     GuideUI.LayoutCreature(page)
 end
@@ -1603,7 +1619,7 @@ function GuideUI.LayoutCreature(page)
     local gridHeight, columns = layoutGrid(page.cells, shown.loot, d, 0, -y, width, CELL, CELL_GAP, true)
     page.gwGridColumns, page.gwGridWidth = columns, columns * (CELL + CELL_GAP) - CELL_GAP
     y = y + gridHeight
-    if #shown.loot == 0 then
+    if #shown.loot == 0 or rawget(page, "gwUnresolved") then
         place(page.lootEmpty, 22)
     else
         page.lootEmpty:Hide()
@@ -1683,8 +1699,20 @@ local function refreshDungeonPage(view, current)
     local entry = Guide.Entry(instanceId) or {}
     local where = dungeon.entrance and ("Entrance: " .. tostring(entry.zone or dungeon.zone or "?") .. " " .. Guide.Coordinates(dungeon.entrance.x, dungeon.entrance.y))
         or ("Entrance not known" .. (dungeon.zone and (" (" .. dungeon.zone .. ")") or ""))
-    local lines = { where, Guide.REFERENCE_NOTE .. ": bosses, mechanics, loot and quests come from Classic reference data.",
-        "Maps, boss positions and faces are the client's own." }
+    local forever = Guide.IsForever(instanceId)
+    local lines = { where }
+    if forever then
+        table.insert(lines, "A WoW Forever dungeon: its bosses, level band and entrance come from the game client.")
+        table.insert(lines, "Abilities, maps and most item details are not known yet. Nothing stands in for them.")
+        if dungeon.floors and #dungeon.floors > 0 then table.insert(lines, "Floors: " .. table.concat(dungeon.floors, ", ") .. ".") end
+        if dungeon.qlist == false then table.insert(lines, "No quest list is known for this dungeon yet.") end
+        local unresolved = #Guide.UnresolvedLoot(dungeon)
+        for _, boss in ipairs(dungeon.bosses or {}) do unresolved = unresolved + #Guide.UnresolvedLoot(boss) end
+        if unresolved > 0 then table.insert(lines, unresolved .. " listed drops have no item details yet; they show by item ID.") end
+    else
+        table.insert(lines, Guide.REFERENCE_NOTE .. ": bosses, mechanics, loot and quests come from Classic reference data.")
+        table.insert(lines, "Maps, boss positions and faces are the client's own.")
+    end
     if dungeon.wingKey then
         -- What the wing owns, and what it only shares with its dungeon.
         table.insert(lines, "Wing bosses: Classic reference (DungeonPlanner, InstanceJournal), not confirmed on Forever.")
@@ -1697,7 +1725,7 @@ local function refreshDungeonPage(view, current)
         for _, key in ipairs(Guide.WingsOf(instanceId)) do table.insert(names, Guide.Entry(key).name) end
         table.insert(lines, "Played as wings: " .. table.concat(names, ", ") .. ". This page covers the whole dungeon.")
     end
-    page.badge:Set("Classic reference", lines)
+    page.badge:Set(forever and "WoW Forever" or "Classic reference", lines)
     page.badge:Show()
     page.empty:Hide()
 
@@ -1724,7 +1752,9 @@ local function refreshDungeonPage(view, current)
         end
     elseif tab == "quests" then
         local count = refreshQuests(page, instanceId)
-        UI.SetText(page.empty, count == 0 and "No quests for this dungeon in the atlas for your faction." or "")
+        local noList = count == 0 and dungeon and dungeon.qlist == false
+        UI.SetText(page.empty, noList and "No quest list is known for this dungeon yet. That does not mean it has none."
+            or (count == 0 and "No quests for this dungeon in the atlas for your faction." or ""))
         UI.SetShown(page.empty, count == 0)
     else
         local count = refreshRuns(page, instanceId)
@@ -1998,7 +2028,7 @@ function GuideUI.TooltipLines(instanceId, entry)
         end
     end
     if #lines == 0 then return nil end
-    table.insert(lines, Theme.Colorize(Guide.REFERENCE_NOTE .. ". Click for the journal.", "textFaint"))
+    table.insert(lines, Theme.Colorize(Guide.SourceNote(instanceId) .. ". Click for the journal.", "textFaint"))
     return lines
 end
 

@@ -1070,6 +1070,60 @@
       "dungeonKey": "naxxramas",
       "name": "Naxxramas",
       "wings": []
+    },
+    {
+      "instanceId": 2959,
+      "dungeonKey": "city-of-dalaran",
+      "name": "City of Dalaran",
+      "wings": []
+    },
+    {
+      "instanceId": 2970,
+      "dungeonKey": "the-drowned-city",
+      "name": "The Drowned City",
+      "wings": []
+    },
+    {
+      "instanceId": 2974,
+      "dungeonKey": "blackmaw-hold",
+      "name": "Blackmaw Hold",
+      "wings": []
+    },
+    {
+      "instanceId": 2994,
+      "dungeonKey": "alcaz-prison",
+      "name": "Alcaz Prison",
+      "wings": []
+    },
+    {
+      "instanceId": 2998,
+      "dungeonKey": "excavation-site-wetlands",
+      "name": "Excavation Site: Wetlands",
+      "wings": []
+    },
+    {
+      "instanceId": 2999,
+      "dungeonKey": "ruins-of-lordaeron",
+      "name": "Ruins of Lordaeron",
+      "wings": []
+    },
+    {
+      "instanceId": 3001,
+      "dungeonKey": "shapers-terrace",
+      "name": "Shaper's Terrace",
+      "wings": []
+    },
+    {
+      "instanceId": 3039,
+      "dungeonKey": "kroldok-stronghold",
+      "name": "Krol'dok Stronghold",
+      "wings": []
+    },
+    {
+      "instanceId": 3065,
+      "dungeonKey": "the-hall-of-thanes",
+      "name": "The Hall of Thanes",
+      "wings": []
     }
   ]
 }
