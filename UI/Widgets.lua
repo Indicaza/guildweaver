@@ -633,7 +633,7 @@ function UI.Window(opts)
         frame.sizeGrip = grip
         frame.gwSizing = false
         -- Sets and saves a size (Settings' reset, tests).
-        function frame:Resize(width, height)
+        function frame.Resize(_, width, height)
             return finish(width, height)
         end
         -- The screen changed (UI scale, resolution): the window is clamped
