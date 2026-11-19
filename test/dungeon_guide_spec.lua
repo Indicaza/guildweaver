@@ -419,9 +419,10 @@ do
     contains(map.bar.label.gwText, "1/2", "the floor bar names the floor")
     main:RefreshView()
     equal(#map.tiles, 12, "redrawing creates nothing new")
-    -- A dungeon without quests or runs: the empty states.
-    guideUI.Navigate(guideUI.Pages.dungeon(47, "quests"))
-    contains(page.empty.gwText, "No quests")
+    -- A dungeon without a quest list or runs: the empty states. No list is
+    -- not "no quests".
+    guideUI.Navigate(guideUI.Pages.dungeon(2974, "quests"))
+    contains(page.empty.gwText, "No quest list is known for this dungeon yet. That does not mean it has none.")
     guideUI.Navigate(guideUI.Pages.dungeon(47, "runs"))
     contains(page.empty.gwText, "No finished runs")
     -- Rares and dangerous trash in the list, each with its own page.

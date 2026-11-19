@@ -109,6 +109,126 @@ the spawn layout's 1% grid cells (kept in the file; the journal no longer
 draws them), and provenance lines. Left out: art URLs,
 provenance URLs, area triggers, long descriptions, drop chances (none exist).
 
+## Quest readiness (sprint step 4B)
+
+The Quests tab shows, for the character you are playing, where each of a
+dungeon's quests stands, and the overview line says whether you are ready.
+The rules are Holdfast's (`backend/src/Atlas/atlasReadiness.js`,
+`docs/dungeon-quest-readiness.md` there), carried over line for line in
+`Systems/DungeonReadiness.lua`:
+
+| Quest state | When |
+| --- | --- |
+| Completed | the client says it is completed (repeatable quests never stay completed) |
+| In quest log | it is in your quest log ("Ready to turn in" when its objectives are done) |
+| Pick up | you can take it now: eligible, prerequisites done, not taken |
+| Needs an earlier quest | a prerequisite is known not to be done |
+| Not for you | faction, race, class or level rules it out (only counted) |
+| Not known | a fact it needs was not read, or (WoW Forever) its chain is not known |
+
+Readiness is over the required (`dungeon`) quests that apply: **Quests
+ready** (every one completed or in the log), **Quests to pick up**,
+**Quests blocked**, **Quests not known**, or **No quest list known**.
+Optional, prerequisite and repeatable quests never change it. A character
+is never ready while a required quest's state is unknown, so a client that
+reads nothing is "not known", never "ready". A dungeon no source lists
+quests for (Blackmaw Hold, Shaper's Terrace, Zul'Gurub, Ahn'Qiraj Temple,
+Onyxia's Lair) says that no list is known, not that it has none.
+
+The Quests tab groups them, most urgent first: Pick up before you go,
+Needs an earlier quest first, Not known yet, In your quest log,
+Prerequisite chains, Optional quests, Completed. Each row shows the giver
+and where (from the atlas when it lists the quest, else the catalog), the
+prerequisite chain with where each step stands, and, when the atlas has
+them, the objective and rewards. A summary line on top says what the client
+could not give (for example a collapsed quest log header).
+
+### The quests: `Data/DungeonQuests.generated.lua`
+
+Holdfast's quest catalog, every quest a dungeon shows by default (753
+quests, 35 dungeons, no cap; the 159 zone-only raid turn-ins are left out,
+as the website hides them): name, levels, faction (an unknown faction stays
+unknown), races, classes, repeatable, reputation, prerequisite ids (and
+`mustBeActive`), whether the chain is known, the wing, the giver's name and
+single spawn. No objectives or rewards: the atlas file has those for the
+quests it lists. 72 KB; the file defines one function (about 194 KB of
+compiled Lua at login) and the tables (about 470 KB) are built the first
+time the journal or the quest capture asks.
+
+```
+lua5.1 scripts/exportDungeonQuests.lua \
+  --quests ../web/holdfast/backend/src/Atlas/data/quest-catalog.json \
+  --commit $(git -C ../web/holdfast rev-parse HEAD)
+```
+
+`--check` verifies the packaged file. Currently from Holdfast `d00c489`
+(main after #303). The 40-quest cap of the atlas file is unchanged: that
+list only feeds objectives and rewards now.
+
+### Your quests: `Systems/CharacterQuests.lua`
+
+Not `Systems/Quests.lua` (Guildweaver's own guild quest assignments). It
+reads what the client says about the character's World of Warcraft quests.
+Every API is feature-detected; none is assumed to exist on the Forever
+client:
+
+| What | APIs, in order of preference | Coverage |
+| --- | --- | --- |
+| Completed quests | `C_QuestLog.GetAllCompletedQuestIDs`, `GetQuestsCompleted` | `full`, only when the list came back with ids (an empty list may not be loaded yet) |
+| | `C_QuestLog.IsQuestFlaggedCompleted`, `IsQuestFlaggedCompleted`, for every catalog quest | `checked`, with exactly the ids asked |
+| | none | `none` |
+| Quest log | `C_QuestLog.GetNumQuestLogEntries` + `GetInfo` (+ `IsComplete`), `GetNumQuestLogEntries` + `GetQuestLogTitle` | `full`, only after a `QUEST_LOG_UPDATE` and a scan that read every entry's quest id with no collapsed header; else `none` |
+| Who | `UnitFactionGroup`, `UnitRace` (token), `UnitClass` (token), `UnitLevel` | missing facts stay unknown |
+
+OpenMap (Interface 16001) uses `C_QuestLog.IsQuestFlaggedCompleted`,
+`C_QuestLog.GetLogIndexForQuestID` and `C_QuestLog.IsComplete` on Forever,
+so `checked` is the least the add-on should get there; whether the whole
+list and the log enumeration exist is for the in-game checklist
+(`/gw dungeon quests`).
+
+Events: `PLAYER_ENTERING_WORLD`, `QUEST_ACCEPTED`, `QUEST_REMOVED`,
+`QUEST_TURNED_IN`, `QUEST_LOG_UPDATE`, `PLAYER_LEVEL_UP` (each registered
+only if the client has it). They mark what changed; one capture runs 2
+seconds after the last, never in combat (it waits for `PLAYER_REGEN_ENABLED`).
+The completed list is reread only on login, turn-ins and removals; the log
+on its own updates. A turn-in counts as completed at once, even before the
+client's list catches up. After entering the world nothing is published
+until the log has loaded (or 30 seconds have passed), so a `/reload` does
+not publish a state without the log and then the full one.
+
+### The `quest_state` stream
+
+One state stream per character, `quest_state:<characterId>`
+(`Telemetry/Domains/QuestState.lua`), the contract in Holdfast's
+`docs/dungeon-quest-readiness.md`: faction, race and class tokens, level,
+`completed { coverage, questIds, checkedQuestIds? }`,
+`questLog { coverage, entries = { { questId, isComplete } } }` and
+`capturedAt`. Only ids and tokens: no titles or other text. It is stored
+with a fingerprint of its content (not `capturedAt`), so an unchanged state
+is never stored or sent again, across `/reload` too. The bridge carries it
+like any other stream; Holdfast validates it and shows the website's
+readiness from it. It reaches the website only after the game writes
+SavedVariables (`/reload` or logging out) and the bridge syncs.
+
+`/gw dungeon quests` rereads the client and prints which APIs answered,
+each coverage, how many quests were read, and the last record saved.
+
+### Keeping it the same as Holdfast
+
+`test/fixtures/readiness-parity.json` holds 117 cases Holdfast's engine
+computed (13 dungeons and wings, 9 character states).
+`test/dungeon_readiness_spec.lua` requires the same readiness, counts, and
+quest-by-quest states and reasons here. Regenerate it when Holdfast's rules
+or catalog change, along with `Data/DungeonQuests.generated.lua`:
+
+```
+node scripts/readinessParity.mjs ../web/holdfast/backend test/fixtures/readiness-parity.json
+```
+
+(Node, run against a Holdfast checkout; it imports Holdfast's own
+`atlasRepository.js`. Currently from Holdfast `dc54ca8`, Indicaza/holdfast#305,
+whose rules are main's.)
+
 ## Client art: maps and portraits
 
 `Data/DungeonJournalArt.generated.lua` (`GW.DungeonJournalArt`) holds IDs
@@ -155,6 +275,8 @@ with two display IDs.
 | Atlas file | 404 KB (413,250 bytes; budget 480 KB, enforced by the exporter and the spec). Before packing the items, the same data was 479,123 bytes |
 | Atlas, Lua memory at login | about 940 KB (compiled data; no tables are built). The unpacked item table costs what it did before packing |
 | Art file | 23 KB; about 89 KB of compiled Lua at login, tables built on first use |
+| Quest catalog file | 72 KB (73,646 bytes; budget 256 KB, enforced by its exporter); about 194 KB of compiled Lua at login, about 470 KB once the journal's Quests tab or the quest capture builds it |
+| Quest state | no SavedVariables of its own: the outbound `quest_state` record (the ids the bridge sends) and nothing else |
 | Atlas coverage | 35 dungeons and raids (26 original, 9 WoW Forever), 298 bosses (WoW Forever: 58, 35 with NPC IDs, 2 with encounter IDs), 339 quests (64 in WoW Forever dungeons), 191 drops by item ID without facts (135 in WoW Forever dungeons). The original 26: 240 bosses (230 with reference loot, 176 with abilities), 173 dangerous trash, 27 rares (all with loot), 275 quests, 786 spells (173 interruptible casts), 2,204 items, 205 shared drops (every one named) |
 
 At login only small indexes exist. A dungeon's detail, the spell, item and
@@ -330,9 +452,40 @@ observed encounter IDs, no Classic loot or abilities claimed), a run in one
 never published; the report with and without an LFG list, not scanned in
 combat).
 
+`test/dungeon_readiness_spec.lua` covers the packaged quest catalog (counts,
+no cap, unknown faction kept, class rules, wings, Forever chains, no list
+for Blackmaw Hold), its exporter, and parity with Holdfast's readiness on
+117 cases. `test/character_quests_spec.lua` covers the capture on a made-up
+client: the whole completed list, checked-only, an empty list never "full",
+the classic APIs, no APIs at all, the log waiting for `QUEST_LOG_UPDATE`,
+accepting, turning in (completed before the list catches up), abandoning,
+a collapsed header, level-up, bursts of events (one capture), combat, a
+minute of questing (bounded captures and list reads), the payload's shape
+(ids and tokens only), SavedVariables round trip, `/reload` (nothing stored
+again), a second character's own stream, and the journal's summary, groups
+and chains.
+
 The fake client proves behaviour, not looks: it draws nothing.
 
 ## In-game checklist (not yet done in the client)
+
+Quest readiness:
+
+- `/gw dungeon quests` after login: note which APIs answered for completed
+  quests (`full` or `checked`) and the quest log, and how many quests each
+  read. With every quest log header expanded the log must say `full`.
+- Accept a dungeon quest, wait 2 seconds: the Quests tab moves it to "In your
+  quest log"; abandon it: back to "Pick up before you go".
+- Turn one in: "Completed" at once.
+- Collapse a quest log header: the summary says the log could not be read;
+  expand it again: back to normal.
+- Quest in combat: nothing changes until the fight ends.
+- `/reload`, then sync with the bridge: the website's dungeon page shows the
+  same readiness, with "Quests as of" the capture time.
+- Log another character: its own readiness, its own website state.
+- A WoW Forever dungeon (Hall of Thanes): quests not yet taken are "Not
+  known" (their chain is not known); completed and accepted ones still show.
+
 
 WoW Forever dungeons (each of 2959, 2970, 2974, 2994, 2998, 2999, 3001,
 3039, 3065):

@@ -98,6 +98,7 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
         GW.MainFrame:Initialize()
         GW.MinimapButton:Initialize()
         GW.Character:Initialize()
+        GW.CharacterQuests.Initialize()
         GW.SessionCapture:Initialize()
         return
     end
@@ -232,6 +233,11 @@ SlashCmdList.GUILDWEAVER = function(message)
             GW.Print("Dungeon HUD position reset.")
         elseif action == "bosses" then
             for _, line in ipairs(sessions.Diagnostics()) do GW.Print(line) end
+        elseif action == "quests" then
+            -- What the client gave for this character's quests (APIs, coverage).
+            local quests = GW.CharacterQuests
+            if quests and quests.Capture then quests.Capture("command", true) end
+            for _, line in ipairs(quests and quests.Report and quests.Report() or { "Quest state not loaded." }) do GW.Print(line) end
         elseif action == "catalog" then
             -- For atlas maintainers: unknown instances entered, what the client says of WoW Forever's dungeons.
             local catalog = GW.DungeonCatalog
@@ -243,7 +249,7 @@ SlashCmdList.GUILDWEAVER = function(message)
             else
                 GW.Print("No dungeon run is open. Runs start when you enter a dungeon or raid.")
             end
-            GW.Print("/gw dungeon start|stop (the timer also starts on your first pull), /gw dungeon split [name], /gw dungeon finish, /gw dungeon hud on|off, /gw dungeon mode [min|compact|full], /gw dungeon pb, /gw dungeon reset, /gw dungeon bosses (what the run knows about its bosses), /gw dungeon catalog (instances the atlas does not know).")
+            GW.Print("/gw dungeon start|stop (the timer also starts on your first pull), /gw dungeon split [name], /gw dungeon finish, /gw dungeon hud on|off, /gw dungeon mode [min|compact|full], /gw dungeon pb, /gw dungeon reset, /gw dungeon bosses (what the run knows about its bosses), /gw dungeon catalog (instances the atlas does not know), /gw dungeon quests (what the client gives for your quests).")
         end
         return
     end

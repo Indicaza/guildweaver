@@ -522,9 +522,15 @@ do
     equal(quest.rewardLabel.gwText, "CHOOSE ONE")
     truthy(quest.rewards.items[1].icon.gwFile, "reward item icons")
     falsy(string.find(quest.facts.gwText, "Completed", 1, true), "not claimed completed")
+    contains(quest.facts.gwText, "Not known", "no quest API in this client: the state is not known")
     _G.C_QuestLog = { IsQuestFlaggedCompleted = function(id) return id == 166 end }
+    addon.CharacterQuests.Capture("test", true)
     main:RefreshView()
-    contains(quest.facts.gwText, "Completed", "only when the client confirms it")
+    local completedRow
+    for _, row in ipairs(page.questRows.items) do
+        if row.shown ~= false and row.name.gwText == "The Defias Brotherhood" then completedRow = row end
+    end
+    contains(completedRow.facts.gwText, "Completed", "only when the client confirms it")
     _G.C_QuestLog = nil
 
     local itemQueries = env:callCount("GetItemInfo")
