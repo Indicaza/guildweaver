@@ -23,7 +23,7 @@ end
 
 local world
 
-local function installWorld(env)
+local function installWorld()
     local G = _G
     G.IsInInstance = function() return world.instance ~= nil, world.instance and world.instance.type or "none" end
     G.GetInstanceInfo = function()
@@ -81,7 +81,7 @@ local function boot(options)
     end
     local env = Env.new()
     local addon = env:load()
-    installWorld(env)
+    installWorld()
     addon.DungeonBosses.instances[9101] = BARROW_BOSSES
     addon.DungeonBosses.instances[9102] = SUMP_BOSSES
     if options.saved then
