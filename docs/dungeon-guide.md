@@ -33,7 +33,9 @@ loads that file like any other; it never downloads or parses anything.
 lua5.1 scripts/exportDungeonAtlas.lua \
   --atlas ../web/holdfast/backend/src/Atlas/data/atlas.json \
   --loot  ../web/holdfast/backend/src/Atlas/data/reference-loot.json \
+  --wings ../web/holdfast/backend/src/Atlas/data/wing-manifest.json \
   --commit $(git -C ../web/holdfast rev-parse HEAD)
+cp ../web/holdfast/backend/src/Atlas/data/wing-manifest.json test/fixtures/wing-manifest.json
 ```
 
 `--check` (same arguments) fails when the packaged file does not match the
@@ -43,8 +45,9 @@ Forever verification from a Classic source, an encounter in two dungeons, a
 loot item without facts, a spell classified two ways, coordinates out of
 range) and a file over 480 KB.
 
-The packaged file's header names the Holdfast commit: currently `main` at
-`46af21b` (after Indicaza/holdfast#297 and #298). Regenerate it whenever the
+The packaged file's header names the Holdfast commit: currently `c608ea3`
+(Indicaza/holdfast#300, dungeon wings; the atlas and loot data are unchanged
+since `46af21b`). Regenerate it whenever the
 atlas or the reference loot changes on Holdfast `main`.
 
 What is exported (only what the game shows): names, level bands, zone and
@@ -326,3 +329,76 @@ first; no Lua error should appear at any step.
 - **Faction on quests** is used when present.
 - **Wishlist edits from the game** would need a bridge protocol change (out
   of scope: the guide is read-only).
+
+## Dungeon wings
+
+Scarlet Monastery (Graveyard, Library, Armory, Cathedral), Dire Maul (East,
+West, North), Stratholme (Live, Undead) and Blackrock Spire (Lower, Upper)
+are several dungeons on one game map: every wing has the same instance ID.
+The wings come from Holdfast's generated `wing-manifest.json` (built from its
+`Atlas/atlasWings.js`, the one roster both sides use):
+- stable keys, the same as the website's (`scarlet-monastery:library`);
+- level bands;
+- the bosses and rares each wing owns, by NPC and encounter ID;
+- floor names and entrances;
+- the bosses no wing owns.
+
+The exporter checks the manifest against the atlas: a boss the atlas does not
+know, or one placed in two wings, stops the export. It packages the wings
+beside the atlas. `test/fixtures/wing-manifest.json` is a verbatim copy of the
+manifest, and `test/dungeon_wings_spec.lua` fails when the packaged wings
+drift from it.
+
+**Journal.** Each wing is its own card and page. A wing page shows:
+- its own bosses and rares, and their loot;
+- the shared quests and other loot of its dungeon, never a sibling wing's
+  drops;
+- "Not placed in a wing" for the bosses no source assigns.
+
+Its map shows the floors its sources name. Blackrock Spire's floors are not
+named per wing by any source, so each of its wings shows the floors Blizzard's
+journal pins one of its bosses on. A pin on another wing's floor is not shown:
+Postmaster Malown is an Undead boss, but his journal pin is on the Live floor.
+A wing without a known floor shows no map. The dungeon's own page (opened by
+its instance ID) still lists every boss and names its wings.
+
+**Which wing a run is in.** The run keeps the dungeon until real evidence
+names one wing. Evidence is either:
+- the client's kill of a boss (by encounter ID) that one wing owns; or
+- the map floor the client reports for the player (`C_Map` floor names, read
+  on zone changes and never in combat), when that floor belongs to one wing.
+
+Rules for that evidence:
+- A boss kill always wins over a floor.
+- Kills in two wings leave the run on the dungeon. This can happen in Dire
+  Maul, Stratholme and Blackrock Spire, whose wings connect.
+- Bosses no wing owns are not evidence.
+- The wing selected in the journal is never evidence.
+- The evidence is saved with the run, so it survives `/reload`.
+
+**Progress and completion.**
+- A resolved wing counts its own bosses ("Bosses 1/2").
+- That roster is Classic reference data (DungeonPlanner, InstanceJournal), not
+  confirmed on Forever, and it may list a rare spawn (for example Tsu'zee in
+  Dire Maul West).
+- Every listed boss down is an unconfirmed full clear. It never sets a
+  personal best.
+- Fewer is "Completion unknown", never a failed or partial clear.
+- A clear the lockout proves is verified, as before.
+- Personal bests are kept per wing, so a Library clear never paces an Armory
+  run. An unresolved run's bests are the dungeon's.
+
+**Telemetry.**
+- A run carries an optional `wing` field (`dungeonKey`, `evidence`,
+  `encounterId`). Every Holdfast version accepts it: unknown keys are ignored,
+  and Holdfast derives a run's wing from its boss checkpoints.
+- Holdfast accepts the mandatory-roster completion values (`required_bosses`,
+  `required_bosses_unconfirmed`) only from Indicaza/holdfast#300 on. Until
+  then, a clear proved that way is sent with `completion.basis` `"none"` and
+  the addon's own value in `completion.claimed`. Setting
+  `DungeonSessions.WIRE_REQUIRED_BASES` to true sends the real values.
+
+Not verified in the Forever client:
+- whether its dungeon floors carry these names through
+  `C_Map.GetMapGroupMembersInfo`;
+- whether each Scarlet Monastery wing has its own lockout.

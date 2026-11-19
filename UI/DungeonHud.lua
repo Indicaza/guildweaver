@@ -539,6 +539,18 @@ function Hud.KnownBosses(run)
         end
     end
     local source = journalList or lockout or {}
+    -- A run resolved to a wing lists only that wing's bosses: by encounter ID
+    -- from the wing table (a name alone cannot say which wing it is).
+    local atlas = GW.DungeonAtlasData
+    local wing = run.wing and atlas and atlas.wings and atlas.wings[run.wing.key]
+    if wing then
+        local own, filtered = {}, {}
+        for _, e in ipairs(wing.enc or {}) do own[e] = true end
+        for _, boss in ipairs(source) do
+            if boss.encounterId and own[boss.encounterId] then table.insert(filtered, boss) end
+        end
+        source = filtered
+    end
     for _, boss in ipairs(source) do
         local name = boss.name
         local killed = boss.killed == true or (boss.encounterId and killedIds[boss.encounterId]) or (name and killedNames[string.lower(name)]) or false

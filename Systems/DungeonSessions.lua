@@ -496,6 +496,114 @@ local function bossesDone(run)
     return bosses.total ~= nil and lockListDown(run) == true
 end
 
+-- Wings -----------------------------------------------------------------------
+--
+-- Scarlet Monastery, Dire Maul, Stratholme and Blackrock Spire are several
+-- dungeons on one game map: the instance ID cannot tell which wing a run is
+-- in. The run keeps the dungeon until real evidence names one wing:
+--   boss_kill  the client reported the kill of a boss (by encounter ID) that
+--              the wing table (Holdfast's wing manifest) gives to one wing
+--   floor      the client's map floor for the player is a floor the table
+--              names for exactly one wing
+-- Kills in two wings make the run ambiguous: it stays on the dungeon. A
+-- floor never overrides boss kills. The journal's selected wing is never
+-- evidence. The evidence is kept on the run (run.wingEvidence); run.wing is
+-- what it proves, or nil.
+
+local function atlasWings()
+    local atlas = GW.DungeonAtlasData
+    return atlas and atlas.wings, atlas and atlas.wingOrder
+end
+
+local function wingKeysFor(run)
+    local wings, order = atlasWings()
+    local id = run.instance and tonumber(run.instance.instanceId)
+    return wings, id and order and order[id] or nil
+end
+
+-- The one wing whose bosses include this encounter ID, or nil.
+local function wingOfEncounter(run, id)
+    local wings, keys = wingKeysFor(run)
+    if not keys or not id then return nil end
+    for _, key in ipairs(keys) do
+        for _, e in ipairs(wings[key].enc or {}) do
+            if e == id then return key end
+        end
+    end
+    return nil
+end
+
+local function resolveWing(run)
+    local evidence = run.wingEvidence
+    local wings = atlasWings()
+    if type(evidence) ~= "table" or not wings then
+        run.wing = nil
+        return nil
+    end
+    local proven, count = nil, 0
+    for key in pairs(evidence.kills or {}) do
+        if wings[key] then proven, count = key, count + 1 end
+    end
+    local key, how
+    if count == 1 then
+        key, how = proven, "boss_kill"
+    elseif count == 0 and evidence.floor and wings[evidence.floor] then
+        key, how = evidence.floor, "floor"
+    end
+    run.wing = key and { key = key, name = wings[key].name, evidence = how,
+        encounterId = how == "boss_kill" and evidence.firstKill and evidence.firstKill[key] or nil } or nil
+    run.wingAmbiguous = count > 1 or nil
+    return run.wing
+end
+Sessions.ResolveWing = resolveWing
+
+-- A kill of a boss one wing owns is evidence for that wing.
+local function noteWingKill(run, id)
+    local key = wingOfEncounter(run, id)
+    if not key then return end
+    run.wingEvidence = type(run.wingEvidence) == "table" and run.wingEvidence or {}
+    local evidence = run.wingEvidence
+    evidence.kills = evidence.kills or {}
+    evidence.firstKill = evidence.firstKill or {}
+    evidence.kills[key] = true
+    evidence.firstKill[key] = evidence.firstKill[key] or id
+    resolveWing(run)
+end
+
+-- The map floor the client reports for the player, by name, when it is a
+-- floor of exactly one wing. Read on zone changes only; never in combat.
+local function noteWingFloor(run)
+    local wings, keys = wingKeysFor(run)
+    local map = Globals.C_Map
+    if not keys or type(map) ~= "table" or type(map.GetBestMapForUnit) ~= "function" then return end
+    if type(Globals.InCombatLockdown) == "function" and Globals.InCombatLockdown() then return end
+    local ok, uiMapId = pcall(map.GetBestMapForUnit, "player")
+    uiMapId = ok and number(uiMapId) or nil
+    if not uiMapId then return end
+    local name
+    if type(map.GetMapGroupID) == "function" and type(map.GetMapGroupMembersInfo) == "function" then
+        local okGroup, group = pcall(map.GetMapGroupID, uiMapId)
+        local okMembers, members = false, nil
+        if okGroup and number(group) then okMembers, members = pcall(map.GetMapGroupMembersInfo, group) end
+        for _, member in ipairs(okMembers and type(members) == "table" and members or {}) do
+            if type(member) == "table" and number(member.mapID) == uiMapId then name = text(member.name, 80) end
+        end
+    end
+    if not name then return end
+    local wanted, found, count = string.lower(name), nil, 0
+    for _, key in ipairs(keys) do
+        for _, floor in ipairs(wings[key].floors or {}) do
+            if string.lower(floor) == wanted then found, count = key, count + 1 end
+        end
+    end
+    if count ~= 1 then return end
+    run.wingEvidence = type(run.wingEvidence) == "table" and run.wingEvidence or {}
+    if run.wingEvidence.floor ~= found then
+        run.wingEvidence.floor = found
+        resolveWing(run)
+    end
+end
+
 -- What this run's kills mean, by the role the boss registry
 -- (Data/DungeonBosses.lua) gives each boss:
 --   required, final, optional, unknown   kills of each role
@@ -505,6 +613,8 @@ end
 --   mandatoryVerified                    every mandatory kill matched an
 --                                        observed boss by encounter ID
 --   coverage   "roster"  a complete registry roster
+--              "reference" the resolved wing's Classic reference roster
+--                        (never verified; may include rare spawns)
 --              "lockout" the lockout's list, every name's role known
 --              "unknown" neither: progress is a count, not a fraction
 -- Optional kills are bonus kills: they never count toward the mandatory
@@ -539,6 +649,18 @@ local function bossLedger(run)
             end
         end
         ledger.coverage, ledger.mandatoryTotal, ledger.mandatoryDefeated, ledger.mandatoryVerified = "roster", #roster, down, verified
+        return ledger
+    end
+    -- A resolved wing: its bosses from the wing table, a Classic reference
+    -- roster (DungeonPlanner, InstanceJournal), never verified on Forever.
+    -- It may list a rare spawn, so a run that misses one is not called
+    -- partial (see classify) and a full count is only an unconfirmed clear.
+    local wings = atlasWings()
+    local wing = run.wing and wings and wings[run.wing.key]
+    if wing and #(wing.enc or {}) > 0 then
+        local down = 0
+        for _, e in ipairs(wing.enc) do if byId[e] then down = down + 1 end end
+        ledger.coverage, ledger.mandatoryTotal, ledger.mandatoryDefeated, ledger.mandatoryVerified = "reference", #wing.enc, down, false
         return ledger
     end
     -- The lockout's own list, when the registry knows the role of every
@@ -613,8 +735,19 @@ Sessions.CompletionBasis = completionBasis
 
 -- The completion block of the payload: the basis, and for a final-boss
 -- clear which boss proved it and how sure the registry is of it.
+-- Holdfast accepts required_bosses and required_bosses_unconfirmed from
+-- Indicaza/holdfast#300 on. Until a server with it is live, a run with one
+-- of them is sent with basis "none" (accepted by every server version) and
+-- the addon's own basis in completion.claimed, which servers ignore; the
+-- run's classification says the rest. Set true once #300 is deployed.
+Sessions.WIRE_REQUIRED_BASES = false
+local WIRE_LATER = { required_bosses = true, required_bosses_unconfirmed = true }
+
 local function completionFor(run, status, endReason)
     local basis = completionBasis(run, status, endReason)
+    if WIRE_LATER[basis] and not Sessions.WIRE_REQUIRED_BASES then
+        return { basis = "none", claimed = basis }
+    end
     local final = run.bosses.finalBoss
     if (basis == "final_boss" or basis == "final_boss_unconfirmed") and final then
         return { basis = basis, finalBoss = { encounterId = final.encounterId, name = final.name, confidence = final.confidence },
@@ -763,6 +896,9 @@ local function payloadFor(run, status, endReason)
         timelineTruncated = run.timelineTruncated == true or nil,
         checkpoints = points,
         completion = completionFor(run, status, endReason),
+        -- The wing the run's own evidence names (optional; servers that do
+        -- not know it ignore it). nil while the run is the dungeon's.
+        wing = run.wing and { dungeonKey = run.wing.key, evidence = run.wing.evidence, encounterId = run.wing.encounterId } or nil,
         -- What the run achieved, apart from how it ended (status) and how
         -- sure that is (verification). See classify.
         classification = classify(run, status, endReason),
@@ -811,6 +947,14 @@ local function instanceKey(instance)
     return where .. ":" .. tostring(instance.difficultyId or instance.difficultyName or "")
 end
 Sessions.InstanceKey = instanceKey
+
+-- Personal bests are kept per wing when the run resolved one, so two wings
+-- of one instance are never compared; an unresolved run is the dungeon's.
+local function pbKey(instance, wingKey)
+    local key = instanceKey(instance)
+    if key and wingKey then key = key .. "@" .. wingKey end
+    return key
+end
 
 -- A personal best is kept only for a clear the boss evidence proves
 -- (lockout or every encounter), never a hand-finished or partial run, and
@@ -881,7 +1025,7 @@ classify = function(run, status, endReason)
     local ledger = bossLedger(run)
     local base = { bossesDefeated = defeated, bossesTotal = bosses.total, mandatoryDefeated = ledger.mandatoryDefeated,
         mandatoryTotal = ledger.mandatoryTotal, optionalDefeated = ledger.optional, unknownDefeated = ledger.unknown,
-        coverage = ledger.coverage, finalDefeated = bosses.finalBoss ~= nil }
+        coverage = ledger.coverage, finalDefeated = bosses.finalBoss ~= nil, wingKey = run.wing and run.wing.key or nil }
     local function result(kind, verification)
         base.kind, base.verification = kind, verification
         return base
@@ -900,6 +1044,11 @@ classify = function(run, status, endReason)
     end
     if status ~= "open" and repeatsEarlierRun(run, killKeys(run)) then
         return result("boss_farm", "verified")
+    end
+    -- A wing's reference roster short of a full count: the missing boss may
+    -- be a rare that did not spawn, so the completion is unknown.
+    if ledger.coverage == "reference" and (ledger.mandatoryDefeated or 0) > 0 then
+        return result("partial", "unknown")
     end
     -- As many kills as the lockout lists encounters, but nothing proves a
     -- clear (no lockout confirmation, no known roster or final boss): the
@@ -925,7 +1074,7 @@ local function notePb(dungeon, run, status, endReason)
     if basis ~= "lockout" and basis ~= "encounters" and basis ~= "required_bosses" and basis ~= "final_boss" then
         return false
     end
-    local key = instanceKey(run.instance)
+    local key = pbKey(run.instance, run.wing and run.wing.key)
     if not key or not run.characterId or (run.bosses.atEntry or 0) > 0 then
         return false
     end
@@ -974,6 +1123,9 @@ local function remember(dungeon, run, status, endReason)
         classification = classification.kind,
         verification = classification.verification,
         -- Added later: older entries have none of these.
+        wingKey = run.wing and run.wing.key or nil,
+        wingName = run.wing and run.wing.name or nil,
+        wingEvidence = run.wing and run.wing.evidence or nil,
         mandatoryDefeated = classification.mandatoryDefeated,
         mandatoryTotal = classification.mandatoryTotal,
         optionalDefeated = classification.optionalDefeated,
@@ -1228,6 +1380,7 @@ function Sessions.Evaluate(reason)
         if timerOf(run).state == "ready" and unitIs(Globals.UnitAffectingCombat, "player") then
             startTimer(run, "combat")
         end
+        noteWingFloor(run)
     elseif run then
         leave(run)
     end
@@ -1296,6 +1449,7 @@ local function recordKill(run, id, name, source)
         bosses.lastAnonymous = { at = now, source = source, index = checkpoint and #run.checkpoints, eventIndex = event and #run.timeline }
     end
     run.engaged = nil
+    noteWingKill(run, id)
     refreshBosses(run)
     -- The final boss, when the registry knows it. Only the client's own kill
     -- events get here, never a manual split.
@@ -1371,6 +1525,9 @@ local handlers = {
             addEvent(run, "encounter_failed", { encounterId = encounterId(id), name = text(name) })
         end
     end),
+    -- Moving between floors: the floor may name the wing.
+    ZONE_CHANGED = withRun(function(run) noteWingFloor(run) end),
+    ZONE_CHANGED_INDOORS = withRun(function(run) noteWingFloor(run) end),
     BOSS_KILL = withRun(function(run, id, name)
         Sessions.encounterEventsAvailable = true
         run.encounterEvents = true
@@ -1561,8 +1718,10 @@ function Sessions.Current()
     local hours = (run.durationSeconds or 0) / 3600
     -- Pace against the best of the same clear type: 100% first, else a
     -- dungeon clear.
-    local pb = Sessions.PersonalBest(run.characterId, run.instance, pbBasis(timer))
-        or Sessions.PersonalBest(run.characterId, run.instance, pbBasis(timer), "dungeon_clear")
+    local wingKey = run.wing and run.wing.key or nil
+    local pb = Sessions.PersonalBest(run.characterId, run.instance, pbBasis(timer), nil, wingKey)
+        or Sessions.PersonalBest(run.characterId, run.instance, pbBasis(timer), "dungeon_clear", wingKey)
+        or Sessions.PersonalBest(run.characterId, run.instance, pbBasis(timer), "full_clear", wingKey)
     local reference = {}
     for _, entry in ipairs(pb and pb.checkpoints or {}) do reference[entry.id] = entry end
     local splits = {}
@@ -1585,7 +1744,11 @@ function Sessions.Current()
     end
     return {
         runId = run.runId,
-        name = run.instance and run.instance.name or "Instance",
+        -- The wing's name once evidence resolved it; the dungeon's until then.
+        name = (run.wing and run.wing.name) or (run.instance and run.instance.name) or "Instance",
+        instanceName = run.instance and run.instance.name or "Instance",
+        wing = run.wing and { key = run.wing.key, name = run.wing.name, evidence = run.wing.evidence } or nil,
+        wingAmbiguous = run.wingAmbiguous == true or nil,
         difficultyName = run.instance and run.instance.difficultyName,
         inside = run.inside == true,
         durationSeconds = run.durationSeconds or 0,
@@ -1692,9 +1855,9 @@ function Sessions.FormatOffset(seconds)
 end
 
 -- The personal best for a character in an instance at a difficulty, or nil.
-function Sessions.PersonalBest(characterId, instance, basis, kind)
+function Sessions.PersonalBest(characterId, instance, basis, kind, wingKey)
     local dungeon = store()
-    local key = instanceKey(instance)
+    local key = pbKey(instance, wingKey)
     local byCharacter = dungeon and characterId and dungeon.pbs[characterId]
     return type(byCharacter) == "table" and key and byCharacter[key .. ":" .. (basis or "first_pull") .. pbKind(kind)] or nil
 end
@@ -1712,7 +1875,7 @@ function Sessions:Initialize()
     -- No combat log events: addons cannot read them on Forever, and they
     -- fire far too often. Encounter events are registered when the client
     -- has them; without them bosses come from manual splits.
-    for _, event in ipairs({ "PLAYER_ENTERING_WORLD", "ZONE_CHANGED_NEW_AREA", "PLAYER_LOGOUT",
+    for _, event in ipairs({ "PLAYER_ENTERING_WORLD", "ZONE_CHANGED_NEW_AREA", "ZONE_CHANGED", "ZONE_CHANGED_INDOORS", "PLAYER_LOGOUT",
         "PLAYER_XP_UPDATE", "PLAYER_LEVEL_UP", "PLAYER_MONEY", "PLAYER_DEAD", "GROUP_ROSTER_UPDATE", "PLAYER_REGEN_DISABLED" }) do
         pcall(frame.RegisterEvent, frame, event)
     end

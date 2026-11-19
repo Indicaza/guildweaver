@@ -643,7 +643,7 @@ GuideUI.Pages = { browser = browserPage, dungeon = dungeonPage, creature = creat
 local function encounterStates(instanceId, dungeon)
     local run = Guide.CurrentRun()
     local states = {}
-    if not run or tonumber(run.instanceId) ~= tonumber(instanceId) then return states end
+    if not run or tonumber(run.instanceId) ~= Guide.InstanceIdOf(instanceId) then return states end
     for _, boss in ipairs(dungeon.bosses) do states[boss] = Guide.EncounterState(instanceId, boss, run) end
     return states
 end
@@ -688,13 +688,16 @@ function GuideUI.BrowserList(filters)
     filters = filters or state.browser
     local query = Guide.NormalizeName(filters.query or "")
     local band = BANDS[filters.band or "all"] or BANDS.all
-    local current, level = Guide.CurrentInstanceId(), playerLevel()
+    -- Inside a dungeon whose wing is not known yet, each of its wings is
+    -- "here": none is picked for the player.
+    local current, instance, level = Guide.CurrentGuideId(), Guide.CurrentInstanceId(), playerLevel()
     local list = {}
     for order, dungeon in ipairs(Guide.List()) do
         local kindOk = filters.kind == nil or filters.kind == "all" or (filters.kind == "raid") == (dungeon.kind == "raid")
         local nameOk = not query or string.find(Guide.NormalizeName(dungeon.name) or "", query, 1, true) ~= nil
         if kindOk and nameOk and band(dungeon) then
-            local rank = dungeon.id == current and 0 or (suits(dungeon, level) and 1 or 2)
+            local here = dungeon.id == current or (current == instance and instance ~= nil and dungeon.instanceId == instance)
+            local rank = here and 0 or (suits(dungeon, level) and 1 or 2)
             table.insert(list, { dungeon = dungeon, rank = rank, order = order, suggested = rank == 1 })
         end
     end
@@ -761,7 +764,7 @@ local function buildTopBar(view)
     bar.here = UI.Button(bar, "Current dungeon", { width = 124, height = 20, variant = "primary", role = "small",
         tooltip = "Current dungeon", tooltipLines = { "Opens the dungeon you are in." },
         onClick = function()
-            local current = Guide.CurrentInstanceId()
+            local current = Guide.CurrentGuideId()
             if current then
                 Guide.FollowCurrent()
                 GuideUI.Navigate(dungeonPage(current))
@@ -788,8 +791,9 @@ local function buildStrip(view)
     pcall(strip.name.RegisterForClicks, strip.name, "LeftButtonUp")
     strip.name:SetScript("OnClick", function()
         local run = Guide.CurrentRun()
-        local id = run and tonumber(run.instanceId)
-        if id and Guide.Index()[id] then GuideUI.Navigate(dungeonPage(id)) end
+        -- The run's wing when its evidence named one, else the dungeon.
+        local id = run and (Guide.NormalizeId(run.wing and run.wing.key) or Guide.NormalizeId(run.instanceId))
+        if id then GuideUI.Navigate(dungeonPage(id)) end
     end)
     strip.clock = UI.Text(strip, "clockSmall", "text")
     strip.clock:SetPoint("LEFT", strip.name, "RIGHT", 8, 0)
@@ -894,7 +898,7 @@ local function dungeonCard(parent)
         if levels then table.insert(meta, "Levels " .. levels) end
         if dungeon.zone then table.insert(meta, dungeon.zone) end
         UI.SetText(self.meta, table.concat(meta, SEP))
-        local entry = Guide.Index()[dungeon.id] or {}
+        local entry = Guide.Entry(dungeon.id) or {}
         local kind = { dungeon.kind == "raid" and "RAID" or "DUNGEON" }
         if entry.bosses and entry.bosses > 0 then table.insert(kind, entry.bosses .. (entry.bosses == 1 and " BOSS" or " BOSSES")) end
         UI.SetText(self.kind, table.concat(kind, SEP))
@@ -950,7 +954,8 @@ local function runRow(parent, onClick)
     function row:Fill(entry, showName)
         self.gwData = entry
         local date = main.ShortDate and main.ShortDate(entry.startedAt) or nil
-        UI.SetText(self.title, showName and tostring(entry.name or "Instance") or (date or "Run"))
+        -- The wing the run's evidence resolved, else its dungeon.
+        UI.SetText(self.title, showName and tostring(entry.wingName or entry.name or "Instance") or (date or "Run"))
         local meta = {}
         if showName and date then table.insert(meta, date) end
         if entry.bossesTotal or (entry.bossesDefeated or 0) > 0 then
@@ -1018,7 +1023,7 @@ local function buildBrowser(view)
     page.runs:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -34)
     page.runRows = pool(function()
         return runRow(page.runs.child, function(entry)
-            local id = Guide.RunInstanceId(entry)
+            local id = Guide.RunGuideId(entry)
             if id then GuideUI.Navigate(dungeonPage(id, "runs")) end
         end)
     end)
@@ -1129,14 +1134,17 @@ local function refreshBrowser(view, current)
     page.band:Refresh()
     page.kind:Refresh()
     local list = GuideUI.BrowserList()
-    local here, selected = Guide.CurrentInstanceId(), tonumber(prefs().instanceId)
+    local here, instance = Guide.CurrentGuideId(), Guide.CurrentInstanceId()
+    local selected = Guide.NormalizeId(prefs().wingKey) or tonumber(prefs().instanceId)
     local wishes, runs = Guide.WishlistByDungeon(), {}
+    -- A wing counts the runs resolved to it; ambiguous runs stay on the dungeon.
     for _, entry in ipairs(Guide.Runs(nil)) do
-        local id = Guide.RunInstanceId(entry)
+        local id = Guide.RunGuideId(entry)
         if id then runs[id] = (runs[id] or 0) + 1 end
     end
     for index, dungeon in ipairs(list) do
-        page.cards:Get(index):Fill(dungeon, { here = dungeon.id == here, selected = dungeon.id == selected and dungeon.id ~= here,
+        local isHere = dungeon.id == here or (here ~= nil and here == instance and dungeon.instanceId == instance)
+        page.cards:Get(index):Fill(dungeon, { here = isHere, selected = dungeon.id == selected and not isHere,
             wanted = Guide.DungeonWishlistCount(dungeon.id, wishes), runs = runs[dungeon.id] or 0 })
     end
     page.cards:Trim(#list)
@@ -1661,13 +1669,31 @@ local function refreshDungeonPage(view, current)
     local levels = Guide.LevelText(dungeon.lmin, dungeon.lmax)
     if levels then table.insert(parts, "Levels " .. levels) end
     if dungeon.zone then table.insert(parts, dungeon.zone) end
-    if instanceId == Guide.CurrentInstanceId() then table.insert(parts, Theme.Colorize("You are here", "good")) end
+    -- Here: this page, or (inside a dungeon whose wing is not known yet) the
+    -- dungeon of this wing.
+    local currentGuide, currentInstance = Guide.CurrentGuideId(), Guide.CurrentInstanceId()
+    if instanceId == currentGuide or (currentGuide == currentInstance and currentInstance ~= nil and Guide.InstanceIdOf(instanceId) == currentInstance) then
+        table.insert(parts, Theme.Colorize("You are here", "good"))
+    end
     UI.SetText(page.sub, table.concat(parts, SEP))
-    local entry = Guide.Index()[instanceId] or {}
+    local entry = Guide.Entry(instanceId) or {}
     local where = dungeon.entrance and ("Entrance: " .. tostring(entry.zone or dungeon.zone or "?") .. " " .. Guide.Coordinates(dungeon.entrance.x, dungeon.entrance.y))
         or ("Entrance not known" .. (dungeon.zone and (" (" .. dungeon.zone .. ")") or ""))
-    page.badge:Set("Classic reference", { where, Guide.REFERENCE_NOTE .. ": bosses, mechanics, loot and quests come from Classic reference data.",
-        "Maps, boss positions and faces are the client's own." })
+    local lines = { where, Guide.REFERENCE_NOTE .. ": bosses, mechanics, loot and quests come from Classic reference data.",
+        "Maps, boss positions and faces are the client's own." }
+    if dungeon.wingKey then
+        -- What the wing owns, and what it only shares with its dungeon.
+        table.insert(lines, "Wing bosses: Classic reference (DungeonPlanner, InstanceJournal), not confirmed on Forever.")
+        table.insert(lines, "Quests, trash and other loot are the whole of " .. tostring(dungeon.parentName) .. "'s: no source ties them to one wing.")
+        if dungeon.unassigned and #dungeon.unassigned > 0 then table.insert(lines, "Not placed in a wing: " .. table.concat(dungeon.unassigned, ", ") .. ".") end
+        if dungeon.levelSource == "parent" then table.insert(lines, "Level band: the whole dungeon's.") end
+        if #Guide.Floors(instanceId) == 0 then table.insert(lines, "No map floor is known for this wing.") end
+    elseif Guide.WingsOf(instanceId) then
+        local names = {}
+        for _, key in ipairs(Guide.WingsOf(instanceId)) do table.insert(names, Guide.Entry(key).name) end
+        table.insert(lines, "Played as wings: " .. table.concat(names, ", ") .. ". This page covers the whole dungeon.")
+    end
+    page.badge:Set("Classic reference", lines)
     page.badge:Show()
     page.empty:Hide()
 
@@ -1724,7 +1750,7 @@ local function refreshTopBar(view, current)
     bar.forward:SetActive(nav.index < #nav.history)
     local crumbs = { { "Dungeons", current.level ~= "browser" and browserPage() or nil } }
     if current.level ~= "browser" then
-        local entry = Guide.Index()[current.id]
+        local entry = Guide.Entry(current.id)
         local deeper = crumbName(current)
         table.insert(crumbs, { entry and entry.name or "Dungeon", deeper and dungeonPage(current.id) or nil })
         if deeper then table.insert(crumbs, { deeper, nil }) end
@@ -1749,7 +1775,7 @@ local function refreshTopBar(view, current)
             crumb:Hide()
         end
     end
-    local here = Guide.CurrentInstanceId()
+    local here = Guide.CurrentGuideId()
     bar.gwHere = here ~= nil and current.id ~= here
     UI.SetShown(bar.here, bar.gwHere)
     GuideUI.FitCrumbs(view)
@@ -1892,11 +1918,11 @@ function GuideUI.Show(instanceId, bossIndex)
         GW.Print("The dungeon journal opens out of combat.")
         return false
     end
-    instanceId = tonumber(instanceId)
-    if instanceId and not Guide.Index()[instanceId] then instanceId = nil end
-    instanceId = instanceId or Guide.CurrentInstanceId()
+    -- A dungeon's instance ID or a wing's key; else where the player is
+    -- (the wing their run resolved, or the dungeon).
+    instanceId = Guide.NormalizeId(instanceId) or Guide.CurrentGuideId()
     if instanceId then
-        if instanceId == Guide.CurrentInstanceId() then Guide.FollowCurrent() end
+        if instanceId == Guide.CurrentGuideId() then Guide.FollowCurrent() end
         local dungeon = Guide.Dungeon(instanceId)
         local boss = bossIndex and dungeon and dungeon.bosses[bossIndex]
         if boss then
@@ -1972,8 +1998,17 @@ function GuideUI.TooltipLines(instanceId, entry)
     return lines
 end
 
+-- A boss that belongs to one wing opens on that wing's page, where it is;
+-- any other on its dungeon's.
 function GuideUI.OpenForEntry(instanceId, entry)
-    local _, index = GuideUI.BossForEntry(instanceId, entry)
+    local boss, index = GuideUI.BossForEntry(instanceId, entry)
+    local key = boss and Guide.WingForBoss(instanceId, boss.e, boss.npc)
+    local wing = key and Guide.Dungeon(key)
+    if wing then
+        for position, candidate in ipairs(wing.bosses) do
+            if candidate == boss then return GuideUI.Show(key, position) end
+        end
+    end
     return GuideUI.Show(instanceId, index)
 end
 

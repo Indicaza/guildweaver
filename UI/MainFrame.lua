@@ -204,7 +204,7 @@ local function dungeonSummary()
     local last = listedRuns(sessions().History(), 1)[1]
     if last then
         local word = outcome(last)
-        return "No run open", nil, nil, "Last: " .. tostring(last.name or "Instance") .. "  " .. Theme.Colorize(DOT, "textFaint") .. "  "
+        return "No run open", nil, nil, "Last: " .. tostring(last.wingName or last.name or "Instance") .. "  " .. Theme.Colorize(DOT, "textFaint") .. "  "
             .. duration(last.timerSeconds or last.durationSeconds) .. "  " .. Theme.Colorize(DOT, "textFaint") .. "  " .. word
     end
     return "No run open", nil, nil, "Tracking starts when you enter a dungeon or raid."
