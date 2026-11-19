@@ -37,6 +37,7 @@ Telemetry/Domains/Equipment.lua
 Telemetry/Domains/Professions.lua
 Telemetry/Domains/Talents.lua
 Telemetry/Domains/Inventory.lua
+Telemetry/Domains/QuestState.lua
 Telemetry/Registry.lua
 Systems/Character.lua
 Systems/ProfessionCapture.lua
@@ -46,6 +47,7 @@ Systems/SessionCapture.lua
 Systems/FarmingSessions.lua
 Data/DungeonBosses.lua
 Data/DungeonAtlas.generated.lua
+Data/DungeonQuests.generated.lua
 Data/DungeonJournalArt.generated.lua
 Systems/DungeonObjectives.lua
 Systems/DungeonSessions.lua
@@ -64,6 +66,8 @@ Systems/LootJournal.lua
 Systems/Quests.lua
 Systems/DungeonGuide.lua
 Systems/DungeonCatalog.lua
+Systems/DungeonReadiness.lua
+Systems/CharacterQuests.lua
 Telemetry/Compatibility.lua
 UI/Theme.lua
 UI/Widgets.lua

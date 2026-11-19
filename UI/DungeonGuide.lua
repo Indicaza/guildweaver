@@ -50,6 +50,9 @@ local ICONS = {
     other = "Interface\\Icons\\INV_Misc_Bag_10",
     info = "Interface\\FriendsFrame\\InformationIcon",
     quest = "Interface\\GossipFrame\\AvailableQuestIcon",
+    questActive = "Interface\\GossipFrame\\ActiveQuestIcon",
+    blocked = "Interface\\RaidFrame\\ReadyCheck-NotReady",
+    waiting = "Interface\\RaidFrame\\ReadyCheck-Waiting",
     crumb = "Interface\\ChatFrame\\ChatFrameExpandArrow",
     search = "Interface\\Common\\UI-Searchbox-Icon",
     highlight = "Interface\\Buttons\\ButtonHilight-Square",
@@ -59,6 +62,19 @@ GuideUI.ICONS = ICONS
 local QUALITY = { [0] = "9d9d9d", [1] = "ffffff", [2] = "1eff00", [3] = "0070dd", [4] = "a335ee", [5] = "ff8000" }
 local QUALITY_RGB = { [0] = { 0.62, 0.62, 0.62 }, [1] = { 1, 1, 1 }, [2] = { 0.12, 1, 0 }, [3] = { 0, 0.44, 0.87 }, [4] = { 0.64, 0.21, 0.93 }, [5] = { 1, 0.5, 0 } }
 local FACTIONS = { A = "Alliance", H = "Horde", B = "Both factions" }
+local Readiness = GW.DungeonReadiness
+-- A quest's state for the current character (GW.DungeonReadiness): its icon
+-- and the colour of its short label.
+local QUEST_STATE = {
+    completed = { icon = "acquired", color = "good" },
+    accepted = { icon = "questActive", color = "info" },
+    available = { icon = "quest", color = "warn" },
+    prerequisites = { icon = "blocked", color = "bad" },
+    ineligible = { icon = "blocked", color = "textFaint" },
+    unknown = { icon = "waiting", color = "textFaint" },
+}
+local READINESS_COLOR = { ready = "good", missing = "warn", blocked = "bad", unknown = "textFaint", none = "textFaint" }
+local PREREQUISITE_WORDS = { done = "done", accepted = "in your log", missing = "not done", unknown = "not known" }
 
 -- Sizes. The item grid uses bag-sized cells.
 local CELL, CELL_GAP = 40, 4
@@ -1197,10 +1213,15 @@ local function questRow(parent)
     -- Lays the quest out; returns its height.
     function row:Fill(quest)
         self.gwData = quest
-        local done = Guide.QuestCompleted(quest.id)
-        setIcon(self.icon, done and ICONS.acquired or ICONS.quest, false)
+        local style = quest.state and QUEST_STATE[quest.state] or nil
+        local done = not style and Guide.QuestCompleted(quest.id)
+        setIcon(self.icon, style and ICONS[style.icon] or (done and ICONS.acquired or ICONS.quest), false)
         UI.SetText(self.name, tostring(quest.name))
         local facts = {}
+        if style then
+            local label = quest.state == "accepted" and quest.turnIn and "Ready to turn in" or Readiness.STATE_LABELS[quest.state]
+            table.insert(facts, Theme.Colorize(label, style.color))
+        end
         if quest.lvl then table.insert(facts, "Level " .. quest.lvl) end
         if quest.min then table.insert(facts, "Requires " .. quest.min) end
         if quest.fac and FACTIONS[quest.fac] then table.insert(facts, FACTIONS[quest.fac]) end
@@ -1213,7 +1234,17 @@ local function questRow(parent)
             local where = quest.where and (quest.where .. (quest.x and quest.y and (" " .. Guide.Coordinates(quest.x, quest.y)) or "")) or nil
             table.insert(giver, "From " .. quest.giver .. (where and (", " .. where) or ""))
         end
-        if quest.pre and quest.pre[1] then table.insert(giver, "After " .. table.concat(quest.pre, ", ")) end
+        if quest.chain and quest.chain[1] then
+            local steps = {}
+            for _, step in ipairs(quest.chain) do
+                table.insert(steps, step.name .. " (" .. Theme.Colorize(PREREQUISITE_WORDS[step.status] or "not known", step.status == "missing" and "bad"
+                    or (step.status == "done" and "good" or "textFaint")) .. ")")
+            end
+            table.insert(giver, "Needs " .. table.concat(steps, ", "))
+        elseif quest.pre and quest.pre[1] then
+            table.insert(giver, "After " .. table.concat(quest.pre, ", "))
+        end
+        if quest.why then table.insert(giver, Theme.Colorize("Not known: " .. quest.why, "textFaint")) end
         UI.SetText(self.giver, #giver > 0 and table.concat(giver, SEP) or Theme.Colorize("No giver or objective in the atlas.", "textFaint"))
         UI.SetText(self.objective, quest.obj or "")
         local rewards = {}
@@ -1341,6 +1372,8 @@ local function buildDungeonPage(view)
     page.quests = scrollArea(view, "quests", page)
     page.quests:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -52)
     page.questRows = pool(function() return questRow(page.quests.child) end)
+    page.questHeads = pool(function() return UI.SectionHeader(page.quests.child, "") end)
+    page.questSummary = wrapText(page.quests.child, "label", "text", 400)
     page.runs = scrollArea(view, "runs", page)
     page.runs:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -52)
     page.runRows = pool(function() return runRow(page.runs.child, nil) end)
@@ -1627,31 +1660,172 @@ function GuideUI.LayoutCreature(page)
     page.detail:SetContentHeight(y + 8)
 end
 
--- Stacks the quest rows shown for the area's width.
+-- Stacks the quest tab for the area's width: the readiness summary, then
+-- headers and quest rows in order (or, without readiness, the rows alone).
 local function layoutQuests(page)
     local width = page.quests:ContentWidth()
+    local child = page.quests.child
     local y = 0
-    for index = 1, rawget(page, "gwQuestCount") or 0 do
-        local row = page.questRows:Get(index)
-        row:ClearAllPoints()
-        row:SetPoint("TOPLEFT", page.quests.child, "TOPLEFT", 0, -y)
-        y = y + row:Layout(width) + 10
+    local summary = page.questSummary
+    if rawget(page, "gwQuestSummary") then
+        summary:ClearAllPoints()
+        summary:SetPoint("TOPLEFT", child, "TOPLEFT", 0, 0)
+        summary:SetWidth(width)
+        summary:Show()
+        local ok, measured = pcall(summary.GetStringHeight, summary)
+        y = y + math.max(14, ok and tonumber(measured) or 28) + 12
+    else
+        summary:Hide()
+    end
+    local layout = rawget(page, "gwQuestLayout")
+    if not layout then
+        layout = {}
+        for index = 1, rawget(page, "gwQuestCount") or 0 do layout[index] = { row = index } end
+    end
+    for _, item in ipairs(layout) do
+        if item.head then
+            local header = page.questHeads:Get(item.head)
+            header:ClearAllPoints()
+            header:SetPoint("TOPLEFT", child, "TOPLEFT", 0, -y)
+            header:SetWidth(width)
+            y = y + 30
+        else
+            local row = page.questRows:Get(item.row)
+            row:ClearAllPoints()
+            row:SetPoint("TOPLEFT", child, "TOPLEFT", 0, -y)
+            y = y + row:Layout(width) + 10
+        end
     end
     page.quests:SetContentHeight(y)
 end
 
-local function refreshQuests(page, instanceId)
-    local quests = Guide.Quests(instanceId)
-    local width = page.quests:ContentWidth()
-    for index, quest in ipairs(quests) do
-        local row = page.questRows:Get(index)
-        row.gwWidth = width
-        row:Fill(quest)
+-- The current character's readiness for a guide page, or nil when there is
+-- no quest catalog for it (the atlas list is shown as before).
+local function questReadiness(instanceId)
+    if not Readiness or type(Readiness.ForGuide) ~= "function" then return nil end
+    local ok, result = pcall(Readiness.ForGuide, instanceId)
+    return ok and result or nil
+end
+GuideUI.QuestReadiness = questReadiness
+
+-- One quest row's data: the catalog's quest with the atlas's objective,
+-- rewards and giver when the atlas lists it, and the character's state.
+local function questView(entry, atlasById, characterState)
+    local quest = entry.quest
+    local atlas = atlasById[quest.questId]
+    local chain = {}
+    for _, prerequisite in ipairs(quest.prerequisites or {}) do
+        local known = Readiness.Quest(prerequisite.questId)
+        table.insert(chain, { name = known and known.name or ("Quest " .. prerequisite.questId),
+            status = Readiness.PrerequisiteStatus(prerequisite, characterState or Readiness.EmptyState()) })
     end
-    page.questRows:Trim(#quests)
-    page.gwQuestCount = #quests
+    return {
+        id = quest.questId, name = quest.name, lvl = quest.level, min = quest.minLevel,
+        fac = quest.faction == "alliance" and "A" or (quest.faction == "horde" and "H" or nil),
+        giver = atlas and atlas.giver or quest.giver, where = atlas and atlas.where or quest.zone,
+        x = atlas and atlas.where and atlas.x or quest.x, y = atlas and atlas.where and atlas.y or quest.y,
+        obj = atlas and atlas.obj, rew = atlas and atlas.rew, choice = atlas and atlas.choice,
+        prek = quest.prerequisitesKnown == false and false or nil,
+        state = entry.state, chain = #chain > 0 and chain or nil,
+        why = entry.state == "unknown" and Readiness.UnknownReason(entry.reasons) or nil,
+        turnIn = entry.turnIn,
+    }
+end
+
+-- The quest groups, most urgent first; quiet ones (chains, optional,
+-- completed) last. Ineligible quests are only counted.
+local function questGroups(result)
+    local function pick(list, wanted, skip)
+        local out = {}
+        for _, entry in ipairs(list) do
+            if (not wanted or wanted[entry.state]) and not (skip and skip[entry.state]) then table.insert(out, entry) end
+        end
+        return out
+    end
+    local others = {}
+    for _, entry in ipairs(result.optional) do table.insert(others, entry) end
+    for _, entry in ipairs(result.repeatable) do table.insert(others, entry) end
+    local completed = pick(result.quests, { completed = true })
+    for _, entry in ipairs(pick(others, { completed = true })) do table.insert(completed, entry) end
+    local settled = { completed = true, ineligible = true }
+    return {
+        { "Pick up before you go", pick(result.quests, { available = true }) },
+        { "Needs an earlier quest first", pick(result.quests, { prerequisites = true }) },
+        { "Not known yet", pick(result.quests, { unknown = true }) },
+        { "In your quest log", pick(result.quests, { accepted = true }) },
+        { "Prerequisite chains", pick(result.prerequisites, nil, settled) },
+        { "Optional quests", pick(others, nil, settled) },
+        { "Completed", completed },
+    }
+end
+
+local function refreshQuests(page, instanceId)
+    local width = page.quests:ContentWidth()
+    local result = questReadiness(instanceId)
+    if not result then
+        local quests = Guide.Quests(instanceId)
+        for index, quest in ipairs(quests) do
+            local row = page.questRows:Get(index)
+            row.gwWidth = width
+            row:Fill(quest)
+        end
+        page.questRows:Trim(#quests)
+        page.questHeads:Trim(0)
+        page.gwQuestCount = #quests
+        page.gwQuestLayout = nil
+        page.gwQuestSummary = nil
+        layoutQuests(page)
+        return #quests
+    end
+    local dungeon = Guide.Dungeon(instanceId)
+    local atlasById = {}
+    for _, quest in ipairs(dungeon and dungeon.quests or {}) do atlasById[quest.id] = quest end
+    -- Accepted quests whose objectives the log says are done.
+    local log = GW.CharacterQuests and GW.CharacterQuests.Debug and GW.CharacterQuests.Debug().log
+    local turnIn = {}
+    for _, entry in ipairs(log and log.entries or {}) do if entry.isComplete then turnIn[entry.questId] = true end end
+    local layout, rowCount, headCount, shown = {}, 0, 0, 0
+    for _, group in ipairs(questGroups(result)) do
+        local title, entries = group[1], group[2]
+        if #entries > 0 then
+            headCount = headCount + 1
+            page.questHeads:Get(headCount):SetTitle(title .. " (" .. #entries .. ")")
+            page.questHeads:Get(headCount):Show()
+            table.insert(layout, { head = headCount })
+            for _, entry in ipairs(entries) do
+                rowCount = rowCount + 1
+                local row = page.questRows:Get(rowCount)
+                row.gwWidth = width
+                entry.turnIn = turnIn[entry.quest.questId]
+                row:Fill(questView(entry, atlasById, result.state))
+                table.insert(layout, { row = rowCount })
+                shown = shown + 1
+            end
+        end
+    end
+    page.questRows:Trim(rowCount)
+    page.questHeads:Trim(headCount)
+    page.gwQuestCount = rowCount
+    page.gwQuestLayout = layout
+    local characterState = result.state
+    local lines = { Theme.Colorize(Readiness.READINESS_LABELS[result.readiness], READINESS_COLOR[result.readiness]) .. SEP .. Readiness.Summary(result) }
+    if not characterState then
+        table.insert(lines, Theme.Colorize("Your quests have not been read yet (they are, out of combat).", "textFaint"))
+    elseif characterState.completed.coverage ~= "full" or characterState.questLog.coverage ~= "full" then
+        local missing = {}
+        if characterState.completed.coverage == "none" then table.insert(missing, "which quests you completed") end
+        if characterState.questLog.coverage == "none" then table.insert(missing, "your quest log (expand every header)") end
+        if #missing > 0 then table.insert(lines, Theme.Colorize("The game did not give " .. table.concat(missing, " or ") .. ".", "textFaint")) end
+    end
+    if result.counts.ineligible > 0 then
+        table.insert(lines, Theme.Colorize(result.counts.ineligible .. " dungeon quest" .. (result.counts.ineligible == 1 and " is" or "s are")
+            .. " not for you (faction, race, class or level).", "textFaint"))
+    end
+    table.insert(lines, Theme.Colorize("Quest facts are Classic reference data, not confirmed on Forever.", "textFaint"))
+    UI.SetText(page.questSummary, table.concat(lines, "\n"))
+    page.gwQuestSummary = true
     layoutQuests(page)
-    return #quests
+    return shown, result
 end
 
 local function refreshRuns(page, instanceId)
@@ -1694,6 +1868,10 @@ local function refreshDungeonPage(view, current)
     local currentGuide, currentInstance = Guide.CurrentGuideId(), Guide.CurrentInstanceId()
     if instanceId == currentGuide or (currentGuide == currentInstance and currentInstance ~= nil and Guide.InstanceIdOf(instanceId) == currentInstance) then
         table.insert(parts, Theme.Colorize("You are here", "good"))
+    end
+    local readiness = questReadiness(instanceId)
+    if readiness and (readiness.required > 0 or readiness.questList == "unknown") then
+        table.insert(parts, Theme.Colorize(Readiness.OVERVIEW_LABELS[readiness.required > 0 and readiness.readiness or "none"], READINESS_COLOR[readiness.readiness]))
     end
     UI.SetText(page.sub, table.concat(parts, SEP))
     local entry = Guide.Entry(instanceId) or {}
@@ -1751,8 +1929,8 @@ local function refreshDungeonPage(view, current)
             refreshMap(page, instanceId, dungeon, states)
         end
     elseif tab == "quests" then
-        local count = refreshQuests(page, instanceId)
-        local noList = count == 0 and dungeon and dungeon.qlist == false
+        local count, result = refreshQuests(page, instanceId)
+        local noList = count == 0 and ((dungeon and dungeon.qlist == false) or (result and result.questList == "unknown"))
         UI.SetText(page.empty, noList and "No quest list is known for this dungeon yet. That does not mean it has none."
             or (count == 0 and "No quests for this dungeon in the atlas for your faction." or ""))
         UI.SetShown(page.empty, count == 0)
