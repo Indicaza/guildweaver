@@ -509,13 +509,21 @@ function Guide.WantedCount(instanceId)
     return count
 end
 
+-- Which reference sources list a creature's item: its digit in the
+-- creature's `ls` (1 AzerothCore, 2 DungeonPlanner, 3 both), as words.
+local LISTED_BY = { ["1"] = "AzerothCore", ["2"] = "DungeonPlanner", ["3"] = "AzerothCore and DungeonPlanner" }
+function Guide.ListedBy(creature, index)
+    local codes = type(creature) == "table" and creature.ls
+    return type(codes) == "string" and LISTED_BY[string.sub(codes, index, index)] or nil
+end
+
 -- Item ids a creature drops, with wishlist state.
 function Guide.CreatureLoot(creature)
     local rows = {}
-    for _, itemId in ipairs(type(creature) == "table" and creature.loot or {}) do
+    for index, itemId in ipairs(type(creature) == "table" and creature.loot or {}) do
         local wanted = Guide.Wanted(itemId)
         table.insert(rows, { itemId = itemId, item = Guide.Item(itemId), wanted = wanted,
-            acquired = wanted and Guide.Acquired(wanted.itemKey) or false })
+            acquired = wanted and Guide.Acquired(wanted.itemKey) or false, listedBy = Guide.ListedBy(creature, index) })
     end
     return rows
 end
@@ -534,10 +542,10 @@ end
 -- dungeon but missing from the reference lists go to "other" too.
 -- Returns { [creature] = rows, other = rows }; rows as LootRows. The
 -- grouping is cached per dungeon; wishlist state is read on each call.
-local function lootRow(itemId, from, kind)
+local function lootRow(itemId, from, kind, listedBy)
     local wanted = Guide.Wanted(itemId)
     return { itemId = itemId, item = Guide.Item(itemId), from = from, kind = kind, wanted = wanted,
-        acquired = wanted and Guide.Acquired(wanted.itemKey) or Guide.Acquired("i:" .. itemId) }
+        acquired = wanted and Guide.Acquired(wanted.itemKey) or Guide.Acquired("i:" .. itemId), listedBy = listedBy }
 end
 
 local function lootGrouping(dungeon)
@@ -550,7 +558,7 @@ local function lootGrouping(dungeon)
             local key = Guide.NormalizeName(creature.name)
             if key and not byName[key] then byName[key] = creature end
             local items = {}
-            for _, itemId in ipairs(creature.loot or {}) do table.insert(items, { itemId, creature.name }) end
+            for index, itemId in ipairs(creature.loot or {}) do table.insert(items, { itemId, creature.name, Guide.ListedBy(creature, index) }) end
             grouping.creatures[creature] = items
         end
     end
@@ -568,7 +576,7 @@ function Guide.SourceLoot(instanceId, creature)
     if not dungeon or type(creature) ~= "table" then return {} end
     local rows = {}
     for _, pair in ipairs(lootGrouping(dungeon).creatures[creature] or {}) do
-        table.insert(rows, lootRow(pair[1], pair[2], "creature"))
+        table.insert(rows, lootRow(pair[1], pair[2], "creature", pair[3]))
     end
     return rows
 end

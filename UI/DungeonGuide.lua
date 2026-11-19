@@ -290,6 +290,7 @@ function GuideUI.ShowItemTooltip(owner, row)
         if facts then addLine(tooltip, facts, "text", true) end
     end
     if row.from then addLine(tooltip, "Drops from " .. row.from, "textMuted") end
+    if row.listedBy then addLine(tooltip, "Listed by " .. row.listedBy .. " (Classic reference)", "textFaint") end
     if row.item and row.item.set then addLine(tooltip, "Set: " .. row.item.set, "textMuted") end
     if row.acquired then
         addLine(tooltip, "On your wishlist " .. DASH .. " acquired", "good")
@@ -1516,6 +1517,8 @@ local function refreshCreature(page, instanceId, dungeon, current, states)
         if kind == "rare" then table.insert(facts, creature.elite and "Rare elite" or "Rare")
         elseif kind == "trash" then table.insert(facts, "Dangerous trash" .. (creature.n and creature.n > 1 and ("  " .. TIMES .. creature.n) or ""))
         elseif class then table.insert(facts, class) end
+        -- Its loot is a chest the encounter leaves (Majordomo's Cache of the Firelord).
+        if creature.chest then table.insert(facts, "Loot: " .. creature.chest) end
         if observed then table.insert(facts, STATE_TEXT[observed] .. (observed == "defeated" and Theme.Colorize(" this run", "textMuted") or "")) end
         UI.SetText(page.facts, table.concat(facts, SEP))
         loot, abilities = Guide.SourceLoot(instanceId, creature), Guide.OrderedAbilities(creature)
@@ -1551,7 +1554,8 @@ local function refreshCreature(page, instanceId, dungeon, current, states)
     page.moreHeader:SetTitle("Other abilities")
     page.lootHeader:SetTitle("Loot" .. (#loot > 0 and (" (" .. #loot .. ")") or ""))
     UI.SetText(page.abilityEmpty, #abilities == 0 and "No abilities in the atlas for this creature. That does not mean it has none." or "")
-    UI.SetText(page.lootEmpty, #loot == 0 and ("No loot listed for " .. tostring(creature and creature.name or "this") .. ".") or "")
+    -- An empty list only says no reference source links an item to it.
+    UI.SetText(page.lootEmpty, #loot == 0 and ("No loot data for " .. tostring(creature and creature.name or "this") .. " yet. That does not mean it drops nothing.") or "")
     layoutGrid(page.cells, loot, d, 0, 0, width, CELL, CELL_GAP)
     page.gwCreature = { kind = kind, top = topCount, count = count, loot = loot, noAbilities = #abilities == 0 }
     page.gwLootCount, page.gwAbilityCount = #loot, count
