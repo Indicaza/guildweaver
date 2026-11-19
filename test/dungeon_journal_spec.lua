@@ -338,7 +338,7 @@ do
     truthy(cards[1].gwData.gwSuggested, "suggested dungeons first")
     contains(cards[1].flags.gwText, "Your level")
     -- Filters: search, level band, raids.
-    view.browser.search.GetText = function() return "dead" end
+    view.browser.search.GetText = function() return "deadm" end
     view.browser.search:GetScript("OnTextChanged")(view.browser.search)
     equal(view.gwShownCards, 1, "search by name")
     equal(cards[1].gwData.id, 36)

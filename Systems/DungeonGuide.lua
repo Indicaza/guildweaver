@@ -34,7 +34,8 @@ Guide.LABEL_COLORS = { KICK = "info", TANK = "bad", HEAL = "good", DISPEL = "ale
 
 local PRIORITY_SCORE = { high = 30, medium = 20, low = 10 }
 
-local cache = { dungeons = {}, layouts = {}, spells = nil, items = nil, abilities = {}, ordered = {}, pins = {}, display = {}, sourced = {} }
+local cache = { dungeons = {}, layouts = {}, spells = nil, items = nil, abilities = {}, ordered = {}, pins = {}, display = {}, sourced = {},
+    entries = {}, floors = {} }
 Guide.cache = cache
 
 local function data()
@@ -56,12 +57,98 @@ function Guide.Index()
     return atlas and atlas.index or {}
 end
 
--- Dungeons in the index, sorted by level band then name.
+-- Ids and wings ------------------------------------------------------------------------
+--
+-- A guide id is a dungeon's game instance ID (a number) or, for a dungeon
+-- whose wings are played as separate dungeons (Scarlet Monastery, Dire Maul,
+-- Stratholme, Blackrock Spire), a wing's key ("scarlet-monastery:library").
+-- Wings come from Holdfast's wing manifest (keys and wings in the generated
+-- atlas): a wing owns the bosses and rares listed for it; quests, trash and
+-- other loot are the dungeon's, shared by its wings. Every wing of a dungeon
+-- is the same game instance.
+
+local function wingData(id)
+    local atlas = data()
+    return type(id) == "string" and atlas and atlas.wings and atlas.wings[id] or nil
+end
+Guide.Wing = wingData
+
+-- The wing keys of a dungeon, in order, or nil.
+function Guide.WingsOf(instanceId)
+    local atlas = data()
+    local order = atlas and atlas.wingOrder and atlas.wingOrder[tonumber(instanceId) or 0]
+    return order and #order > 0 and order or nil
+end
+
+-- The game instance a guide id stands for.
+function Guide.InstanceIdOf(id)
+    local wing = wingData(id)
+    if wing then return wing.i end
+    return tonumber(id)
+end
+
+-- The website's dungeon key of a guide id ("deadmines", or the wing key).
+function Guide.DungeonKeyOf(id)
+    if wingData(id) then return id end
+    local atlas = data()
+    return atlas and atlas.keys and atlas.keys[tonumber(id) or 0] or nil
+end
+
+-- A guide id from saved or linked data (a number, a numeric string or a
+-- wing key), or nil when the atlas does not know it.
+function Guide.NormalizeId(value)
+    if wingData(value) then return value end
+    local id = tonumber(value)
+    return id and Guide.Index()[id] and id or nil
+end
+
+-- The index entry of a guide id: a dungeon's own, or for a wing the
+-- dungeon's with the wing's name, level band and boss and rare counts.
+function Guide.Entry(id)
+    local wing = wingData(id)
+    if not wing then return Guide.Index()[tonumber(id) or 0] end
+    local cached = cache.entries[id]
+    if cached then return cached end
+    local parent = Guide.Index()[wing.i] or {}
+    local entry = {}
+    for key, value in pairs(parent) do entry[key] = value end
+    entry.name, entry.wing, entry.parentName, entry.instanceId = wing.name, wing.wing, parent.name, wing.i
+    entry.lmin, entry.lmax = wing.lmin or parent.lmin, wing.lmax or parent.lmax
+    entry.bosses, entry.rares = #(wing.npcs or {}), #(wing.rares or {})
+    cache.entries[id] = entry
+    return entry
+end
+
+-- The wing a boss (by encounter or NPC ID) belongs to, or nil: unassigned,
+-- or a dungeon without wings.
+function Guide.WingForBoss(instanceId, encounterId, npcId)
+    encounterId, npcId = tonumber(encounterId), tonumber(npcId)
+    for _, key in ipairs(Guide.WingsOf(instanceId) or {}) do
+        local wing = wingData(key)
+        for _, e in ipairs(wing.enc or {}) do if encounterId and e == encounterId then return key end end
+        for _, n in ipairs(wing.npcs or {}) do if npcId and n == npcId then return key end end
+        for _, n in ipairs(wing.rares or {}) do if npcId and n == npcId then return key end end
+    end
+    return nil
+end
+
+-- Dungeons in the index, sorted by level band then name. A dungeon played
+-- as wings is listed once per wing instead (its own page stays reachable by
+-- its instance ID).
 function Guide.List()
     if cache.list then return cache.list end
     local list = {}
     for id, entry in pairs(Guide.Index()) do
-        table.insert(list, { id = id, name = entry.name, kind = entry.kind, lmin = entry.lmin, lmax = entry.lmax, zone = entry.zone })
+        local wings = Guide.WingsOf(id)
+        if wings then
+            for _, key in ipairs(wings) do
+                local wing = Guide.Entry(key)
+                table.insert(list, { id = key, name = wing.name, kind = wing.kind, lmin = wing.lmin, lmax = wing.lmax, zone = wing.zone,
+                    instanceId = id, wing = wing.wing })
+            end
+        else
+            table.insert(list, { id = id, name = entry.name, kind = entry.kind, lmin = entry.lmin, lmax = entry.lmax, zone = entry.zone, instanceId = id })
+        end
     end
     table.sort(list, function(a, b)
         if (a.kind == "raid") ~= (b.kind == "raid") then return b.kind == "raid" end
@@ -84,8 +171,65 @@ local function measure(name, fn, ...)
     return fn(...)
 end
 
--- One dungeon's detail, built on first use and cached. nil when unknown.
+-- A wing's detail: its dungeon's, narrowed to the wing. Its own bosses and
+-- rares; the dungeon's trash, quests and other loot, shared (minus drops a
+-- sibling wing's boss or rare is named for); and the bosses no wing owns.
+local function buildWing(key, wing)
+    local parent = Guide.Dungeon(wing.i)
+    if not parent then return nil end
+    local npcs, rares, siblings = {}, {}, {}
+    for _, npc in ipairs(wing.npcs or {}) do npcs[npc] = true end
+    for _, npc in ipairs(wing.rares or {}) do rares[npc] = true end
+    for _, other in ipairs(Guide.WingsOf(wing.i) or {}) do
+        local sibling = other ~= key and wingData(other)
+        for _, npc in ipairs(sibling and sibling.npcs or {}) do siblings[npc] = true end
+        for _, npc in ipairs(sibling and sibling.rares or {}) do siblings[npc] = true end
+    end
+    local dungeon = {}
+    for field, value in pairs(parent) do dungeon[field] = value end
+    dungeon.id, dungeon.instanceId, dungeon.wingKey, dungeon.wing = key, wing.i, key, wing.wing
+    dungeon.name, dungeon.parentName = wing.name, parent.name
+    dungeon.lmin, dungeon.lmax, dungeon.levelSource = wing.lmin or parent.lmin, wing.lmax or parent.lmax, wing.lsrc
+    if wing.emap and wing.ex and wing.ey then dungeon.entrance = { map = wing.emap, x = wing.ex, y = wing.ey } end
+    dungeon.bosses, dungeon.rares = {}, {}
+    local siblingNames = {}
+    for _, boss in ipairs(parent.bosses or {}) do
+        if boss.npc and npcs[boss.npc] then table.insert(dungeon.bosses, boss)
+        elseif boss.npc and siblings[boss.npc] then siblingNames[Guide.NormalizeName(boss.name) or ""] = true end
+    end
+    for _, rare in ipairs(parent.rares or {}) do
+        if rare.npc and rares[rare.npc] then table.insert(dungeon.rares, rare)
+        elseif rare.npc and siblings[rare.npc] then siblingNames[Guide.NormalizeName(rare.name) or ""] = true end
+    end
+    dungeon.other = {}
+    for _, entry in ipairs(parent.other or {}) do
+        if not (entry.from and siblingNames[Guide.NormalizeName(entry.from) or ""]) then table.insert(dungeon.other, entry) end
+    end
+    dungeon.shared = true
+    local atlas = data()
+    local loose = atlas and atlas.unassigned and atlas.unassigned[wing.i] or {}
+    local unassigned = {}
+    for _, npc in ipairs(loose.npcs or {}) do
+        for _, list in ipairs({ parent.bosses or {}, parent.rares or {} }) do
+            for _, creature in ipairs(list) do if creature.npc == npc then table.insert(unassigned, creature.name) end end
+        end
+    end
+    for _, name in ipairs(loose.names or {}) do table.insert(unassigned, name) end
+    dungeon.unassigned = unassigned
+    return dungeon
+end
+
+-- One dungeon's (or wing's) detail, built on first use and cached. nil when
+-- unknown.
 function Guide.Dungeon(instanceId)
+    local wing = wingData(instanceId)
+    if wing then
+        local cached = cache.dungeons[instanceId]
+        if cached ~= nil then return cached or nil end
+        local ok, dungeon = pcall(buildWing, instanceId, wing)
+        cache.dungeons[instanceId] = ok and type(dungeon) == "table" and dungeon or false
+        return cache.dungeons[instanceId] or nil
+    end
     instanceId = tonumber(instanceId)
     if not instanceId then return nil end
     local cached = cache.dungeons[instanceId]
@@ -102,6 +246,7 @@ function Guide.Dungeon(instanceId)
 end
 
 function Guide.IsBuilt(instanceId)
+    if wingData(instanceId) then return cache.dungeons[instanceId] ~= nil end
     return cache.dungeons[tonumber(instanceId) or 0] ~= nil
 end
 
@@ -192,6 +337,18 @@ function Guide.CurrentInstanceId()
     instanceId = ok and tonumber(instanceId) or nil
     if not instanceId or kind == "none" then return nil end
     return Guide.Index()[instanceId] and instanceId or nil
+end
+
+-- What the guide should show for the instance the player is in: the wing
+-- the open run resolved (DungeonSessions, from real evidence), else the
+-- dungeon itself; never a wing picked for the player.
+function Guide.CurrentGuideId()
+    local instanceId = Guide.CurrentInstanceId()
+    if not instanceId or not Guide.WingsOf(instanceId) then return instanceId end
+    local run = Guide.CurrentRun()
+    local key = run and run.wing and run.wing.key
+    if key and wingData(key) and wingData(key).i == instanceId then return key end
+    return instanceId
 end
 
 -- Abilities ----------------------------------------------------------------------------
@@ -329,7 +486,8 @@ function Guide.LootRows(instanceId)
     -- The website's own wishlist, for items it says come from here.
     local loot = sync()
     local active = loot and type(loot.Active) == "function" and loot.Active() or nil
-    local wantedName = Guide.DungeonKey(dungeon.name)
+    -- The website names the game instance (a wing shares its dungeon's).
+    local wantedName = Guide.DungeonKey(dungeon.parentName or dungeon.name)
     if active and active.matched and active.character then
         for _, entry in ipairs(active.character.wishlist.items) do
             if not seen[entry.itemId] and wantedName and Guide.DungeonKey(entry.source) == wantedName then
@@ -458,6 +616,13 @@ end
 -- built, the website's source names before that.
 function Guide.DungeonWishlistCount(instanceId, byDungeon)
     if Guide.IsBuilt(instanceId) and Guide.Dungeon(instanceId) then return Guide.WantedCount(instanceId) end
+    -- A wing before it is built: the website names only the instance, which
+    -- would count every wing's items; built from its dungeon if that is.
+    local wing = wingData(instanceId)
+    if wing then
+        if Guide.IsBuilt(wing.i) and Guide.Dungeon(instanceId) then return Guide.WantedCount(instanceId) end
+        return 0
+    end
     local entry = Guide.Index()[tonumber(instanceId) or 0]
     return entry and (byDungeon or Guide.WishlistByDungeon())[Guide.DungeonKey(entry.name)] or 0
 end
@@ -477,8 +642,19 @@ function Guide.RunInstanceId(entry)
     return nil
 end
 
+-- The guide id a finished run belongs to: the wing its own evidence
+-- resolved (recorded when the run was), else its dungeon.
+function Guide.RunGuideId(entry)
+    local id = Guide.RunInstanceId(entry)
+    local key = type(entry) == "table" and entry.wingKey
+    if id and key and wingData(key) and wingData(key).i == id then return key end
+    return id
+end
+
 -- Finished runs worth listing (not the empty stubs a disconnect leaves),
--- all or one dungeon's, newest first. Only reads DungeonSessions' history.
+-- all or one dungeon's, newest first. A wing lists the runs resolved to it;
+-- a dungeon lists every run of its instance (ambiguous ones included).
+-- Only reads DungeonSessions' history.
 function Guide.Runs(instanceId)
     local sessions = GW.DungeonSessions
     local history = sessions and type(sessions.History) == "function" and sessions.History() or {}
@@ -486,7 +662,10 @@ function Guide.Runs(instanceId)
     for _, entry in ipairs(history) do
         local empty = (entry.status == "interrupted" or entry.status == "abandoned")
             and (tonumber(entry.timerSeconds) or 0) == 0 and (tonumber(entry.bossesDefeated) or 0) == 0
-        if not empty and (not instanceId or Guide.RunInstanceId(entry) == tonumber(instanceId)) then table.insert(list, entry) end
+        local mine = not instanceId
+            or (wingData(instanceId) and Guide.RunGuideId(entry) == instanceId)
+            or (not wingData(instanceId) and Guide.RunInstanceId(entry) == tonumber(instanceId))
+        if not empty and mine then table.insert(list, entry) end
     end
     return list
 end
@@ -525,7 +704,7 @@ end
 
 -- The spawn layout's cells as { x, y } in 0-1, decoded once per dungeon.
 function Guide.LayoutPoints(instanceId)
-    instanceId = tonumber(instanceId)
+    instanceId = wingData(instanceId) and instanceId or tonumber(instanceId)
     local cached = cache.layouts[instanceId]
     if cached then return cached end
     local dungeon = Guide.Dungeon(instanceId)
@@ -557,8 +736,49 @@ local function art()
 end
 Guide.Art = art
 
--- The instance's floors: { { n = name or nil, t = 12 file IDs } }, or {}.
+-- A wing's floors: the floors its sources name, else the floors Blizzard's
+-- journal places one of its bosses on, else none (the guide then shows no
+-- map rather than a floor that may be another wing's). Returns the floors
+-- and, per wing floor, the dungeon floor's index.
+local function wingFloors(key, wing)
+    local cached = cache.floors[key]
+    if cached then return cached.list, cached.index end
+    local maps = art() and art().maps
+    local all = maps and maps[wing.i] or {}
+    local keep = {}
+    if #(wing.floors or {}) > 0 then
+        local named = {}
+        for _, name in ipairs(wing.floors) do named[Guide.NormalizeName(name) or ""] = true end
+        for index, floor in ipairs(all) do
+            if floor.n and named[Guide.NormalizeName(floor.n) or ""] then keep[index] = true end
+        end
+    else
+        local bosses = {}
+        local parent = Guide.Dungeon(wing.i)
+        for _, boss in ipairs(parent and parent.bosses or {}) do
+            for _, npc in ipairs(wing.npcs or {}) do
+                if boss.npc == npc then bosses[Guide.NormalizeName(boss.name) or ""] = true end
+            end
+        end
+        for _, pin in ipairs(art() and art().pins and art().pins[wing.i] or {}) do
+            if bosses[Guide.NormalizeName(pin.n) or ""] and all[pin.f] then keep[pin.f] = true end
+        end
+    end
+    local list, index = {}, {}
+    for position, floor in ipairs(all) do
+        if keep[position] then
+            table.insert(list, floor)
+            index[#list] = position
+        end
+    end
+    cache.floors[key] = { list = list, index = index }
+    return list, index
+end
+
+-- The instance's (or wing's) floors: { { n = name or nil, t = 12 file IDs } }, or {}.
 function Guide.Floors(instanceId)
+    local wing = wingData(instanceId)
+    if wing then return (wingFloors(instanceId, wing)) end
     local maps = art() and art().maps
     return maps and maps[tonumber(instanceId) or 0] or {}
 end
@@ -568,22 +788,32 @@ end
 -- the journal did not place has no pin: its spot is never guessed, and the
 -- atlas's own spawn layout (another projection) is never laid over the map.
 function Guide.Pins(instanceId)
-    instanceId = tonumber(instanceId) or 0
+    local wing = wingData(instanceId)
+    instanceId = wing and instanceId or (tonumber(instanceId) or 0)
     local cached = cache.pins[instanceId]
     if cached then return cached end
     local dungeon = Guide.Dungeon(instanceId)
-    local placed = art() and art().pins and art().pins[instanceId]
+    local placed = art() and art().pins and art().pins[wing and wing.i or instanceId]
     local floors = Guide.Floors(instanceId)
+    -- A wing's floor numbers are its own: the dungeon floor a pin is on maps
+    -- to one of them, or the pin is not shown (another wing's floor).
+    local floorOf = {}
+    if wing then
+        local _, index = wingFloors(instanceId, wing)
+        for own, position in pairs(index) do floorOf[position] = own end
+    else
+        for position in ipairs(floors) do floorOf[position] = position end
+    end
     local pins = {}
     if dungeon and placed then
         local byName = {}
         for _, pin in ipairs(placed) do
             local key = Guide.NormalizeName(pin.n)
-            if key and floors[pin.f] then byName[key] = pin end
+            if key and floorOf[pin.f] then byName[key] = pin end
         end
         for index, boss in ipairs(dungeon.bosses) do
             local pin = byName[Guide.NormalizeName(boss.name) or ""]
-            if pin then table.insert(pins, { creature = boss, index = index, floor = pin.f, x = pin.x, y = pin.y }) end
+            if pin then table.insert(pins, { creature = boss, index = index, floor = floorOf[pin.f], x = pin.x, y = pin.y }) end
         end
     end
     cache.pins[instanceId] = pins
@@ -611,6 +841,7 @@ function Guide.DisplayId(instanceId, creature)
     local cached = cache.display[creature]
     if cached ~= nil then return cached or nil end
     local displayId
+    instanceId = Guide.InstanceIdOf(instanceId)
     local registry = GW.DungeonBosses
     if creature.e and registry and type(registry.DisplayId) == "function" then
         displayId = registry.DisplayId(instanceId, creature.e, creature.name)
@@ -656,7 +887,7 @@ end
 function Guide.EncounterState(instanceId, creature, run)
     if type(creature) ~= "table" then return nil end
     if run == nil then run = Guide.CurrentRun() end
-    if not run or tonumber(run.instanceId) ~= tonumber(instanceId) then return nil end
+    if not run or tonumber(run.instanceId) ~= Guide.InstanceIdOf(instanceId) then return nil end
     local key = Guide.NormalizeName(creature.name)
     local function same(encounterId, name)
         if encounterId and creature.e then return tonumber(encounterId) == creature.e end
@@ -722,23 +953,27 @@ end
 
 -- The dungeon the guide shows: the one the player picked (kept across
 -- /reload) unless "follow" is on and the player is in a known instance.
+-- (A guide id: a wing picked or resolved is its wing key.)
 function Guide.SelectedInstanceId()
     local value = prefs()
-    local current = Guide.CurrentInstanceId()
+    local current = Guide.CurrentGuideId()
     if current and (not value or value.follow ~= false) then return current end
-    local picked = value and tonumber(value.instanceId)
-    if picked and Guide.Index()[picked] then return picked end
+    local picked = value and (Guide.NormalizeId(value.wingKey) or Guide.NormalizeId(value.instanceId))
+    if picked then return picked end
     return current or Guide.SuggestedInstanceId()
 end
 
+-- Saves the dungeon (instanceId) and, for a wing, its key apart: older
+-- saved settings keep working and a wing key never stands in for an ID.
 function Guide.Select(instanceId)
     local value = prefs()
-    instanceId = tonumber(instanceId)
-    if value and instanceId and Guide.Index()[instanceId] then
-        value.instanceId = instanceId
+    local id = Guide.NormalizeId(instanceId)
+    if value and id then
+        value.instanceId = Guide.InstanceIdOf(id)
+        value.wingKey = wingData(id) and id or nil
         -- Picking another dungeon while inside one stops following it.
         local current = Guide.CurrentInstanceId()
-        value.follow = current == nil or current == instanceId
+        value.follow = current == nil or current == value.instanceId
         return true
     end
     return false
@@ -751,6 +986,7 @@ end
 
 function Guide.Reset()
     cache.dungeons, cache.layouts, cache.spells, cache.items, cache.list, cache.pins = {}, {}, nil, nil, nil, {}
+    cache.entries, cache.floors = {}, {}
     cache.art = nil
     cache.abilities = setmetatable({}, { __mode = "k" })
     cache.ordered = setmetatable({}, { __mode = "k" })

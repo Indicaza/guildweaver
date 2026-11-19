@@ -481,7 +481,10 @@ do
     end
     guideUI.Navigate(guideUI.Pages.browser())
     guide.Dungeon = build
-    truthy(builds <= #guide.List(), "each dungeon is built at most once")
+    -- Every card once, and a wing's dungeon once for all its wings.
+    local parents = 0
+    for id in pairs(guide.Index()) do if guide.WingsOf(id) then parents = parents + 1 end end
+    truthy(builds <= #guide.List() + parents, "each dungeon is built at most once")
     equal(onUpdates(), updatesBefore, "the journal adds no OnUpdate handlers")
     equal(env:itemTooltipScans(), 0, "no item tooltip scans")
     equal(env:callCount("GetItemInfo"), 0, "no item info queries")

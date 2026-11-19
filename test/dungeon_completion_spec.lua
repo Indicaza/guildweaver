@@ -174,7 +174,9 @@ do
     local payload = lastPayload(env)
     equal(payload.status, "completed")
     equal(payload.endReason, "required_bosses_defeated")
-    equal(payload.completion.basis, "required_bosses")
+    -- Sent as "none" until Holdfast accepts the basis (#300); the claim rides along.
+    equal(payload.completion.basis, "none")
+    equal(payload.completion.claimed, "required_bosses")
     equal(payload.classification.kind, "full_clear")
     equal(payload.bosses.total, 4, "the lockout's total is kept as reported")
     equal(payload.bosses.mandatoryTotal, 3)
@@ -292,7 +294,8 @@ do
     zone(env, nil)
     local payload = lastPayload(env)
     equal(payload.status, "completed")
-    equal(payload.completion.basis, "required_bosses")
+    equal(payload.completion.basis, "none", "sent as none until Holdfast accepts it")
+    equal(payload.completion.claimed, "required_bosses")
     truthy(pbFor(addon, SUMP, "full_clear"), "a verified full clear")
 end
 
@@ -471,7 +474,8 @@ do
     equal(addon.DungeonHud.ClassLabel(run.classification), "Full clear (unverified)")
     zone(env, nil)
     local payload = lastPayload(env)
-    equal(payload.completion.basis, "required_bosses_unconfirmed")
+    equal(payload.completion.basis, "none", "sent as none until Holdfast accepts it")
+    equal(payload.completion.claimed, "required_bosses_unconfirmed")
     equal(pbFor(addon, BARROW, "full_clear"), nil, "no personal best from an unverified clear")
     -- The final boss (observed, by ID) still proves a dungeon clear: kept
     -- apart, it is not the stronger full clear.

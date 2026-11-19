@@ -1,0 +1,1075 @@
+{
+  "schemaVersion": 1,
+  "note": "Generated from backend/src/Atlas/atlasWings.js and data/atlas.json by scripts/exportWingManifest.mjs. Do not edit.",
+  "sharing": "Quests, trash and chest loot are never a wing's own: every wing shares them. Bosses and rares not listed in a wing are unassigned.",
+  "sources": [
+    {
+      "id": "atlas-entrances",
+      "tier": "classic-reference",
+      "confidence": "high",
+      "note": "Entrances whose area trigger the atlas already names after the wing"
+    },
+    {
+      "id": "dungeon-planner",
+      "tier": "community-unverified",
+      "confidence": "medium",
+      "note": "Boss roster per wing (DungeonPlanner, MIT; its research cites Wowhead Classic and warcraft.wiki.gg)"
+    },
+    {
+      "id": "instance-journal",
+      "tier": "community-unverified",
+      "confidence": "medium",
+      "note": "Boss and rare roster and level band per wing (InstanceJournal, public domain)"
+    },
+    {
+      "id": "openmap",
+      "tier": "forever-reference",
+      "confidence": "medium",
+      "note": "Map floor names and their wings, from the client's UiMap tables and the WoW Forever install (OpenMap, MIT); no art is used"
+    },
+    {
+      "id": "wago-classic-era",
+      "tier": "classic-reference",
+      "confidence": "high",
+      "note": "Wing name and level band from the Classic Era client's LFGDungeons table"
+    }
+  ],
+  "dungeons": [
+    {
+      "instanceId": 33,
+      "dungeonKey": "shadowfang-keep",
+      "name": "Shadowfang Keep",
+      "wings": []
+    },
+    {
+      "instanceId": 34,
+      "dungeonKey": "stormwind-stockade",
+      "name": "Stormwind Stockade",
+      "wings": []
+    },
+    {
+      "instanceId": 36,
+      "dungeonKey": "deadmines",
+      "name": "Deadmines",
+      "wings": []
+    },
+    {
+      "instanceId": 43,
+      "dungeonKey": "wailing-caverns",
+      "name": "Wailing Caverns",
+      "wings": []
+    },
+    {
+      "instanceId": 47,
+      "dungeonKey": "razorfen-kraul",
+      "name": "Razorfen Kraul",
+      "wings": []
+    },
+    {
+      "instanceId": 48,
+      "dungeonKey": "blackfathom-deeps",
+      "name": "Blackfathom Deeps",
+      "wings": []
+    },
+    {
+      "instanceId": 70,
+      "dungeonKey": "uldaman",
+      "name": "Uldaman",
+      "wings": []
+    },
+    {
+      "instanceId": 90,
+      "dungeonKey": "gnomeregan",
+      "name": "Gnomeregan",
+      "wings": []
+    },
+    {
+      "instanceId": 109,
+      "dungeonKey": "sunken-temple",
+      "name": "Sunken Temple",
+      "wings": []
+    },
+    {
+      "instanceId": 129,
+      "dungeonKey": "razorfen-downs",
+      "name": "Razorfen Downs",
+      "wings": []
+    },
+    {
+      "instanceId": 189,
+      "dungeonKey": "scarlet-monastery",
+      "name": "Scarlet Monastery",
+      "wings": [
+        {
+          "dungeonKey": "scarlet-monastery:graveyard",
+          "parentKey": "scarlet-monastery",
+          "slug": "graveyard",
+          "wing": "Graveyard",
+          "name": "Scarlet Monastery — Graveyard",
+          "levelMin": 30,
+          "levelMax": 37,
+          "levelSource": "instance-journal",
+          "bosses": [
+            {
+              "npcId": 3983,
+              "encounterId": 444,
+              "name": "Interrogator Vishas",
+              "sources": [
+                "dungeon-planner",
+                "instance-journal"
+              ]
+            },
+            {
+              "npcId": 4543,
+              "encounterId": 2779,
+              "name": "Bloodmage Thalnos",
+              "sources": [
+                "dungeon-planner",
+                "instance-journal"
+              ]
+            }
+          ],
+          "rares": [
+            {
+              "npcId": 6490,
+              "encounterId": null,
+              "name": "Azshir the Sleepless",
+              "sources": [
+                "instance-journal"
+              ]
+            },
+            {
+              "npcId": 6488,
+              "encounterId": null,
+              "name": "Fallen Champion",
+              "sources": [
+                "instance-journal"
+              ]
+            },
+            {
+              "npcId": 6489,
+              "encounterId": null,
+              "name": "Ironspine",
+              "sources": [
+                "instance-journal"
+              ]
+            }
+          ],
+          "floors": [
+            "Graveyard"
+          ],
+          "entrancesShared": false,
+          "entrances": [
+            {
+              "areaTriggerId": 45,
+              "mapId": 1422,
+              "x": 0.2826,
+              "y": 0.1543
+            }
+          ]
+        },
+        {
+          "dungeonKey": "scarlet-monastery:library",
+          "parentKey": "scarlet-monastery",
+          "slug": "library",
+          "wing": "Library",
+          "name": "Scarlet Monastery — Library",
+          "levelMin": 32,
+          "levelMax": 40,
+          "levelSource": "instance-journal",
+          "bosses": [
+            {
+              "npcId": 3974,
+              "encounterId": 446,
+              "name": "Houndmaster Loksey",
+              "sources": [
+                "dungeon-planner",
+                "instance-journal"
+              ]
+            },
+            {
+              "npcId": 6487,
+              "encounterId": 447,
+              "name": "Arcanist Doan",
+              "sources": [
+                "dungeon-planner",
+                "instance-journal"
+              ]
+            }
+          ],
+          "rares": [],
+          "floors": [
+            "Library"
+          ],
+          "entrancesShared": false,
+          "entrances": [
+            {
+              "areaTriggerId": 614,
+              "mapId": 1422,
+              "x": 0.2887,
+              "y": 0.1768
+            }
+          ]
+        },
+        {
+          "dungeonKey": "scarlet-monastery:armory",
+          "parentKey": "scarlet-monastery",
+          "slug": "armory",
+          "wing": "Armory",
+          "name": "Scarlet Monastery — Armory",
+          "levelMin": 34,
+          "levelMax": 42,
+          "levelSource": "instance-journal",
+          "bosses": [
+            {
+              "npcId": 3975,
+              "encounterId": 448,
+              "name": "Herod",
+              "sources": [
+                "dungeon-planner",
+                "instance-journal"
+              ]
+            }
+          ],
+          "rares": [],
+          "floors": [
+            "Armory"
+          ],
+          "entrancesShared": false,
+          "entrances": [
+            {
+              "areaTriggerId": 612,
+              "mapId": 1422,
+              "x": 0.2921,
+              "y": 0.1705
+            }
+          ]
+        },
+        {
+          "dungeonKey": "scarlet-monastery:cathedral",
+          "parentKey": "scarlet-monastery",
+          "slug": "cathedral",
+          "wing": "Cathedral",
+          "name": "Scarlet Monastery — Cathedral",
+          "levelMin": 35,
+          "levelMax": 45,
+          "levelSource": "instance-journal",
+          "bosses": [
+            {
+              "npcId": 4542,
+              "encounterId": 449,
+              "name": "High Inquisitor Fairbanks",
+              "sources": [
+                "dungeon-planner",
+                "instance-journal"
+              ]
+            },
+            {
+              "npcId": 3977,
+              "encounterId": 450,
+              "name": "High Inquisitor Whitemane",
+              "sources": [
+                "dungeon-planner",
+                "instance-journal"
+              ]
+            }
+          ],
+          "rares": [],
+          "floors": [
+            "Cathedral"
+          ],
+          "entrancesShared": false,
+          "entrances": [
+            {
+              "areaTriggerId": 610,
+              "mapId": 1422,
+              "x": 0.2877,
+              "y": 0.154
+            }
+          ]
+        }
+      ],
+      "unassigned": {
+        "bosses": [],
+        "rares": []
+      }
+    },
+    {
+      "instanceId": 209,
+      "dungeonKey": "zulfarrak",
+      "name": "Zul'Farrak",
+      "wings": []
+    },
+    {
+      "instanceId": 229,
+      "dungeonKey": "blackrock-spire",
+      "name": "Blackrock Spire",
+      "wings": [
+        {
+          "dungeonKey": "blackrock-spire:lower",
+          "parentKey": "blackrock-spire",
+          "slug": "lower",
+          "wing": "Lower",
+          "name": "Lower Blackrock Spire",
+          "levelMin": 52,
+          "levelMax": 60,
+          "levelSource": "wago-classic-era",
+          "bosses": [
+            {
+              "npcId": 9196,
+              "encounterId": 267,
+              "name": "Highlord Omokk",
+              "sources": [
+                "dungeon-planner",
+                "instance-journal"
+              ]
+            },
+            {
+              "npcId": 9236,
+              "encounterId": 268,
+              "name": "Shadow Hunter Vosh'gajin",
+              "sources": [
+                "dungeon-planner",
+                "instance-journal"
+              ]
+            },
+            {
+              "npcId": 9237,
+              "encounterId": 269,
+              "name": "War Master Voone",
+              "sources": [
+                "dungeon-planner",
+                "instance-journal"
+              ]
+            },
+            {
+              "npcId": 10596,
+              "encounterId": 270,
+              "name": "Mother Smolderweb",
+              "sources": [
+                "dungeon-planner",
+                "instance-journal"
+              ]
+            },
+            {
+              "npcId": 10584,
+              "encounterId": 271,
+              "name": "Urok Doomhowl",
+              "sources": [
+                "dungeon-planner",
+                "instance-journal"
+              ]
+            },
+            {
+              "npcId": 9736,
+              "encounterId": 272,
+              "name": "Quartermaster Zigris",
+              "sources": [
+                "dungeon-planner",
+                "instance-journal"
+              ]
+            },
+            {
+              "npcId": 10220,
+              "encounterId": 274,
+              "name": "Halycon",
+              "sources": [
+                "dungeon-planner",
+                "instance-journal"
+              ]
+            },
+            {
+              "npcId": 10268,
+              "encounterId": 273,
+              "name": "Gizrul the Slavener",
+              "sources": [
+                "dungeon-planner",
+                "instance-journal"
+              ]
+            },
+            {
+              "npcId": 9568,
+              "encounterId": 275,
+              "name": "Overlord Wyrmthalak",
+              "sources": [
+                "dungeon-planner",
+                "instance-journal"
+              ]
+            }
+          ],
+          "rares": [
+            {
+              "npcId": 9596,
+              "encounterId": null,
+              "name": "Bannok Grimaxe",
+              "sources": [
+                "instance-journal"
+              ]
+            },
+            {
+              "npcId": 10376,
+              "encounterId": null,
+              "name": "Crystal Fang",
+              "sources": [
+                "instance-journal"
+              ]
+            },
+            {
+              "npcId": 9718,
+              "encounterId": null,
+              "name": "Ghok Bashguud",
+              "sources": [
+                "instance-journal"
+              ]
+            },
+            {
+              "npcId": 9218,
+              "encounterId": null,
+              "name": "Spirestone Battle Lord",
+              "sources": [
+                "instance-journal"
+              ]
+            },
+            {
+              "npcId": 9219,
+              "encounterId": null,
+              "name": "Spirestone Butcher",
+              "sources": [
+                "instance-journal"
+              ]
+            },
+            {
+              "npcId": 9217,
+              "encounterId": null,
+              "name": "Spirestone Lord Magus",
+              "sources": [
+                "instance-journal"
+              ]
+            }
+          ],
+          "floors": [],
+          "entrancesShared": true,
+          "entrances": []
+        },
+        {
+          "dungeonKey": "blackrock-spire:upper",
+          "parentKey": "blackrock-spire",
+          "slug": "upper",
+          "wing": "Upper",
+          "name": "Upper Blackrock Spire",
+          "levelMin": 56,
+          "levelMax": 60,
+          "levelSource": "wago-classic-era",
+          "bosses": [
+            {
+              "npcId": 9816,
+              "encounterId": 3062,
+              "name": "Pyroguard Emberseer",
+              "sources": [
+                "dungeon-planner",
+                "instance-journal"
+              ]
+            },
+            {
+              "npcId": 10429,
+              "encounterId": 3063,
+              "name": "Warchief Rend Blackhand",
+              "sources": [
+                "dungeon-planner",
+                "instance-journal"
+              ]
+            },
+            {
+              "npcId": 10430,
+              "encounterId": 3068,
+              "name": "The Beast",
+              "sources": [
+                "dungeon-planner",
+                "instance-journal"
+              ]
+            },
+            {
+              "npcId": 10363,
+              "encounterId": 3069,
+              "name": "General Drakkisath",
+              "sources": [
+                "dungeon-planner",
+                "instance-journal"
+              ]
+            },
+            {
+              "npcId": 16042,
+              "encounterId": 3070,
+              "name": "Lord Valthalak",
+              "sources": [
+                "instance-journal"
+              ]
+            }
+          ],
+          "rares": [
+            {
+              "npcId": 10899,
+              "encounterId": null,
+              "name": "Goraluk Anvilcrack",
+              "sources": [
+                "instance-journal"
+              ]
+            },
+            {
+              "npcId": 10509,
+              "encounterId": null,
+              "name": "Jed Runewatcher",
+              "sources": [
+                "instance-journal"
+              ]
+            }
+          ],
+          "floors": [],
+          "entrancesShared": true,
+          "entrances": []
+        }
+      ],
+      "unassigned": {
+        "bosses": [],
+        "rares": [
+          {
+            "npcId": 10263,
+            "encounterId": null,
+            "name": "Burning Felguard",
+            "sources": []
+          }
+        ]
+      }
+    },
+    {
+      "instanceId": 230,
+      "dungeonKey": "blackrock-depths",
+      "name": "Blackrock Depths",
+      "wings": []
+    },
+    {
+      "instanceId": 249,
+      "dungeonKey": "onyxias-lair",
+      "name": "Onyxia's Lair",
+      "wings": []
+    },
+    {
+      "instanceId": 289,
+      "dungeonKey": "scholomance",
+      "name": "Scholomance",
+      "wings": []
+    },
+    {
+      "instanceId": 309,
+      "dungeonKey": "zulgurub",
+      "name": "Zul'Gurub",
+      "wings": []
+    },
+    {
+      "instanceId": 329,
+      "dungeonKey": "stratholme",
+      "name": "Stratholme",
+      "wings": [
+        {
+          "dungeonKey": "stratholme:live",
+          "parentKey": "stratholme",
+          "slug": "live",
+          "wing": "Live",
+          "name": "Stratholme — Live (Main Gate)",
+          "levelMin": 56,
+          "levelMax": 60,
+          "levelSource": "parent",
+          "bosses": [
+            {
+              "npcId": 10558,
+              "encounterId": 473,
+              "name": "Hearthsinger Forresten",
+              "sources": [
+                "dungeon-planner"
+              ]
+            },
+            {
+              "npcId": 10808,
+              "encounterId": 474,
+              "name": "Timmy the Cruel",
+              "sources": [
+                "dungeon-planner"
+              ]
+            },
+            {
+              "npcId": 11032,
+              "encounterId": 476,
+              "name": "Malor the Zealous",
+              "sources": [
+                "dungeon-planner"
+              ]
+            },
+            {
+              "npcId": 10997,
+              "encounterId": 475,
+              "name": "Cannon Master Willey",
+              "sources": [
+                "dungeon-planner"
+              ]
+            },
+            {
+              "npcId": 10811,
+              "encounterId": 477,
+              "name": "Archivist Galford",
+              "sources": [
+                "dungeon-planner"
+              ]
+            },
+            {
+              "npcId": 10813,
+              "encounterId": 478,
+              "name": "Balnazzar",
+              "sources": [
+                "dungeon-planner"
+              ]
+            },
+            {
+              "npcId": 10516,
+              "encounterId": 472,
+              "name": "The Unforgiven",
+              "sources": [
+                "dungeon-planner"
+              ]
+            }
+          ],
+          "rares": [],
+          "floors": [
+            "Crusader's Square"
+          ],
+          "entrancesShared": true,
+          "entrances": []
+        },
+        {
+          "dungeonKey": "stratholme:undead",
+          "parentKey": "stratholme",
+          "slug": "undead",
+          "wing": "Undead",
+          "name": "Stratholme — Undead (Service Entrance)",
+          "levelMin": 56,
+          "levelMax": 60,
+          "levelSource": "parent",
+          "bosses": [
+            {
+              "npcId": 10436,
+              "encounterId": 479,
+              "name": "Baroness Anastari",
+              "sources": [
+                "dungeon-planner"
+              ]
+            },
+            {
+              "npcId": 10437,
+              "encounterId": 480,
+              "name": "Nerub'enkan",
+              "sources": [
+                "dungeon-planner"
+              ]
+            },
+            {
+              "npcId": 10438,
+              "encounterId": 481,
+              "name": "Maleki the Pallid",
+              "sources": [
+                "dungeon-planner"
+              ]
+            },
+            {
+              "npcId": 10435,
+              "encounterId": 482,
+              "name": "Magistrate Barthilas",
+              "sources": [
+                "dungeon-planner"
+              ]
+            },
+            {
+              "npcId": 10439,
+              "encounterId": 483,
+              "name": "Ramstein the Gorger",
+              "sources": [
+                "dungeon-planner"
+              ]
+            },
+            {
+              "npcId": 10440,
+              "encounterId": 484,
+              "name": "Baron Rivendare",
+              "sources": [
+                "dungeon-planner"
+              ]
+            },
+            {
+              "npcId": 11143,
+              "encounterId": 2798,
+              "name": "Postmaster Malown",
+              "sources": [
+                "dungeon-planner"
+              ]
+            }
+          ],
+          "rares": [],
+          "floors": [
+            "The Gauntlet"
+          ],
+          "entrancesShared": true,
+          "entrances": []
+        }
+      ],
+      "unassigned": {
+        "bosses": [
+          {
+            "npcId": 11121,
+            "encounterId": 2795,
+            "name": "Black Guard Swordsmith",
+            "sources": []
+          },
+          {
+            "npcId": 11120,
+            "encounterId": 2796,
+            "name": "Crimson Hammersmith",
+            "sources": []
+          },
+          {
+            "npcId": null,
+            "encounterId": 2797,
+            "name": "Ezra Grimm",
+            "sources": []
+          },
+          {
+            "npcId": 10393,
+            "encounterId": 2799,
+            "name": "Skul",
+            "sources": []
+          },
+          {
+            "npcId": 10809,
+            "encounterId": 2800,
+            "name": "Stonespine",
+            "sources": []
+          }
+        ],
+        "rares": []
+      }
+    },
+    {
+      "instanceId": 349,
+      "dungeonKey": "maraudon",
+      "name": "Maraudon",
+      "wings": []
+    },
+    {
+      "instanceId": 389,
+      "dungeonKey": "ragefire-chasm",
+      "name": "Ragefire Chasm",
+      "wings": []
+    },
+    {
+      "instanceId": 409,
+      "dungeonKey": "molten-core",
+      "name": "Molten Core",
+      "wings": []
+    },
+    {
+      "instanceId": 429,
+      "dungeonKey": "dire-maul",
+      "name": "Dire Maul",
+      "wings": [
+        {
+          "dungeonKey": "dire-maul:east",
+          "parentKey": "dire-maul",
+          "slug": "east",
+          "wing": "East",
+          "name": "Dire Maul — East",
+          "levelMin": 54,
+          "levelMax": 60,
+          "levelSource": "wago-classic-era",
+          "bosses": [
+            {
+              "npcId": 11490,
+              "encounterId": 343,
+              "name": "Zevrim Thornhoof",
+              "sources": [
+                "dungeon-planner",
+                "instance-journal"
+              ]
+            },
+            {
+              "npcId": 13280,
+              "encounterId": 344,
+              "name": "Hydrospawn",
+              "sources": [
+                "dungeon-planner",
+                "instance-journal"
+              ]
+            },
+            {
+              "npcId": 14327,
+              "encounterId": 345,
+              "name": "Lethtendris",
+              "sources": [
+                "dungeon-planner",
+                "instance-journal"
+              ]
+            },
+            {
+              "npcId": 14354,
+              "encounterId": 2792,
+              "name": "Pusillin",
+              "sources": [
+                "dungeon-planner",
+                "instance-journal"
+              ]
+            },
+            {
+              "npcId": 11492,
+              "encounterId": 346,
+              "name": "Alzzin the Wildshaper",
+              "sources": [
+                "dungeon-planner",
+                "instance-journal"
+              ]
+            }
+          ],
+          "rares": [],
+          "floors": [
+            "Warpwood Quarter",
+            "The Shrine of Eldretharr"
+          ],
+          "entrancesShared": false,
+          "entrances": [
+            {
+              "areaTriggerId": 3183,
+              "mapId": 1444,
+              "x": 0.6486,
+              "y": 0.2943
+            },
+            {
+              "areaTriggerId": 3184,
+              "mapId": 1444,
+              "x": 0.672,
+              "y": 0.3485
+            },
+            {
+              "areaTriggerId": 3185,
+              "mapId": 1444,
+              "x": 0.7651,
+              "y": 0.3586
+            }
+          ]
+        },
+        {
+          "dungeonKey": "dire-maul:west",
+          "parentKey": "dire-maul",
+          "slug": "west",
+          "wing": "West",
+          "name": "Dire Maul — West",
+          "levelMin": 56,
+          "levelMax": 60,
+          "levelSource": "wago-classic-era",
+          "bosses": [
+            {
+              "npcId": 11489,
+              "encounterId": 350,
+              "name": "Tendris Warpwood",
+              "sources": [
+                "dungeon-planner",
+                "instance-journal"
+              ]
+            },
+            {
+              "npcId": 11488,
+              "encounterId": 347,
+              "name": "Illyanna Ravenoak",
+              "sources": [
+                "dungeon-planner",
+                "instance-journal"
+              ]
+            },
+            {
+              "npcId": 11487,
+              "encounterId": 348,
+              "name": "Magister Kalendris",
+              "sources": [
+                "dungeon-planner",
+                "instance-journal"
+              ]
+            },
+            {
+              "npcId": 11496,
+              "encounterId": 349,
+              "name": "Immol'thar",
+              "sources": [
+                "dungeon-planner",
+                "instance-journal"
+              ]
+            },
+            {
+              "npcId": 11486,
+              "encounterId": 361,
+              "name": "Prince Tortheldrin",
+              "sources": [
+                "dungeon-planner",
+                "instance-journal"
+              ]
+            },
+            {
+              "npcId": 11467,
+              "encounterId": 2794,
+              "name": "Tsu'zee",
+              "sources": [
+                "instance-journal"
+              ]
+            }
+          ],
+          "rares": [],
+          "floors": [
+            "Capital Gardens",
+            "Court of the Highborne",
+            "Prison of Immol'Thar"
+          ],
+          "entrancesShared": false,
+          "entrances": [
+            {
+              "areaTriggerId": 3186,
+              "mapId": 1444,
+              "x": 0.6031,
+              "y": 0.3175
+            },
+            {
+              "areaTriggerId": 3187,
+              "mapId": 1444,
+              "x": 0.6032,
+              "y": 0.2968
+            }
+          ]
+        },
+        {
+          "dungeonKey": "dire-maul:north",
+          "parentKey": "dire-maul",
+          "slug": "north",
+          "wing": "North",
+          "name": "Dire Maul — North",
+          "levelMin": 56,
+          "levelMax": 60,
+          "levelSource": "wago-classic-era",
+          "bosses": [
+            {
+              "npcId": 14326,
+              "encounterId": 362,
+              "name": "Guard Mol'dar",
+              "sources": [
+                "dungeon-planner",
+                "instance-journal"
+              ]
+            },
+            {
+              "npcId": 14322,
+              "encounterId": 363,
+              "name": "Stomper Kreeg",
+              "sources": [
+                "dungeon-planner",
+                "instance-journal"
+              ]
+            },
+            {
+              "npcId": 14321,
+              "encounterId": 364,
+              "name": "Guard Fengus",
+              "sources": [
+                "dungeon-planner",
+                "instance-journal"
+              ]
+            },
+            {
+              "npcId": 14323,
+              "encounterId": 365,
+              "name": "Guard Slip'kik",
+              "sources": [
+                "dungeon-planner",
+                "instance-journal"
+              ]
+            },
+            {
+              "npcId": 14325,
+              "encounterId": 366,
+              "name": "Captain Kromcrush",
+              "sources": [
+                "dungeon-planner",
+                "instance-journal"
+              ]
+            },
+            {
+              "npcId": 14324,
+              "encounterId": 367,
+              "name": "Cho'Rush the Observer",
+              "sources": [
+                "dungeon-planner"
+              ]
+            },
+            {
+              "npcId": 11501,
+              "encounterId": 368,
+              "name": "King Gordok",
+              "sources": [
+                "dungeon-planner",
+                "instance-journal"
+              ]
+            }
+          ],
+          "rares": [],
+          "floors": [
+            "Gordok Commons"
+          ],
+          "entrancesShared": false,
+          "entrances": [
+            {
+              "areaTriggerId": 3189,
+              "mapId": 1444,
+              "x": 0.6292,
+              "y": 0.2491
+            }
+          ]
+        }
+      ],
+      "unassigned": {
+        "bosses": [
+          {
+            "npcId": 14506,
+            "encounterId": 2793,
+            "name": "Lord Hel'nurath",
+            "sources": []
+          }
+        ],
+        "rares": []
+      }
+    },
+    {
+      "instanceId": 469,
+      "dungeonKey": "blackwing-lair",
+      "name": "Blackwing Lair",
+      "wings": []
+    },
+    {
+      "instanceId": 509,
+      "dungeonKey": "ruins-of-ahnqiraj",
+      "name": "Ruins of Ahn'Qiraj",
+      "wings": []
+    },
+    {
+      "instanceId": 531,
+      "dungeonKey": "ahnqiraj-temple",
+      "name": "Ahn'Qiraj Temple",
+      "wings": []
+    },
+    {
+      "instanceId": 533,
+      "dungeonKey": "naxxramas",
+      "name": "Naxxramas",
+      "wings": []
+    }
+  ]
+}
