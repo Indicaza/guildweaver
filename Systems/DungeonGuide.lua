@@ -32,15 +32,9 @@ Guide.LABELS = {
 }
 Guide.LABEL_COLORS = { KICK = "info", TANK = "bad", HEAL = "good", DISPEL = "alertWishlist", MOVE = "warn", CC = "alertBoe", NOTE = "textMuted", CAST = "textMuted" }
 
--- Which categories matter most to a role (first = most).
-Guide.ROLE_FOCUS = {
-    tank = { ["tank-danger"] = 3, ["positioning"] = 2, ["crowd-control"] = 1 },
-    healer = { ["healer-danger"] = 3, ["dispel"] = 2, ["crowd-control"] = 1 },
-    dps = { ["interrupt"] = 3, ["crowd-control"] = 2, ["positioning"] = 1 },
-}
 local PRIORITY_SCORE = { high = 30, medium = 20, low = 10 }
 
-local cache = { dungeons = {}, layouts = {}, spells = nil, items = nil, abilities = {}, pins = {}, display = {} }
+local cache = { dungeons = {}, layouts = {}, spells = nil, items = nil, abilities = {}, ordered = {}, pins = {}, display = {}, sourced = {} }
 Guide.cache = cache
 
 local function data()
@@ -226,55 +220,56 @@ function Guide.Abilities(creature)
     return rows
 end
 
--- The player's role for ordering: "tank", "healer" or "dps" when the client
--- or the setting says; nil otherwise (atlas order).
-function Guide.Role()
-    local prefs = GW.UiPrefs and GW.UiPrefs.Get and GW.UiPrefs.Get("dungeonGuide")
-    local chosen = prefs and prefs.role
-    if chosen == "tank" or chosen == "healer" or chosen == "dps" then return chosen end
-    local G = Globals
-    if type(G.UnitGroupRolesAssigned) == "function" then
-        local ok, role = pcall(G.UnitGroupRolesAssigned, "player")
-        if ok then
-            if role == "TANK" then return "tank" end
-            if role == "HEALER" then return "healer" end
-            if role == "DAMAGER" then return "dps" end
-        end
-    end
-    return nil
+-- The order mechanics are shown in, the same for every player (there is no
+-- role switch): 1. dangerous interrupts, 2. lethal or major mechanics (high
+-- priority, tank and healer dangers, positioning), 3. dispels and crowd
+-- control, 4. everything else. Within a group the atlas's priority, then its
+-- own order. The source data is never changed.
+local GROUP_BY_LABEL = { KICK = 1, TANK = 2, HEAL = 2, MOVE = 2, DISPEL = 3, CC = 3 }
+
+function Guide.MechanicGroup(row)
+    local group = GROUP_BY_LABEL[row.label] or 4
+    if group == 4 and row.spell.p == "high" then group = 2 end
+    return group
 end
 
-local function relevance(spell, role)
-    if not role then return 0 end
-    if type(spell.r) == "string" then
-        return string.find("," .. spell.r .. ",", "," .. role .. ",", 1, true) and 3 or 0
-    end
-    local focus = Guide.ROLE_FOCUS[role][spell.c] or 0
-    if role == "dps" and spell.k == true then focus = math.max(focus, 3) end
-    return focus
-end
-
--- The 2-4 mechanics to show first. High-priority abilities always rank
--- above low ones; within a priority the role's focus decides. Returns at
--- most `limit` (default 4) rows and how many there were in all.
-function Guide.TopMechanics(creature, role, limit)
-    limit = limit or 4
-    local rows = Guide.Abilities(creature)
+-- Every ability of a creature in that order. Cached per creature.
+function Guide.OrderedAbilities(creature)
+    if type(creature) ~= "table" then return {} end
+    local cached = cache.ordered[creature]
+    if cached then return cached end
     local ranked = {}
-    for index, row in ipairs(rows) do
-        table.insert(ranked, { row = row, score = (PRIORITY_SCORE[row.spell.p] or 10) + relevance(row.spell, role) * 2, index = index })
+    for index, row in ipairs(Guide.Abilities(creature)) do
+        table.insert(ranked, { row = row, group = Guide.MechanicGroup(row), score = PRIORITY_SCORE[row.spell.p] or 10, index = index })
     end
     table.sort(ranked, function(a, b)
+        if a.group ~= b.group then return a.group < b.group end
         if a.score ~= b.score then return a.score > b.score end
         return a.index < b.index
     end)
+    local rows = {}
+    for _, entry in ipairs(ranked) do table.insert(rows, entry.row) end
+    cache.ordered[creature] = rows
+    return rows
+end
+
+-- The 2-4 mechanics to show first: the head of that order, without
+-- low-priority notes past the second. Returns them and how many abilities
+-- the creature has in all. (The second argument, once a role, is ignored.)
+function Guide.TopMechanics(creature, _, limit)
+    limit = limit or 4
+    local rows = Guide.OrderedAbilities(creature)
     local top = {}
-    for index = 1, math.min(limit, #ranked) do
-        -- Low-priority notes only fill the list up to two.
-        local entry = ranked[index]
-        if index <= 2 or entry.row.spell.p ~= "low" then table.insert(top, entry.row) end
+    for index = 1, math.min(limit, #rows) do
+        local row = rows[index]
+        if index <= 2 or row.spell.p ~= "low" then table.insert(top, row) end
     end
     return top, #rows
+end
+
+-- Kept for callers: there is no manual role any more.
+function Guide.Role()
+    return nil
 end
 
 -- One line for an ability: "KICK Fireball - 3s cast · interruptible".
@@ -372,6 +367,142 @@ function Guide.HasWantedLoot(creature)
         if row.wanted and not row.acquired then return true end
     end
     return false
+end
+
+-- The dungeon's loot by where it drops, never guessed: each boss's and
+-- rare's own list, the "other" drops whose named source is exactly a listed
+-- creature (dangerous trash included), and the rest (no source, or a source
+-- the atlas lists no creature for) under "other". Wishlist items naming the
+-- dungeon but missing from the reference lists go to "other" too.
+-- Returns { [creature] = rows, other = rows }; rows as LootRows. The
+-- grouping is cached per dungeon; wishlist state is read on each call.
+local function lootRow(itemId, from, kind)
+    local wanted = Guide.Wanted(itemId)
+    return { itemId = itemId, item = Guide.Item(itemId), from = from, kind = kind, wanted = wanted,
+        acquired = wanted and Guide.Acquired(wanted.itemKey) or Guide.Acquired("i:" .. itemId) }
+end
+
+local function lootGrouping(dungeon)
+    local grouping = cache.sourced[dungeon]
+    if grouping then return grouping end
+    grouping = { creatures = {}, other = {} }
+    local byName = {}
+    for _, list in ipairs({ dungeon.bosses or {}, dungeon.rares or {}, dungeon.trash or {} }) do
+        for _, creature in ipairs(list) do
+            local key = Guide.NormalizeName(creature.name)
+            if key and not byName[key] then byName[key] = creature end
+            local items = {}
+            for _, itemId in ipairs(creature.loot or {}) do table.insert(items, { itemId, creature.name }) end
+            grouping.creatures[creature] = items
+        end
+    end
+    for _, entry in ipairs(dungeon.other or {}) do
+        local owner = entry.from and byName[Guide.NormalizeName(entry.from)]
+        table.insert(owner and grouping.creatures[owner] or grouping.other, { entry.item, entry.from })
+    end
+    cache.sourced[dungeon] = grouping
+    return grouping
+end
+
+-- One creature's loot rows (its own list and the drops attributed to it).
+function Guide.SourceLoot(instanceId, creature)
+    local dungeon = Guide.Dungeon(instanceId)
+    if not dungeon or type(creature) ~= "table" then return {} end
+    local rows = {}
+    for _, pair in ipairs(lootGrouping(dungeon).creatures[creature] or {}) do
+        table.insert(rows, lootRow(pair[1], pair[2], "creature"))
+    end
+    return rows
+end
+
+-- Loot with no verified source in the dungeon.
+function Guide.OtherLoot(instanceId)
+    local dungeon = Guide.Dungeon(instanceId)
+    if not dungeon then return {} end
+    local grouping = lootGrouping(dungeon)
+    local seen, rows = {}, {}
+    for _, items in pairs(grouping.creatures) do
+        for _, pair in ipairs(items) do seen[pair[1]] = true end
+    end
+    for _, pair in ipairs(grouping.other) do
+        if not seen[pair[1]] then
+            seen[pair[1]] = true
+            table.insert(rows, lootRow(pair[1], pair[2], "other"))
+        end
+    end
+    for _, row in ipairs(Guide.LootRows(instanceId)) do
+        if row.kind == "wishlist" and not seen[row.itemId] then
+            seen[row.itemId] = true
+            table.insert(rows, row)
+        end
+    end
+    return rows
+end
+
+-- Wishlist items per dungeon (not yet acquired), by the dungeon the website
+-- names as their source: { [DungeonKey] = count }. A cheap read for the
+-- dungeon cards (no dungeon is built for it).
+function Guide.WishlistByDungeon()
+    local counts = {}
+    local loot = sync()
+    local active = loot and type(loot.Active) == "function" and loot.Active() or nil
+    if not (active and active.matched and active.character and active.character.wishlist) then return counts end
+    for _, entry in ipairs(active.character.wishlist.items or {}) do
+        local key = Guide.DungeonKey(entry.source)
+        if key and not Guide.Acquired(entry.itemKey) then counts[key] = (counts[key] or 0) + 1 end
+    end
+    return counts
+end
+
+-- A dungeon card's wishlist count: the reference loot once the dungeon is
+-- built, the website's source names before that.
+function Guide.DungeonWishlistCount(instanceId, byDungeon)
+    if Guide.IsBuilt(instanceId) and Guide.Dungeon(instanceId) then return Guide.WantedCount(instanceId) end
+    local entry = Guide.Index()[tonumber(instanceId) or 0]
+    return entry and (byDungeon or Guide.WishlistByDungeon())[Guide.DungeonKey(entry.name)] or 0
+end
+
+-- Runs -------------------------------------------------------------------------------------
+
+-- The instance a finished run was in: its key ("i36:1"), else its name.
+function Guide.RunInstanceId(entry)
+    if type(entry) ~= "table" then return nil end
+    local id = type(entry.instanceKey) == "string" and tonumber(string.match(entry.instanceKey, "^i(%d+)")) or nil
+    if id and Guide.Index()[id] then return id end
+    local key = Guide.DungeonKey(entry.name)
+    if not key then return nil end
+    for indexId, indexEntry in pairs(Guide.Index()) do
+        if Guide.DungeonKey(indexEntry.name) == key then return indexId end
+    end
+    return nil
+end
+
+-- Finished runs worth listing (not the empty stubs a disconnect leaves),
+-- all or one dungeon's, newest first. Only reads DungeonSessions' history.
+function Guide.Runs(instanceId)
+    local sessions = GW.DungeonSessions
+    local history = sessions and type(sessions.History) == "function" and sessions.History() or {}
+    local list = {}
+    for _, entry in ipairs(history) do
+        local empty = (entry.status == "interrupted" or entry.status == "abandoned")
+            and (tonumber(entry.timerSeconds) or 0) == 0 and (tonumber(entry.bossesDefeated) or 0) == 0
+        if not empty and (not instanceId or Guide.RunInstanceId(entry) == tonumber(instanceId)) then table.insert(list, entry) end
+    end
+    return list
+end
+
+-- Quests -----------------------------------------------------------------------------------
+
+-- True only when the client confirms the quest was completed.
+function Guide.QuestCompleted(questId)
+    questId = tonumber(questId)
+    if not questId then return false end
+    local log = Globals.C_QuestLog
+    local check = (log and type(log.IsQuestFlaggedCompleted) == "function" and log.IsQuestFlaggedCompleted)
+        or (type(Globals.IsQuestFlaggedCompleted) == "function" and Globals.IsQuestFlaggedCompleted) or nil
+    if not check then return false end
+    local ok, value = pcall(check, questId)
+    return ok and value == true
 end
 
 -- Quests the player's faction can take (all when the faction is unknown).
@@ -622,7 +753,11 @@ function Guide.Reset()
     cache.dungeons, cache.layouts, cache.spells, cache.items, cache.list, cache.pins = {}, {}, nil, nil, nil, {}
     cache.art = nil
     cache.abilities = setmetatable({}, { __mode = "k" })
+    cache.ordered = setmetatable({}, { __mode = "k" })
+    cache.sourced = setmetatable({}, { __mode = "k" })
     cache.display = setmetatable({}, { __mode = "k" })
 end
 cache.abilities = setmetatable({}, { __mode = "k" })
+cache.ordered = setmetatable({}, { __mode = "k" })
+cache.sourced = setmetatable({}, { __mode = "k" })
 cache.display = setmetatable({}, { __mode = "k" })

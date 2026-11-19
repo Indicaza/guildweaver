@@ -2,8 +2,9 @@ local _, GW = ...
 
 -- The Guildweaver dashboard: a sidebar of modules and one view at a time.
 --   Overview     what each module is doing, one card each
---   Dungeons     the open run and its timer, recent runs, objectives
---   Dungeon Guide  bosses, mechanics, loot and rares (UI/DungeonGuide.lua)
+--   Dungeons     the dungeon journal (UI/DungeonGuide.lua): every dungeon,
+--                its map, bosses, loot, quests and your runs, and the open
+--                run's status
 --   Farming      the timed farming run, this session's fishing
 --   Sync & Data  what is waiting for the bridge, Sync now, and an Advanced
 --                section for diagnostics
@@ -12,17 +13,28 @@ local _, GW = ...
 -- is false; the quest system itself keeps running.
 -- Built on first open, not at login. While open it updates live numbers
 -- once a second; closed, it does nothing at all.
+--
+-- The window is resizable (the grip in its bottom-right corner): 1050 x 700
+-- by default, never smaller than 740 x 500 or larger than the screen, the
+-- size saved with the dashboard's preferences. Views lay themselves out for
+-- the content area's size: a view may give a layout(view, width, height)
+-- that runs once when it is built and again after each resize (out of
+-- combat), never while the grip is being dragged.
 GW.MainFrame = GW.MainFrame or {}
 
 local Globals = _G or {}
 local Main = GW.MainFrame
 local UI, Theme, Prefs = GW.UI, GW.Theme, GW.UiPrefs
 
-local WIDTH, HEIGHT = 740, 500
+local WIDTH, HEIGHT = 1050, 700
+local MIN_WIDTH, MIN_HEIGHT = 740, 500
 local HEADER = 44
 local SIDEBAR = 168
 local PAD = 20
-local CONTENT_WIDTH = WIDTH - SIDEBAR - PAD * 2
+-- The narrowest content area: what the fixed parts of the views are built for.
+local CONTENT_WIDTH = MIN_WIDTH - SIDEBAR - PAD * 2
+Main.DEFAULT_SIZE = { WIDTH, HEIGHT }
+Main.MIN_SIZE = { MIN_WIDTH, MIN_HEIGHT }
 -- Every dashboard button is this tall; widths come in two sizes.
 local BUTTON_HEIGHT = 22
 local BUTTON_WIDE, BUTTON_NARROW = 124, 88
@@ -34,7 +46,6 @@ Main.QUESTS_ENABLED = false
 local NAV = {
     { key = "overview", label = "Overview" },
     { key = "dungeon", label = "Dungeons" },
-    { key = "guide", label = "Dungeon Guide" },
     { key = "farming", label = "Farming" },
     { key = "quests", label = "Guild Quests", enabled = function() return Main.QUESTS_ENABLED end },
     { key = "sync", label = "Sync & Data" },
@@ -51,6 +62,8 @@ Main.NAV = visibleNav()
 
 local Views = {}
 Main.Views = Views
+-- Old view keys that now open another view.
+local ALIASES = { guide = "dungeon" }
 
 local function hud() return GW.DungeonHud end
 local function sessions() return GW.DungeonSessions end
@@ -76,9 +89,12 @@ local function shortDate(timestamp)
     return ok and text or nil
 end
 
+Main.ShortDate = shortDate
+
 local function stateColor(state)
     return state == "paused" and "warn" or (state == "ready" and "textMuted" or (state == "cleared" and "gold" or "text"))
 end
+Main.StateColor = stateColor
 
 -- A page title, and an optional one-line note under it. Returns the y
 -- offset where the view's content starts.
@@ -244,6 +260,13 @@ Views.overview = {
             quests:SetPoint("TOPLEFT", sync, "BOTTOMLEFT", 0, -12)
         end
     end,
+    layout = function(view, width)
+        local half = (width - 12) / 2
+        view.cards.dungeon:SetWidth(half)
+        view.cards.farming:SetWidth(half)
+        view.cards.sync:SetWidth(width)
+        if view.cards.quests then view.cards.quests:SetWidth(width) end
+    end,
     refresh = function(view)
         local cards = view.cards
         local title, clock, state, detail = dungeonSummary()
@@ -271,241 +294,6 @@ Views.overview = {
         if run then UI.SetText(view.cards.dungeon.value, hud().ClockText(run)) end
         local status = GW.FarmingSessions.Status()
         if status and status.mode == "manual" then UI.SetText(view.cards.farming.value, duration(status.durationSeconds)) end
-    end,
-}
-
--- Dungeons ---------------------------------------------------------------------------
-
-local MAX_RECENT = 5
-local MAX_OBJECTIVE_ROWS = 6
-local RECENT_ROW = 32
-local OBJECTIVE_ROW = 22
-
-Views.dungeon = {
-    build = function(view)
-        local top = pageHeader(view, "Dungeons", "Tracked automatically in dungeons and raids. The timer starts on your first pull.")
-        local run = UI.Card(view)
-        run:SetPoint("TOPLEFT", view, "TOPLEFT", 0, top)
-        run:SetSize(CONTENT_WIDTH, 96)
-        view.runCard = run
-        -- The buttons take a 2x2 block on the right; the text keeps clear of it.
-        local textWidth = CONTENT_WIDTH - 32 - (BUTTON_NARROW * 2 + 6) - 16
-        run.name = UI.Text(run, "title", "gold")
-        run.name:SetPoint("TOPLEFT", run, "TOPLEFT", 16, -13)
-        run.name:SetWidth(textWidth)
-        pcall(run.name.SetWordWrap, run.name, false)
-        run.difficulty = run.name
-        run.clock = UI.Text(run, "clock", "text")
-        run.clock:SetPoint("TOPLEFT", run, "TOPLEFT", 16, -34)
-        run.state = UI.Text(run, "label", "textMuted")
-        run.state:SetPoint("LEFT", run.clock, "RIGHT", 12, -2)
-        run.state:SetPoint("RIGHT", run, "LEFT", 16 + textWidth, 0)
-        pcall(run.state.SetWordWrap, run.state, false)
-        run.detail = UI.Text(run, "label", "textMuted")
-        run.detail:SetPoint("BOTTOMLEFT", run, "BOTTOMLEFT", 16, 12)
-        run.detail:SetWidth(textWidth)
-        pcall(run.detail.SetWordWrap, run.detail, false)
-        run.timer = UI.Button(run, "Start", { width = BUTTON_NARROW, height = BUTTON_HEIGHT, variant = "primary", onClick = function()
-            sessions().ToggleTimer()
-            Main:RefreshView()
-        end })
-        run.timer:SetPoint("TOPRIGHT", run, "TOPRIGHT", -16, -14)
-        run.split = UI.Button(run, "Split", { width = BUTTON_NARROW, height = BUTTON_HEIGHT, tooltip = "Split",
-            tooltipLines = { "Marks a checkpoint now, named after your target when it is an NPC." },
-            onClick = function()
-                sessions().Split()
-                Main:RefreshView()
-            end })
-        run.split:SetPoint("RIGHT", run.timer, "LEFT", -6, 0)
-        run.finish = UI.ConfirmButton(run, "End run", "Click to end", { width = BUTTON_NARROW, height = BUTTON_HEIGHT,
-            tooltip = "End run", tooltipLines = { "Saves the run as completed and closes it. Pause only stops the clock." },
-            onClick = function()
-                if sessions().Finish() then
-                    GW.Print("Dungeon run saved as completed. It reaches the website after /reload or logout.")
-                end
-                Main:RefreshView()
-            end })
-        run.finish:SetPoint("TOPRIGHT", run.timer, "BOTTOMRIGHT", 0, -6)
-        run.hud = UI.Button(run, "Show HUD", { width = BUTTON_NARROW, height = BUTTON_HEIGHT, variant = "ghost", onClick = function()
-            local tracker = hud()
-            if tracker.IsEnabled() and not tracker.IsHiddenForRun() then tracker:SetEnabled(false) else tracker:ShowNow() end
-            Main:RefreshView()
-        end })
-
-        -- Recent runs and objectives, side by side.
-        local columnWidth = (CONTENT_WIDTH - 24) / 2
-        local recent = UI.SectionHeader(view, "Recent runs")
-        recent:SetPoint("TOPLEFT", run, "BOTTOMLEFT", 0, -18)
-        recent:SetWidth(columnWidth)
-        view.recentRows = {}
-        for index = 1, MAX_RECENT do
-            local line = UI.CreateFrame("Frame", view)
-            line:SetSize(columnWidth, RECENT_ROW - 2)
-            line:SetPoint("TOPLEFT", recent, "BOTTOMLEFT", 0, -8 - (index - 1) * RECENT_ROW)
-            line.name = UI.Text(line, "label", "text")
-            line.name:SetPoint("TOPLEFT", line, "TOPLEFT", 0, -1)
-            line.name:SetPoint("RIGHT", line, "RIGHT", -76, 0)
-            pcall(line.name.SetWordWrap, line.name, false)
-            line.when = UI.Text(line, "small", "textFaint")
-            line.when:SetPoint("TOPLEFT", line.name, "BOTTOMLEFT", 0, -2)
-            line.time = UI.Text(line, "label", "text", "RIGHT")
-            line.time:SetPoint("TOPRIGHT", line, "TOPRIGHT", 0, -1)
-            line.outcome = UI.Text(line, "small", "textFaint", "RIGHT")
-            line.outcome:SetPoint("TOPRIGHT", line.time, "BOTTOMRIGHT", 0, -2)
-            view.recentRows[index] = line
-        end
-        view.recentEmpty = UI.Text(view, "label", "textFaint")
-        view.recentEmpty:SetPoint("TOPLEFT", recent, "BOTTOMLEFT", 0, -10)
-        view.recentEmpty:SetText("No finished runs yet.")
-
-        local objectives = UI.SectionHeader(view, "Objectives")
-        objectives:SetPoint("TOPLEFT", run, "BOTTOMLEFT", columnWidth + 24, -18)
-        objectives:SetWidth(columnWidth)
-        view.objectivesHeader = objectives
-        view.objectiveRows = {}
-        for index = 1, MAX_OBJECTIVE_ROWS do
-            local line = UI.CreateFrame("Button", view)
-            line:SetSize(columnWidth, OBJECTIVE_ROW - 2)
-            line:SetPoint("TOPLEFT", objectives, "BOTTOMLEFT", 0, -8 - (index - 1) * OBJECTIVE_ROW)
-            -- A small square box: empty while open, gold when done.
-            line.box = UI.CreateFrame("Frame", line)
-            line.box:SetSize(10, 10)
-            line.box:SetPoint("LEFT", line, "LEFT", 1, 0)
-            Theme.Skin(line.box, "bgInset", "borderStrong")
-            line.text = UI.Text(line, "label", "text")
-            line.text:SetPoint("LEFT", line.box, "RIGHT", 8, 0)
-            line.text:SetPoint("RIGHT", line, "RIGHT", -22, 0)
-            pcall(line.text.SetWordWrap, line.text, false)
-            line.remove = UI.IconButton(line, "\195\151", { size = 18, tooltip = "Remove", onClick = function()
-                GW.DungeonObjectives.Remove(line.index)
-                Main:RefreshView()
-            end })
-            line.remove:SetPoint("RIGHT", line, "RIGHT", 0, 0)
-            line.index = 0
-            pcall(line.RegisterForClicks, line, "LeftButtonUp")
-            line:SetScript("OnClick", function(self)
-                local objective = GW.DungeonObjectives.List()[self.index]
-                if objective then GW.DungeonObjectives.SetDone(self.index, not objective.done) end
-                Main:RefreshView()
-            end)
-            line:SetScript("OnEnter", function(self)
-                UI.ShowTooltip(self, "Objective", { self.boss and "Completes when the client reports this boss's kill. Click to tick it yourself."
-                    or "Click to tick it off or open it again." })
-            end)
-            line:SetScript("OnLeave", UI.HideTooltip)
-            view.objectiveRows[index] = line
-        end
-        local function add(box)
-            local added = GW.DungeonObjectives.Add(box:GetText())
-            if added then box:SetText("") end
-            box:ClearFocus()
-            Main:RefreshView()
-        end
-        view.objectiveInput = UI.Input(view, columnWidth - BUTTON_NARROW / 2 - 14, function(box) add(box) end)
-        view.objectivePlaceholder = UI.Text(view.objectiveInput, "label", "textFaint")
-        view.objectivePlaceholder:SetPoint("LEFT", view.objectiveInput, "LEFT", 7, 0)
-        view.objectivePlaceholder:SetText("Add an objective")
-        view.objectiveInput:HookScript("OnEditFocusGained", function() view.objectivePlaceholder:Hide() end)
-        view.objectiveInput:HookScript("OnEditFocusLost", function(box)
-            local ok, text = pcall(box.GetText, box)
-            UI.SetShown(view.objectivePlaceholder, not ok or type(text) ~= "string" or text == "")
-        end)
-        view.objectiveAdd = UI.Button(view, "Add", { width = BUTTON_NARROW / 2 + 8, height = BUTTON_HEIGHT,
-            onClick = function() add(view.objectiveInput) end })
-    end,
-    refresh = function(view)
-        local card = view.runCard
-        local run = sessions().Current()
-        local tracker = hud()
-        if run then
-            UI.SetText(card.name, tostring(run.name or "Instance") .. (run.difficultyName and ("  " .. Theme.Colorize(run.difficultyName, "textFaint")) or ""))
-            UI.SetText(card.clock, tracker.ClockText(run))
-            local state = tracker.DisplayState(run)
-            Theme.Tint(card.clock, stateColor(state))
-            UI.SetText(card.state, tracker.StateText(run))
-            -- Only numbers that mean something: no "Deaths 0".
-            local parts = {}
-            if run.bossesTotal or (run.bossesDefeated or 0) > 0 then
-                table.insert(parts, "Bosses " .. run.bossesDefeated .. (run.bossesTotal and ("/" .. run.bossesTotal) or ""))
-            end
-            if (run.deaths or 0) > 0 then table.insert(parts, run.deaths .. (run.deaths == 1 and " death" or " deaths")) end
-            local xpRate, walletRate = tracker.Rates(run)
-            if xpRate then table.insert(parts, xpRate .. " XP/hr") end
-            if walletRate then table.insert(parts, walletRate .. " wallet/hr") end
-            if not run.inside then table.insert(parts, "outside: continues if you go back in") end
-            UI.SetText(card.detail, table.concat(parts, "  " .. Theme.Colorize(DOT, "textFaint") .. "  "))
-            card.timer:SetLabel(tracker.TimerButtonText(run))
-            card.timer:SetVariant(state == "running" and "secondary" or "primary")
-            card.timer:Show()
-            card.split:Show()
-            card.finish:Show()
-        else
-            UI.SetText(card.name, "No run open")
-            UI.SetText(card.clock, "")
-            UI.SetText(card.state, "")
-            UI.SetText(card.detail, "After a reset, " .. Theme.Colorize("/gw dungeon new", "text") .. " starts a fresh run.")
-            card.timer:Hide()
-            card.split:Hide()
-            card.finish:Hide()
-        end
-        local shown = tracker.IsEnabled() and not tracker.IsHiddenForRun()
-        card.hud:SetLabel(shown and "Hide HUD" or "Show HUD")
-        card.hud:ClearAllPoints()
-        if run then
-            card.hud:SetPoint("RIGHT", card.finish, "LEFT", -6, 0)
-        else
-            card.hud:SetPoint("TOPRIGHT", card, "TOPRIGHT", -16, -14)
-        end
-
-        local history = listedRuns(sessions().History(), MAX_RECENT)
-        for index, line in ipairs(view.recentRows) do
-            local entry = history[index]
-            if entry then
-                UI.SetText(line.name, tostring(entry.name or "Instance"))
-                local bosses = entry.bossesTotal and (entry.bossesDefeated or 0) .. "/" .. entry.bossesTotal .. " bosses"
-                    or ((entry.bossesDefeated or 0) > 0 and (entry.bossesDefeated .. " bosses") or nil)
-                local date = shortDate(entry.startedAt)
-                local meta = {}
-                if date then table.insert(meta, date) end
-                if bosses then table.insert(meta, bosses) end
-                UI.SetText(line.when, table.concat(meta, "  " .. DOT .. "  "))
-                UI.SetText(line.time, duration(entry.timerSeconds or entry.durationSeconds))
-                local word, color = outcome(entry)
-                UI.SetText(line.outcome, word)
-                Theme.Tint(line.outcome, color)
-                line:Show()
-            else
-                line:Hide()
-            end
-        end
-        UI.SetShown(view.recentEmpty, #history == 0)
-
-        local list = GW.DungeonObjectives.List()
-        local count = math.min(MAX_OBJECTIVE_ROWS, #list)
-        for index, line in ipairs(view.objectiveRows) do
-            local objective = list[index]
-            if index <= count then
-                line.index = index
-                line.boss = objective.boss ~= nil
-                Theme.SetBackground(line.box, objective.done and "gold" or "bgInset")
-                Theme.SetBorder(line.box, objective.done and "gold" or "borderStrong")
-                UI.SetText(line.text, objective.done and Theme.Colorize(objective.text, "textFaint") or tostring(objective.text))
-                line:Show()
-            else
-                line:Hide()
-            end
-        end
-        local room = #list < GW.DungeonObjectives.MAX and count < MAX_OBJECTIVE_ROWS
-        view.objectiveInput:ClearAllPoints()
-        view.objectiveInput:SetPoint("TOPLEFT", view.objectivesHeader, "BOTTOMLEFT", 0, -10 - count * OBJECTIVE_ROW)
-        view.objectiveAdd:ClearAllPoints()
-        view.objectiveAdd:SetPoint("LEFT", view.objectiveInput, "RIGHT", 6, 0)
-        UI.SetShown(view.objectiveInput, room)
-        UI.SetShown(view.objectiveAdd, room)
-    end,
-    tick = function(view)
-        local run = sessions().Current()
-        if run then UI.SetText(view.runCard.clock, hud().ClockText(run)) end
     end,
 }
 
@@ -548,6 +336,9 @@ Views.farming = {
         view.fishingEmpty = UI.Text(view, "label", "textFaint")
         view.fishingEmpty:SetPoint("TOPLEFT", fishing, "BOTTOMLEFT", 0, -10)
         view.fishingEmpty:SetText("No fishing yet this session.")
+    end,
+    layout = function(view, width)
+        view.card:SetWidth(width)
     end,
     refresh = function(view)
         local card = view.card
@@ -677,6 +468,9 @@ Views.sync = {
             view.advancedButtons[index] = button
         end
     end,
+    layout = function(view, width)
+        view.card:SetWidth(width)
+    end,
     refresh = function(view)
         local card = view.card
         local status = GW.Store.GetTelemetryStatus()
@@ -721,7 +515,9 @@ Views.settings = {
             function(value) Prefs.SetMinimapHidden(not value) end, columnWidth))
         minimap:SetPoint("TOPLEFT", general, "BOTTOMLEFT", 0, -12)
         view.minimapToggle = minimap
-        local reset = UI.Button(view, "Reset window position", { width = BUTTON_WIDE + 36, height = BUTTON_HEIGHT, onClick = function() Main:ResetPosition() end })
+        local reset = UI.Button(view, "Reset window", { width = BUTTON_WIDE + 36, height = BUTTON_HEIGHT,
+            tooltip = "Reset window", tooltipLines = { "Centres the window and gives it its default size." },
+            onClick = function() Main:ResetPosition() end })
         reset:SetPoint("TOPLEFT", minimap, "BOTTOMLEFT", 0, -10)
 
         local data = UI.SectionHeader(view, "Data collection")
@@ -826,7 +622,7 @@ local function navButton(parent, entry, index)
     button.label:SetText(entry.label)
     button.key = entry.key
     pcall(button.RegisterForClicks, button, "LeftButtonUp")
-    button:SetScript("OnClick", function() Main:Select(entry.key) end)
+    button:SetScript("OnClick", function() Main:Select(entry.key, "nav") end)
     button:SetScript("OnEnter", function(self)
         if Main.current ~= self.key then
             self.bg:Show()
@@ -860,8 +656,12 @@ function Main:Build()
     end
     local frame = UI.Window({
         name = "GuildweaverMainFrame", width = WIDTH, height = HEIGHT, headerHeight = HEADER, title = "Guildweaver",
+        resizable = true, minWidth = MIN_WIDTH, minHeight = MIN_HEIGHT,
         getPosition = function() return GW.Store.GetMainFramePosition() end,
         savePosition = function(point, relativePoint, x, y) GW.Store.SetMainFramePosition(point, relativePoint, x, y) end,
+        getSize = function() return Prefs.WindowSize() end,
+        saveSize = function(width, height) Prefs.SetWindowSize(width, height) end,
+        onResized = function() Main:Relayout() end,
     })
     self.frame = frame
     local version = UI.Text(frame.header, "small", "textFaint")
@@ -875,7 +675,7 @@ function Main:Build()
     local sidebarBg = sidebar:CreateTexture(nil, "BACKGROUND", nil, -7)
     sidebarBg:SetAllPoints(sidebar)
     Theme.Fill(sidebarBg, "bgInset")
-    Theme.Grain(sidebar, SIDEBAR, HEIGHT - HEADER, 0.05, 0)
+    self.sidebarGrain = Theme.Grain(sidebar, SIDEBAR, select(2, frame:Size()) - HEADER, 0.05, 0)
     local divider = sidebar:CreateTexture(nil, "BORDER")
     divider:SetPoint("TOPRIGHT", sidebar, "TOPRIGHT", 0, 0)
     divider:SetPoint("BOTTOMRIGHT", sidebar, "BOTTOMRIGHT", 0, 0)
@@ -911,7 +711,55 @@ function Main:Build()
         Main:StopTicker()
         UI.HideMenu()
     end)
+    -- A resize that ends in combat lays the views out when combat ends.
+    local events = UI.CreateFrame("Frame", frame)
+    events:RegisterEvent("PLAYER_REGEN_ENABLED")
+    events:SetScript("OnEvent", function()
+        if Main.relayoutPending then Main:Relayout() end
+    end)
+    self.events = events
     return frame
+end
+
+-- The content area's size: the window's, less the header, sidebar and padding.
+function Main:ContentSize()
+    local width, height = WIDTH, HEIGHT
+    if self.frame and self.frame.Size then width, height = self.frame:Size() end
+    return width - SIDEBAR - 1 - PAD * 2, height - HEADER - 1 - 18 - PAD
+end
+
+local function layoutView(key, view)
+    local spec = Views[key]
+    if spec and spec.layout and view then
+        local width, height = Main:ContentSize()
+        spec.layout(view, width, height)
+        view.gwLaidOut = width .. "x" .. height
+    end
+end
+
+-- After a resize: every built view lays itself out again (the shown one now,
+-- the others when next shown). Never in combat: then once combat ends.
+function Main:Relayout()
+    if not self.frame then return end
+    if inCombat() then
+        self.relayoutPending = true
+        return
+    end
+    self.relayoutPending = nil
+    local _, height = self.frame:Size()
+    pcall(self.sidebarGrain.SetTexCoord, self.sidebarGrain, 0, SIDEBAR / Theme.GRAIN_SIZE, 0, (height - HEADER) / Theme.GRAIN_SIZE)
+    local width, contentHeight = self:ContentSize()
+    for key, view in pairs(self.views or {}) do
+        if view:IsShown() or key == self.current then layoutView(key, view) end
+        if view.gwLaidOut ~= width .. "x" .. contentHeight then view.gwLayoutStale = true end
+    end
+    self:RefreshView()
+end
+
+-- Sets the window's size (as a drag of the grip would).
+function Main:Resize(width, height)
+    local frame = self:Build()
+    if frame and frame.Resize then return frame:Resize(width, height) end
 end
 
 -- A view the window may show: hidden modules fall back to the overview.
@@ -930,12 +778,18 @@ function Main:View(key)
         view:Hide()
         spec.build(view)
         self.views[key] = view
+        layoutView(key, view)
+    elseif view.gwLayoutStale and not inCombat() then
+        view.gwLayoutStale = nil
+        layoutView(key, view)
     end
     return view
 end
 
--- Shows a view; the last one (except Settings) is remembered.
-function Main:Select(key)
+-- Shows a view; the last one (except Settings) is remembered. source is
+-- "nav" for a click in the sidebar (a view may treat it as "go home").
+function Main:Select(key, source)
+    key = ALIASES[key] or key
     if not available(key) then key = "overview" end
     self:Build()
     local view = self:View(key)
@@ -951,6 +805,8 @@ function Main:Select(key)
         Prefs.SetLastView(key)
     end
     view:Show()
+    local spec = Views[key]
+    if source == "nav" and spec.onNav then spec.onNav(view) end
     self:RefreshView()
     return key
 end
@@ -1026,7 +882,13 @@ function Main:RefreshFarmingTimer()
     if self.current == "farming" or self.current == "overview" then self:RefreshView() end
 end
 
+-- Centres the window and gives it its default size.
 function Main:ResetPosition()
     GW.Store.ResetMainFramePosition()
-    if self.frame then self.frame:RestorePosition() end
+    Prefs.SetWindowSize(nil, nil)
+    if self.frame then
+        self.frame:ApplySize(WIDTH, HEIGHT)
+        self.frame:RestorePosition()
+        self:Relayout()
+    end
 end

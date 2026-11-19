@@ -10,11 +10,12 @@ local Prefs = GW.UiPrefs
 
 local DEFAULTS = {
     minimap = { hide = false, angle = 215 },
+    -- The dashboard: the last view, and its size once the player resized it
+    -- (width and height; the default size until then).
     dashboard = { view = "overview" },
-    -- The Dungeon Guide: the tab, the role mechanics are ordered for
-    -- ("auto" = the group role when the client has one), whether it follows
-    -- the instance the player is in, and the last dungeon picked.
-    dungeonGuide = { tab = "overview", role = "auto", follow = true },
+    -- The dungeon journal: whether it follows the instance the player is in,
+    -- and the last dungeon opened (instanceId).
+    dungeonGuide = { follow = true },
     -- Loot alerts in Need/Greed rolls. boeThreshold is copper: 10g.
     lootAlerts = { wishlist = true, boe = true, sound = true, toast = true, chime = "soft", boeThreshold = 100000 },
 }
@@ -76,4 +77,17 @@ end
 function Prefs.SetLastView(view)
     local value = Prefs.Get("dashboard")
     if value then value.view = view end
+end
+
+-- The dashboard's saved size, or nil until the player resizes it.
+function Prefs.WindowSize()
+    local value = Prefs.Get("dashboard")
+    if not value then return nil, nil end
+    return tonumber(value.width), tonumber(value.height)
+end
+
+function Prefs.SetWindowSize(width, height)
+    local value = Prefs.Get("dashboard")
+    if not value then return end
+    value.width, value.height = tonumber(width), tonumber(height)
 end

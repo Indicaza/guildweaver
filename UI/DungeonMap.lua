@@ -209,6 +209,29 @@ function DungeonMap.New(parent, width, opts)
         return "drawn"
     end
 
+    -- A new width (the window was resized): the frame, the canvas and the
+    -- tiles' places change; the tiles' pictures are not set again. Pins move
+    -- on the next ShowDungeon.
+    function map:SetMapWidth(newWidth)
+        newWidth = math.max(120, math.floor(tonumber(newWidth) or self.gwWidth))
+        if newWidth == self.gwWidth then return false end
+        local newHeight = math.floor(newWidth / DungeonMap.ASPECT + 0.5)
+        self.gwWidth, self.gwHeight = newWidth, newHeight
+        self:SetSize(newWidth + 2, newHeight + 2)
+        self.canvas:SetSize(newWidth, newHeight)
+        self.empty:SetWidth(newWidth - 40)
+        self.bar:SetWidth(newWidth + 2)
+        for index, place in ipairs(DungeonMap.TileLayout(newWidth)) do
+            local texture = self.tiles[index]
+            if texture then
+                texture:ClearAllPoints()
+                texture:SetPoint("TOPLEFT", self.canvas, "TOPLEFT", place.x, -place.y)
+                texture:SetSize(place.w, place.h)
+            end
+        end
+        return true
+    end
+
     function map:TurnFloor(step)
         local count = self.gwFloorCount or 1
         local floor = math.max(1, math.min(count, (self.gwFloor or 1) + step))

@@ -1,15 +1,17 @@
-# Dungeon Guide
+# Dungeon journal (Dashboard -> Dungeons)
 
-The website's Dungeon Atlas as an in-game dungeon journal, offline: the
-client's own dungeon maps with boss pins, boss portraits, encounters with
-their mechanics and spell icons, reference loot with item icons and your
-wishlist, rares, dangerous trash and dungeon quests. Dashboard -> **Dungeon
-Guide**, `/gw guide`, the **?** button on the dungeon HUD, or a click on a
-boss face in the HUD.
+The website's Dungeon Atlas as an in-game dungeon journal, offline: a card
+for every dungeon and raid, the client's own dungeon maps with boss pins,
+boss portraits, encounters with their mechanics and spell icons, each boss's
+and creature's loot as a grid of item icons with your wishlist marked,
+dungeon quests, and your runs. Dashboard -> **Dungeons** (the only dungeon
+entry in the sidebar), `/gw guide`, the **?** button on the dungeon HUD, or a
+click on a boss face in the HUD.
 
 Everything from the atlas is **Classic reference data, unverified on WoW
-Forever**, and every panel says so. Nothing is invented: a boss, an ability,
-an item, a position or a face the data does not have is simply not shown.
+Forever**; a small "Reference" indicator on every page says where it comes
+from. Nothing is invented: a boss, an ability, an item, a position or a face
+the data does not have is simply not shown.
 
 ## Where the atlas data comes from
 
@@ -105,53 +107,86 @@ with two display IDs.
 At login only small indexes exist. A dungeon's detail, the spell, item and
 art tables are built the first time the guide (or entering that dungeon)
 needs them and cached for the session. Nothing goes to SavedVariables except
-the guide's preferences (tab, role, follow) and the last dungeon picked.
+the journal's preferences (follow the current instance, the last dungeon
+opened) and the dashboard's size.
 
 ## How it behaves
 
-The view is a journal in the dashboard's content area (532 x 418): the
-dungeon's name is the picker, then the tabs, then navigation on the left and
-the map or the encounter panel on the right.
+The window opens at 1050 x 700 and can be resized from the grip in its
+bottom-right corner (never below 740 x 500, never beyond the screen). The
+size is saved with the dashboard's preferences and restored after `/reload`;
+Settings -> **Reset window** restores the default size and position. Every
+dashboard view lays itself out for the size once the drag ends (in combat:
+when combat ends).
 
-- **Picker.** Click the dungeon's name (or its arrow). Search by name, filter
-  by level band (10-29, 30-49, 50+) and by dungeon or raid; 26 entries on two
-  pages; the dungeon you are in says "here". **Where I am** (in the header and
-  the picker) returns to the dungeon you are in. The last pick survives
-  `/reload`. Outside an instance with nothing picked, the guide opens on a
-  dungeon for your level, not the first in the list.
-- **Overview.** The encounter list (portraits, level, observed state) and the
-  client's map of the dungeon with numbered boss portraits where the journal
-  placed them; arrows turn the floors (named as the game names them). Hover a
-  pin for the boss's top mechanics; click it (or a list entry) for its
-  encounter. Under the map: the entrance, how many bosses are placed, wanted
-  drops and quests (hover for the list).
-- **Encounters.** Encounter frames: portrait, name, level, the state the
-  dungeon run observed (In combat, Defeated), the top mechanics' spell icons
-  and a purple diamond (raid mark) with the count of wanted drops. The panel:
-  a large portrait, name, level and class, then **Watch for**: two to four
-  mechanics ordered for your role (Any/Tank/Heal/DPS, or the group role),
-  each with its spell icon and label (KICK only for a cast the client marks
-  interruptible; else CAST; TANK, HEAL, DISPEL, MOVE, CC, NOTE). Then
-  **Abilities** (every ability, spell icon, paged) or **Loot** (item rows).
-  Every panel says "Classic reference, unverified on Forever".
-- **Portrait states.** Available (plain ring), selected (gold), engaged (red,
-  only while the run's encounter is in progress), defeated (gold ring, greyed
-  face, a check: killed in this run), unknown (no display ID: a skull). States
-  come only from `GW.DungeonSessions`' run in that dungeon.
-- **Loot.** Rows with the client's item icon in a quality-coloured frame, the
-  quality-coloured name, slot and type, item level, required level, the source
-  and the wishlist mark (purple diamond wanted, check acquired). All or
-  Wishlist only; click a boss drop for its encounter. Your website wishlist
-  (`GW.LootSync`) is read-only here.
+One navigation, three levels: **Dungeons** -> a dungeon -> a boss or
+creature. **Back** and **Forward** (the arrows top left) walk the journal's
+own history; the breadcrumb (`Dungeons > Deadmines > Captain Greenskin`)
+goes up a level. Each page keeps its scroll position and each dungeon its
+floor. A boss opens the same page from its map pin, from the list, or from
+its face in the HUD. Inside a known instance, **Current dungeon** (top right)
+opens it.
+
+- **Dungeons (the landing page).** A grid of cards, two or three columns as
+  the width allows, scrolling. Each card: the dungeon's name, a strip of its
+  own map from the client as art (none where the client has no map), levels,
+  zone, Dungeon or Raid, boss count, and when known: your wishlist count (the
+  purple raid diamond), your runs there, "You are here" or "Your level".
+  The dungeon you are in comes first, then those for your level, then the
+  rest. Search by name, filter by level band (10-29, 30-49, 50+) and by
+  dungeon or raid. Nothing is opened by itself. **My Runs** lists every
+  finished run (date, duration, bosses, outcome); a click opens that
+  dungeon's runs.
+- **A dungeon: Overview.** Title, levels and zone, the Reference indicator
+  (the entrance and the sources in its tooltip). Left, scrolling: **Bosses**
+  (portrait, level, the state the open run observed, the top mechanics'
+  spell icons, the wishlist diamond), **Rares**, **Dangerous trash** (count,
+  KICK when one of its casts is interruptible) and **Other dungeon loot**.
+  Right: the client's map, as large as the window allows, with numbered boss
+  portraits where Blizzard's journal placed them; the floor arrows turn the
+  floors. Hover a pin for the boss's top mechanics; click it for the boss.
+- **A boss or creature.** A large portrait, name, level and classification,
+  the observed state, then **Key mechanics** (up to four), **Other
+  abilities**, and **Loot**: bag-sized item icons in a grid with the quality
+  colour on the frame, a purple raid diamond on wishlist items and a check on
+  acquired ones. Rares the same; dangerous trash a compact page with the
+  drops the atlas names it as the source of. There is no item click action.
+- **Loot belongs to its source.** A boss's and a rare's own lists; an atlas
+  drop whose named source is exactly a listed creature goes to that creature;
+  everything else (no source, or a source the atlas lists no creature for,
+  and wishlist items naming the dungeon but missing from the reference
+  lists) is under **Other dungeon loot**, never guessed onto a boss.
+- **Mechanics order** (the same for everyone; there is no role switch):
+  dangerous interrupts (KICK only for a cast the client marks
+  interruptible), then lethal or major mechanics (high priority, TANK, HEAL,
+  MOVE), then dispels and crowd control, then the rest; within a group the
+  atlas's priority, then its order.
+- **Spell icons** come from `C_Spell.GetSpellTexture` (then
+  `C_Spell.GetSpellInfo`, then the old globals). The guide used to call only
+  the global `GetSpellTexture`, which this client does not answer, so every
+  spell showed the red question mark. A spell the client has no icon for
+  shows an empty slot, dimmed, with its name and label.
+- **Quests.** Name, level, required level, faction, giver and where, the
+  quests before it, the objective, and reward item icons ("Choose one" where
+  the reward is a choice); a check and "Completed" only when the client
+  confirms it (`C_QuestLog.IsQuestFlaggedCompleted`).
+- **My Runs (a dungeon's).** Its finished runs: date, duration, bosses,
+  deaths, outcome.
+- **The run strip.** While a run is open, one slim line under the top bar:
+  the run's name (a click opens it), clock, state, bosses, deaths, and
+  Start/Pause/Resume, End run (click twice) and Show/Hide HUD. Splits and
+  everything else stay in the HUD, the tracker in combat.
 - **Tooltips.** Items show the game's own item tooltip (`item:<id>`) with
   the source and wishlist note under it, and Blizzard's comparison while
   shift is held (or always-compare is on; pressing or releasing shift updates
   it). Spells show the game's spell tooltip with the label and the reference
-  note. Every tooltip opens just right of and above the cursor, clamped to
-  the screen, and goes on mouse leave (this fixes item tooltips that opened
-  at the far right edge of the wide rows).
-- **Trash & Rares.** Compact rows (rare star or skull, name, count, KICK when
-  one of its casts is interruptible) and the same panel, without loot.
+  note. Every tooltip in the journal opens just right of and above the
+  cursor, clamped to the screen, and goes on mouse leave.
+- **Removed:** the separate Dungeon Guide entry, the old Dungeons page with
+  its large "No run open" panel and command hints, the Loot tab, the item
+  rows, the Any/Tank/Heal/DPS switch, paging, and manual objectives (neither
+  the dashboard nor the HUD shows them; `GW.DungeonObjectives` and its saved
+  list are untouched).
 
 ### HUD
 
@@ -160,14 +195,20 @@ the map or the encounter panel on the right.
   no art for takes the guide's display ID. Hover: the boss's top mechanics
   and wanted drops; click: the guide on that boss.
 - Expanded HUD: a "NEXT:" (or "NOW:") line with the next boss's two top
-  mechanics. Timer, splits, objectives, boss tracking, PB logic and combat
-  collapse are unchanged.
+  mechanics. Timer, splits, boss tracking, PB logic and combat collapse are
+  unchanged; manual objectives are no longer shown.
 
 ### Combat and performance
 
+- Rows, cards, item cells and quest rows are pools that grow to the largest
+  list shown and are reused; the mouse wheel and the scroll bars only move an
+  offset. Browsing every page of every dungeon grows the pools once (about
+  250 frames in the test client), a second pass creates none.
 - No OnUpdate handlers, no tickers, no tooltip or item scans (item icons come
   from the client's item table, not `GetItemInfo`), no combat log, no
   protected calls, no hooks on Blizzard functions, no reloads.
+- No layout in combat: a resize that ends in combat is laid out when combat
+  ends; a card's map strip is set out of combat only.
 - The dashboard view is built on first open, never in combat (the ? button
   and face clicks only show it if it already exists; otherwise a chat line).
 - Portraits: a creature's first draw loads its model; one shared
@@ -182,58 +223,64 @@ the map or the encounter panel on the right.
 
 ## Tests
 
-`test/dungeon_guide_spec.lua` (atlas exporter, packaged atlas, lookups,
-roles, wishlist, selection, every tab of every dungeon, combat, the HUD) and
-`test/dungeon_journal_spec.lua`: the art exporter on an excerpt of the
-references (`test/fixtures/journal_refs/`, with their licences), the packaged
-art table's integrity, floors, pins and display IDs (never an NPC ID; Sneed
-without his Shredder's face), observed encounter states, the default
-dungeon, the portrait engine (loading, the shared timer, combat, missing
-IDs), the map renderer (tile geometry, floors, pins, missing textures, no
-map), encounter frames and panels, item rows, cursor-anchored tooltips and
-shift comparison, the picker (search, filters, pick, remembered, Where I am),
-the HUD's faces, and that nothing from `references/` (or a glyph the game
-font lacks) is shipped.
+`test/dungeon_guide_spec.lua` (atlas exporter, packaged atlas, lookups, the
+mechanics order, loot by source with nothing dropped or invented, wishlist,
+selection, the journal's pages and empty states, combat, performance over
+every page of every dungeon, the HUD) and `test/dungeon_journal_spec.lua`:
+the art exporter on an excerpt of the references (`test/fixtures/journal_refs/`,
+with their licences), the packaged art table, floors, pins and display IDs
+(never an NPC ID), observed encounter states, the portrait engine, the map
+renderer, the dungeon cards (art, filters, order, scrolling), Back / Forward
+and the breadcrumb, a boss's page and its loot grid, tooltips at the cursor
+and shift comparison, spell icons through `C_Spell` and the empty-slot
+fallback, trash and other loot, quests (completed only when the client says
+so), runs and the run strip, the HUD's faces and deep links, resizing
+(minimum, screen, combat, every view), and that nothing from `references/`
+(or a glyph the game font lacks) is shipped. `test/ui_overhaul_spec.lua`
+covers the dashboard: one Dungeons entry, the strip's timer and End run,
+and the window size kept across `/reload`.
+
+The fake client proves behaviour, not looks: it draws nothing.
 
 ## In-game checklist (not yet done in the client)
 
-Nothing below has been tried in the WoW client yet.
+Nothing below has been tried in the WoW client yet. `/console scriptErrors 1`
+first; no Lua error should appear at any step.
 
-1. `/console scriptErrors 1`, `/reload`, `/gw guide` outside a dungeon: it
-   opens on a dungeon near your level; no Lua errors.
-2. Click the dungeon's name: the picker opens; type "dead": only the
-   Deadmines; pick Raids, then 50+; clear; pick Ragefire Chasm; `/reload`;
-   `/gw guide` reopens on it.
-3. Ragefire Chasm, Overview: the map shows the cave (not grey, not black);
-   aspect looks right; no pins (expected: no journal positions); the four
-   bosses in the list have faces (they may appear a moment after the list).
-4. Deadmines, Overview: floor 1 shows the mine with Rhahk'Zor and Sneed
-   pinned; the right arrow turns to Ironclad Cove with five pins; each pin
-   sits on its boss's spot; hover one (tooltip next to the cursor), click it.
-5. Encounters: faces in the list (Sneed shows a skull); VanCleef's panel has a
-   large face, "Level 21  Rare elite", Watch for with spell icons; Cookie
-   shows KICK; change the role switch: the order changes.
-6. Abilities and Loot switches in the panel; loot rows show real item icons,
-   quality colours, slot/ilvl/req; Cruel Barb (or any item on your website
-   wishlist after a bridge sync and `/reload`) has the purple diamond.
-7. Hover an item in the Loot tab at the right side of the window: the tooltip
-   opens beside the cursor (not at the screen's right edge) and inside the
-   screen; hold shift: Blizzard's comparison appears; release: it goes; move
-   away: the tooltip goes.
-8. Trash & Rares: Miner Johnson (star), trash rows with counts and KICK;
-   the panel shows no loot switch for trash.
-9. Inside the Deadmines: "You are here" in the subtitle; pick another dungeon,
-   then **Where I am** returns. Kill Rhahk'Zor: his frame turns Defeated (gold
-   ring, grey face, check); during Cookie's fight his frame shows In combat.
-10. HUD: the ? button; faces show portraits (also Sneed's skull); hover and
-    click a face; the timer keeps running.
-11. Pull with the guide never opened this session: click a face in combat,
-    only a chat line. Open a new dungeon's Overview in combat: "The map draws
-    after combat", then it draws. No hitching.
-12. `/gw perf`: guide:build, guide:map and guide:refresh are small; loot roll
-    alerts, boss tracking and the timer behave as before.
-13. Smaller UI scale (Interface options): the window's controls stay
-    reachable; no text runs into the icons.
+1. `/reload`, open the dashboard: about 1050 x 700. The sidebar has one
+   **Dungeons** entry. Click it: the dungeon cards, nothing opened by itself.
+2. Cards: names, levels, zones, map strips behind the text (not grey, not
+   stretched badly); Naxxramas plain. Your-level dungeons first. Scroll with
+   the wheel and the bar.
+3. Search "dead", filter Raids, then 50+, then All: the grid follows.
+4. Drag the bottom-right grip smaller and larger: the cards go 2 / 3
+   columns, nothing overlaps or clips; `/reload` keeps the size; Settings ->
+   Reset window restores it. Try a smaller UI scale.
+5. Click Deadmines: a large map of the mine with Rhahk'Zor and Sneed
+   pinned; the arrow turns to Ironclad Cove with five pins, each on its
+   boss's spot. Ragefire Chasm: map, no pins.
+6. Click Captain Greenskin's pin: his page (portrait, mechanics with real
+   spell icons, no red question marks; a spell without an icon shows an
+   empty slot with its name), loot as a grid of icons.
+7. Hover an item at the right edge of the window: the item tooltip next to
+   the cursor, inside the screen; shift shows the comparison; leaving hides
+   it. Cruel Barb (VanCleef) has the purple diamond if it is on your
+   wishlist.
+8. Back: the Deadmines on the floor you left; Back: the cards where you had
+   scrolled; Forward twice: Greenskin again. Click "Deadmines" in the
+   breadcrumb: up one level.
+9. Miner Johnson, a trash entry (count, KICK) and Other dungeon loot each
+   open their own page; trash shows only the drops named for it.
+10. Quests: names, levels, giver, objective, reward icons with tooltips; a
+    quest you have done says Completed (only if the client reports it).
+11. In the Deadmines: the run strip (clock ticking, bosses), Current dungeon
+    from another dungeon. Kill Rhahk'Zor: Defeated in the list; during
+    Cookie, In combat. The HUD's ? and a boss face open the journal on that
+    dungeon and boss. End run (twice): it appears under My Runs.
+12. In combat: open a new dungeon's overview ("The map draws after combat",
+    then it draws); resizing in combat lays out after combat. No hitching.
+13. `/gw perf`: guide:build, guide:map and guide:refresh stay small; loot
+    roll alerts, boss tracking and the timer behave as before.
 
 ## Needs from the website or bridge later
 

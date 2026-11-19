@@ -268,7 +268,8 @@ do
     equal(guide.Label({ c = "positioning" }), "MOVE")
     equal(guide.Label({ c = "crowd-control" }), "CC")
 
-    -- Role ordering on a synthetic creature over the real spell table.
+    -- One order for everyone (no role switch), over the real spell table:
+    -- dangerous interrupts, then major mechanics, then dispels and control.
     local spells = guide.Spells()
     local function first(category, kick)
         for id, spell in pairs(spells) do
@@ -277,18 +278,17 @@ do
     end
     local creature = { ab = { first("crowd-control"), first("interrupt", true), first("healer-danger"), first("tank-danger") } }
     for _, id in ipairs(creature.ab) do truthy(id, "the atlas has high-priority spells of each kind") end
-    local function topLabel(role)
-        local top = guide.TopMechanics(creature, role, 4)
-        return top[1].label, #top
-    end
-    equal(topLabel("dps"), "KICK", "damage dealers see the kick first")
-    equal(topLabel("healer"), "HEAL", "healers see the healer danger first")
-    equal(topLabel("tank"), "TANK", "tanks see the tank danger first")
-    local label, count = topLabel(nil)
-    equal(label, "CC", "no role: the atlas's own order")
+    local top, count = guide.TopMechanics(creature, nil, 4)
+    equal(top[1].label, "KICK", "the dangerous interrupt first")
+    equal(top[2].label, "HEAL", "then the major mechanics, in the atlas's order")
+    equal(top[3].label, "TANK")
+    equal(top[4].label, "CC", "then crowd control")
     equal(count, 4)
+    equal(guide.TopMechanics(creature, "tank", 4)[1].label, "KICK", "a role no longer changes the order")
+    equal(guide.Role(), nil, "there is no manual role")
+    equal(#guide.OrderedAbilities(creature), 4, "every ability, ordered")
     local quiet = { ab = {} }
-    equal(#guide.TopMechanics(quiet, "dps", 4), 0, "no abilities, no mechanics")
+    equal(#guide.TopMechanics(quiet, nil, 4), 0, "no abilities, no mechanics")
 
     -- Current instance detection.
     equal(guide.CurrentInstanceId(), nil, "outside: none")
@@ -327,6 +327,32 @@ do
     equal(guide.WantedCount(36), 0, "acquired items stop counting")
 end
 
+-- Loot belongs to its source: each item once, never guessed onto a boss.
+do
+    local _, addon = boot()
+    local guide = addon.DungeonGuide
+    local dungeon = guide.Dungeon(36)
+    local seen, total = {}, 0
+    local function count(rows, label)
+        for _, row in ipairs(rows) do
+            falsy(seen[row.itemId], label .. ": item " .. row.itemId .. " listed once")
+            seen[row.itemId] = label
+            total = total + 1
+        end
+    end
+    for _, list in ipairs({ dungeon.bosses, dungeon.rares, dungeon.trash }) do
+        for _, creature in ipairs(list) do count(guide.SourceLoot(36, creature), creature.name) end
+    end
+    count(guide.OtherLoot(36), "other")
+    equal(seen[1937], "Sneed's Shredder", "a drop the atlas names a listed creature for goes to it")
+    equal(seen[1930], "other", "a source the atlas lists no creature for stays under other")
+    equal(seen[1951], "other", "no source: other")
+    equal(seen[5191], "Edwin VanCleef")
+    local reference = 0
+    for _, row in ipairs(guide.LootRows(36)) do if row.kind ~= "wishlist" then reference = reference + 1 end end
+    equal(total, reference, "no reference item is dropped or invented")
+end
+
 -- No website wishlist: nothing is wanted, nothing breaks.
 do
     local _, addon = boot({ inbox = false })
@@ -354,55 +380,49 @@ do
     local _ = env
 end
 
--- The dashboard view: built on first open, every tab, empty states.
+-- The dashboard view: built on first open, every page, empty states.
 do
     local env, addon = boot()
     local main, guideUI = addon.MainFrame, addon.DungeonGuideUI
     local hasGuide = false
     for _, entry in ipairs(main.NAV) do if entry.key == "guide" then hasGuide = true end end
-    truthy(hasGuide, "the dashboard lists the Dungeon Guide")
+    falsy(hasGuide, "one Dungeons entry: no separate Dungeon Guide")
     falsy(main.views, "nothing built before the window opens")
     truthy(guideUI.Show(36, 3))
-    local view = main.views.guide
-    truthy(view, "the view is built on open")
-    equal(view.title.gwText, "Deadmines")
-    equal(guideUI.state.tab, "bosses")
-    local detail = view.tabs.bosses.detail
-    equal(detail.name.gwText, view.tabs.bosses.list[3].name.gwText, "the panel shows the selected encounter")
-    for _, tab in ipairs({ "overview", "loot", "rares", "bosses" }) do
-        view.tabBar.buttons[({ overview = 1, bosses = 2, loot = 3, rares = 4 })[tab]]:Click()
-        equal(guideUI.state.tab, tab)
-        truthy(view.tabs[tab].shown, tab .. " is shown")
+    local view = main.views.dungeon
+    truthy(view, "the journal is built on open")
+    equal(main:Select("guide"), "dungeon", "the old key opens the journal")
+    local page = view.dungeon
+    equal(page.title.gwText, "Deadmines")
+    equal(page.name.gwText, "Gilnid", "the boss's page")
+    for _, tab in ipairs({ "quests", "runs", "overview" }) do
+        page.tabs.buttons[({ overview = 1, quests = 2, runs = 3 })[tab]]:Click()
+        equal(guideUI.CurrentPage().tab, tab)
     end
     -- Overview: the client's map of the floor, drawn once, reused.
-    guideUI.state.tab = "overview"
-    main:RefreshView()
-    local map = view.tabs.overview.map
-    equal(map.gwDrawn, "36:2", "the floor of the selected boss (Gilnid, Ironclad Cove) is drawn")
+    local map = page.map
+    equal(map.gwDrawn, "36:2", "the floor of the boss last shown (Gilnid, Ironclad Cove)")
     equal(#map.tiles, 12, "from 12 tiles")
     map.bar.prev:GetScript("OnClick")()
     equal(map.gwDrawn, "36:1", "the floor arrow turns to the first floor")
     contains(map.bar.label.gwText, "1/2", "the floor bar names the floor")
     main:RefreshView()
     equal(#map.tiles, 12, "redrawing creates nothing new")
-    -- Loot tab: the wanted filter.
-    guideUI.state.tab = "loot"
-    guideUI.state.lootFilter = "wanted"
-    main:RefreshView()
-    contains(view.tabs.loot.rows[1].name.gwText, "Cruel Barb", "the wishlist filter shows the wanted drop")
-    falsy(view.tabs.loot.rows[2].shown, "and only it")
-    -- A dungeon with no wanted items: the empty state.
-    guideUI.Show(48)
-    guideUI.state.tab = "loot"
-    main:RefreshView()
-    contains(view.tabs.loot.empty.gwText, "None of your wishlist items drop here")
-    -- Trash & Rares lists rares then dangerous trash.
+    -- A dungeon without quests or runs: the empty states.
+    guideUI.Navigate(guideUI.Pages.dungeon(47, "quests"))
+    contains(page.empty.gwText, "No quests")
+    guideUI.Navigate(guideUI.Pages.dungeon(47, "runs"))
+    contains(page.empty.gwText, "No finished runs")
+    -- Rares and dangerous trash in the list, each with its own page.
     guideUI.Show(36)
-    guideUI.state.tab = "rares"
-    main:RefreshView()
-    equal(view.tabs.rares.list[1].name.gwText, "Miner Johnson")
-    -- Reference note on every panel.
-    contains(view.tabs.rares.detail.note.gwText, "unverified on Forever")
+    equal(page.smallRows.items[1].name.gwText, "Miner Johnson")
+    page.smallRows.items[1]:GetScript("OnClick")(page.smallRows.items[1])
+    contains(page.facts.gwText, "Rare elite")
+    truthy(page.detailBadge.gwLines, "the reference indicator on every page")
+    -- No role switch, no loot tab, no paging.
+    equal(rawget(view, "role"), nil, "no Any / Tank / Heal / DPS")
+    equal(rawget(view, "tabBar"), nil, "no Loot tab")
+    for _, button in ipairs(page.tabs.buttons) do falsy(button.label.gwText == "Loot", "no Loot tab") end
     equal(env.protectedCalls, 0)
 end
 
@@ -411,17 +431,13 @@ do
     local env, addon = boot()
     local main, guideUI = addon.MainFrame, addon.DungeonGuideUI
     env.inCombat = true
-    falsy(guideUI.Show(36), "the guide is not built in combat")
-    falsy(main.views and main.views.guide, "no view created")
+    falsy(guideUI.Show(36), "the journal is not built in combat")
+    falsy(main.views and main.views.dungeon, "no view created")
     env.inCombat = false
     guideUI.Show(43)
-    guideUI.state.tab = "bosses"
-    main:RefreshView()
     env.inCombat = true
-    truthy(guideUI.Show(36), "an already built guide may be shown")
-    guideUI.state.tab = "overview"
-    main:RefreshView()
-    local map = main.views.guide.tabs.overview.map
+    truthy(guideUI.Show(36), "an already built journal may be shown")
+    local map = main.views.dungeon.dungeon.map
     falsy(map.gwDrawn == "36:1", "the map's art is not set in combat")
     truthy(guideUI.pending)
     contains(map.empty.gwText, "after combat")
@@ -431,7 +447,7 @@ do
     equal(env.protectedCalls, 0)
 end
 
--- Performance: every dungeon, every tab, no item or tooltip scans, no
+-- Performance: every dungeon, every page, no item or tooltip scans, no
 -- OnUpdate handlers, bounded frames, one build per dungeon.
 do
     local env, addon = boot()
@@ -453,24 +469,36 @@ do
         if not guide.IsBuilt(id) then builds = builds + 1 end
         return build(id)
     end
+    local pages = 0
     for _, entry in ipairs(guide.List()) do
-        guideUI.Show(entry.id)
-        for _, tab in ipairs({ "overview", "bosses", "loot", "rares" }) do
-            guideUI.state.tab = tab
-            main:RefreshView()
-        end
+        guideUI.Navigate(guideUI.Pages.dungeon(entry.id))
+        guideUI.Navigate(guideUI.Pages.dungeon(entry.id, "quests"))
+        guideUI.Navigate(guideUI.Pages.dungeon(entry.id, "runs"))
+        local dungeon = build(entry.id)
+        for index = 1, #dungeon.bosses do guideUI.Navigate(guideUI.Pages.creature(entry.id, "boss", index)) end
+        for index = 1, #dungeon.trash do guideUI.Navigate(guideUI.Pages.creature(entry.id, "trash", index)) end
+        pages = pages + 3 + #dungeon.bosses + #dungeon.trash
     end
+    guideUI.Navigate(guideUI.Pages.browser())
     guide.Dungeon = build
     truthy(builds <= #guide.List(), "each dungeon is built at most once")
-    equal(onUpdates(), updatesBefore, "the guide adds no OnUpdate handlers")
+    equal(onUpdates(), updatesBefore, "the journal adds no OnUpdate handlers")
     equal(env:itemTooltipScans(), 0, "no item tooltip scans")
     equal(env:callCount("GetItemInfo"), 0, "no item info queries")
-    -- Frames: only map pins grow, up to the most pins on one floor.
-    truthy(#env.frames - framesAfterFirst <= 60, "browsing every dungeon adds few frames (" .. (#env.frames - framesAfterFirst) .. ")")
-    equal(#main.views.guide.tabs.overview.map.tiles, 12, "the map's 12 tiles are reused for every dungeon")
+    -- Frames: pools grow to the largest list shown, then are reused.
+    local grown = #env.frames - framesAfterFirst
+    for _, entry in ipairs(guide.List()) do guideUI.Navigate(guideUI.Pages.dungeon(entry.id)) end
+    equal(#env.frames - framesAfterFirst, grown, "a second pass creates nothing")
+    truthy(grown <= 400, "bounded pools (" .. grown .. ")")
+    equal(#main.views.dungeon.dungeon.map.tiles, 12, "the map's 12 tiles are reused for every dungeon")
+    -- Scrolling only moves the offset.
+    local list = main.views.dungeon.dungeon.list
+    local before = #env.frames
+    for _ = 1, 20 do list:GetScript("OnMouseWheel")(list, -1) end
+    equal(#env.frames, before, "no frames while scrolling")
     collectgarbage("collect")
-    print(string.format("guide: %d dungeons browsed, %d frames after the first open, %d map pins pooled, %d KB Lua memory in the fake client",
-        #guide.List(), #env.frames - framesAfterFirst, #main.views.guide.tabs.overview.map.pins, math.floor(collectgarbage("count"))))
+    print(string.format("journal: %d dungeons, %d pages, %d frames after the first open, %d map pins pooled, %d KB Lua memory in the fake client",
+        #guide.List(), pages, grown, #main.views.dungeon.dungeon.map.pins, math.floor(collectgarbage("count"))))
 end
 
 -- The HUD: Guide button, boss faces with mechanics and a click into the guide.
@@ -502,8 +530,8 @@ do
     contains(table.concat(lines, "\n"), "unverified on Forever")
     -- A click opens the guide on that boss.
     hud.circles["boss:2746"].frame:GetScript("OnClick")()
-    equal(main.current, "guide")
-    equal(main.views.guide.tabs.bosses.detail.name.gwText, "Cookie")
+    equal(main.current, "dungeon")
+    equal(main.views.dungeon.dungeon.name.gwText, "Cookie", "the face opens that boss's page")
     -- The expanded HUD's guide line (the next boss) and the timer still there.
     local section = addon.DungeonGuideUI.hudSection
     truthy(section.frame, "the guide line exists in the HUD")
@@ -525,7 +553,7 @@ do
     local guideUI = addon.DungeonGuideUI
     zone(env, WAILING)
     truthy(guideUI.Show())
-    equal(addon.MainFrame.views.guide.title.gwText, "Wailing Caverns", "the guide opens on the dungeon the player is in")
+    equal(addon.MainFrame.views.dungeon.dungeon.title.gwText, "Wailing Caverns", "the journal opens on the dungeon the player is in")
 end
 
 print("dungeon guide tests passed")
