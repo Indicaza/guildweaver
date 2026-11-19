@@ -354,7 +354,12 @@ do
     equal(entries[1].kind, "boss")
     equal(entries[2].kind, "pending")
     equal(entries[2].name, "Brood Mother", "bosses ahead take the client's names, in its order")
-    equal(entries[4].name, "Warden")
+    -- Every name on the lockout has a known role here: only the mandatory
+    -- bosses are ahead; the optional Hidden Hermit is no boss to finish.
+    equal(entries[3].name, "Warden")
+    equal(entries[4], nil, "no frame for the optional boss")
+    equal(run.classification.coverage, "lockout")
+    equal(hud.BossCountText(run), "1/3", "mandatory progress")
     local tooltip = _G.GameTooltip
     local lines = {}
     tooltip.SetOwner = function() end

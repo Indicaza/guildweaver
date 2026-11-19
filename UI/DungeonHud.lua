@@ -201,24 +201,56 @@ local CLASS_LABELS = { hundred_clear = "100% clear", full_clear = "Full clear", 
 function Hud.ClassLabel(classification)
     local kind = classification and classification.kind or "partial"
     if kind == "dungeon_clear" and classification.verification == "manual" then return "Finished by you" end
+    if kind == "partial" and classification.verification == "unknown" then return "Completion unknown" end
     local label = CLASS_LABELS[kind] or "Partial"
     if classification and classification.verification == "unconfirmed" then label = label .. " (unverified)" end
     return label
 end
 
+-- Boss progress, from a run (Current()) or a history entry: the mandatory
+-- bosses when they are known ("3/4"), else the kills and what the lockout
+-- lists ("3 of 7 listed": the lockout counts optional encounters, so it is
+-- no total to finish), and optional kills as a bonus ("+1 optional").
+-- Older history entries know no roles: they read as the lockout's count.
+function Hud.BossCountText(source)
+    if not source then return "" end
+    local info = source.classification
+    if type(info) ~= "table" then info = source end
+    local defeated, total = tonumber(source.bossesDefeated) or 0, tonumber(source.bossesTotal)
+    local optional = tonumber(info.optionalDefeated) or 0
+    local mandatoryTotal = tonumber(info.mandatoryTotal)
+    local text
+    if mandatoryTotal then
+        text = (tonumber(info.mandatoryDefeated) or 0) .. "/" .. mandatoryTotal
+    else
+        local counted = math.max(0, defeated - optional)
+        text = total and (counted .. " of " .. total .. " listed") or tostring(counted)
+    end
+    if optional > 0 then text = text .. " +" .. optional .. " optional" end
+    return text
+end
+
 local function bossText(run)
-    return tostring(run.bossesDefeated or 0) .. (run.bossesTotal and ("/" .. run.bossesTotal) or "")
+    return Hud.BossCountText(run)
 end
 
 local function knowsBosses(run)
     return run.bossesTotal ~= nil or (run.bossesDefeated or 0) > 0
 end
+Hud.KnowsBosses = knowsBosses
 
--- Boss progress for the pips: total (nil when the client gives none),
--- defeated, and whether a boss is being fought.
+-- Boss progress for the pips: total and defeated count the mandatory
+-- bosses when they are known, else the lockout's encounters and every kill
+-- (total nil when the client gives none); optional kills; coverage; and
+-- whether a boss is being fought.
 function Hud.BossProgress(run)
     if not run then return nil end
-    return { total = run.bossesTotal, defeated = run.bossesDefeated or 0, engaged = run.engaged ~= nil }
+    local info = type(run.classification) == "table" and run.classification or {}
+    local known = tonumber(info.mandatoryTotal) ~= nil
+    return { total = known and info.mandatoryTotal or run.bossesTotal,
+        defeated = known and (info.mandatoryDefeated or 0) or (run.bossesDefeated or 0),
+        optional = info.optionalDefeated or 0, coverage = info.coverage or "unknown", mandatory = known,
+        engaged = run.engaged ~= nil, text = Hud.BossCountText(run) }
 end
 
 local function xpText(run)
@@ -396,14 +428,19 @@ function Hud.Portraits(run)
         table.insert(entries, { id = "engaged", name = run.engaged.name, kind = "engaged", at = run.engaged.since, encounterId = run.engaged.encounterId,
             displayId = displayFor(run.engaged.encounterId, run.engaged.name) })
     end
-    if run and run.bossesTotal then
+    local progress = Hud.BossProgress(run)
+    if run and progress and progress.total then
         -- Bosses ahead take the names (and art) the client gave for bosses
-        -- not yet down, in the client's order; the rest stay unnamed.
+        -- not yet down, in the client's order; the rest stay unnamed. With
+        -- a known mandatory roster only mandatory bosses are ahead.
         local ahead = {}
+        local registry = GW.DungeonBosses
         for _, boss in ipairs(known) do
-            if not taken[boss] and not boss.killed then table.insert(ahead, boss) end
+            local optional = progress.mandatory and registry and registry.Role
+                and registry.Role(run.instanceId, boss.encounterId, boss.name) == "optional"
+            if not taken[boss] and not boss.killed and not optional then table.insert(ahead, boss) end
         end
-        local remaining = run.bossesTotal - (run.bossesDefeated or 0) - (run.engaged and 1 or 0)
+        local remaining = progress.total - progress.defeated - (run.engaged and 1 or 0)
         for index = 1, math.min(MAX_BOSSES, remaining) do
             local boss = ahead[index]
             table.insert(entries, { id = "pending:" .. index, kind = "pending", name = boss and boss.name or nil, encounterId = boss and boss.encounterId or nil,
@@ -864,8 +901,7 @@ function Hud:RefreshRow(run, mode, width)
         self.engaged = nil
     end
     local progress = Hud.BossProgress(run)
-    setText(self.bossLabel, "bossLabel", progress.total and (progress.defeated .. "/" .. progress.total)
-        or (progress.defeated > 0 and tostring(progress.defeated) or ""))
+    setText(self.bossLabel, "bossLabel", (progress.total or progress.defeated > 0 or progress.optional > 0) and progress.text or "")
     if #entries == 0 then
         row:Hide()
         return 0

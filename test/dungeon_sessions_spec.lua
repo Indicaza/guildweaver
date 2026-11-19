@@ -174,7 +174,9 @@ do
     equal(payload.checkpoints[1].id, "boss:1")
     equal(payload.checkpoints[2].id, "boss:2")
     equal(payload.checkpoints[1].source, "encounter_end")
-    equal(payload.completion.basis, "encounters", "both kills reported by the client")
+    -- The kill count alone never proves a clear: the lockout, read again on
+    -- leaving, confirms both encounters down.
+    equal(payload.completion.basis, "lockout", "the lockout confirms both kills")
     equal(payload.bosses.duplicatesIgnored, 1, "BOSS_KILL after ENCOUNTER_END ignored")
     equal(#addon.DungeonSessions.History(), 1, "kept for the window")
 end

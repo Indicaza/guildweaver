@@ -162,6 +162,8 @@ local function outcome(entry)
         if basis == "lockout" or basis == "encounters" then return "100% clear", "good" end
         if basis == "final_boss" then return "Dungeon clear", "good" end
         if basis == "final_boss_unconfirmed" then return "Dungeon clear (unverified)", "gold" end
+        if basis == "required_bosses" then return "Full clear", "good" end
+        if basis == "required_bosses_unconfirmed" then return "Full clear (unverified)", "gold" end
         if basis == "manual" then return "Finished by you", "text" end
         return "Completed", "text"
     elseif status == "abandoned" or status == "interrupted" then
@@ -195,7 +197,7 @@ local function dungeonSummary()
         local state = hud().DisplayState(run)
         local detail = hud().StateText(run)
         if run.bossesTotal or (run.bossesDefeated or 0) > 0 then
-            detail = "Bosses " .. run.bossesDefeated .. (run.bossesTotal and ("/" .. run.bossesTotal) or "") .. "  " .. Theme.Colorize(DOT, "textFaint") .. "  " .. detail
+            detail = "Bosses " .. hud().BossCountText(run) .. "  " .. Theme.Colorize(DOT, "textFaint") .. "  " .. detail
         end
         return run.name, hud().ClockText(run), state, detail
     end
