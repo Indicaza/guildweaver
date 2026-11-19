@@ -542,7 +542,7 @@ function UI.Window(opts)
 
     -- Size: clamped to the minimum and to the screen; the grain re-tiles.
     local minWidth, minHeight = opts.minWidth or opts.width or 640, opts.minHeight or opts.height or 440
-    function frame:ClampSize(width, height)
+    function frame.ClampSize(_, width, height)
         local screenW, screenH = frameSize(Globals.UIParent, 0, 0)
         width, height = tonumber(width) or opts.width or 640, tonumber(height) or opts.height or 440
         if screenW and screenW > 0 then width = math.min(width, math.max(minWidth, screenW - 20)) end
