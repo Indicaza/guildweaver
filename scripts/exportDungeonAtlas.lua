@@ -29,7 +29,10 @@ Export.SCHEMA = 1
 Export.MAX_BYTES = 491520 -- the generated file must stay under 480 KB
 Export.MAX_ABILITIES = 12 -- per creature, highest priority first
 Export.MAX_QUESTS = 40 -- per dungeon (the atlas lists zone quests for some raids)
-Export.MAX_LOOT = 40 -- per creature
+-- Per creature. A list longer than this is a problem that stops the export,
+-- never a silent cut: raise it (Holdfast #301's longest list is 50, Ruins of
+-- Ahn'Qiraj's bosses).
+Export.MAX_LOOT = 64
 Export.DEFAULT_TIER = "classic-reference"
 
 -- JSON ---------------------------------------------------------------------------
@@ -336,12 +339,55 @@ local function itemList(state, loot, raw, where)
     local ids, seen = {}, {}
     for _, value in ipairs(list(raw)) do
         local id = useItem(state, loot, value, where)
-        if id and not seen[id] and #ids < Export.MAX_LOOT then
+        if id and not seen[id] then
             seen[id] = true
             table.insert(ids, id)
         end
     end
+    if #ids > Export.MAX_LOOT then
+        problem(state, string.format("%s: %d drops, more than MAX_LOOT (%d)", where, #ids, Export.MAX_LOOT))
+    end
     return #ids > 0 and ids or nil
+end
+
+-- Who lists each of a creature's items (Holdfast's `sources`: azerothcore,
+-- dungeon-planner), one digit per item in loot order: 1 the emulator, 2
+-- DungeonPlanner, 3 both. nil when the loot file says nothing about sources.
+local SOURCE_BITS = { azerothcore = 1, ["dungeon-planner"] = 2 }
+local function sourceCodes(ids, sources)
+    if not ids or type(sources) ~= "table" then return nil end
+    local bits = {}
+    for source, itemIds in pairs(sources) do
+        local bit = SOURCE_BITS[source]
+        if bit then
+            for _, itemId in ipairs(list(itemIds)) do
+                itemId = int(itemId)
+                if itemId then bits[itemId] = (bits[itemId] or 0) + bit end
+            end
+        end
+    end
+    local out = {}
+    for index, itemId in ipairs(ids) do out[index] = tostring(math.min(3, bits[itemId] or 0)) end
+    local text = table.concat(out)
+    return string.find(text, "[123]") and text or nil
+end
+
+-- A shared drop's source: its one creature or chest, else up to three of
+-- the ones that drop it ("A, B, C and 2 more").
+local function sharedSource(entry)
+    local single = str(entry.sourceName, 60)
+    if single then return single end
+    local names, seen = {}, {}
+    for _, source in ipairs(list(entry.sources)) do
+        local name = str(source.name, 60)
+        if name and not seen[name] then
+            seen[name] = true
+            table.insert(names, name)
+        end
+    end
+    if #names == 0 then return nil end
+    if #names <= 3 then return table.concat(names, ", ") end
+    return table.concat(names, ", ", 1, 3) .. " and " .. (#names - 3) .. " more"
 end
 
 local function lootByDungeon(loot)
@@ -414,10 +460,19 @@ local function dungeonOf(state, raw, lootEntry, loot)
     local bossLoot, rareLoot = {}, {}
     for _, entry in ipairs(list(lootEntry and lootEntry.bosses)) do
         local key = int(entry.encounterId) and ("e" .. entry.encounterId) or (int(entry.npcId) and ("n" .. entry.npcId))
-        if key then bossLoot[key] = entry.itemIds end
+        if key then bossLoot[key] = entry end
     end
     for _, entry in ipairs(list(lootEntry and lootEntry.rares)) do
-        if int(entry.npcId) then rareLoot[entry.npcId] = entry.itemIds end
+        if int(entry.npcId) then rareLoot[entry.npcId] = entry end
+    end
+    -- A boss's own chest (Holdfast: a chest whose every drop the boss's list
+    -- holds), by name.
+    local function chestOf(entry)
+        local names = {}
+        for _, chest in ipairs(list(entry and entry.chests)) do
+            if str(chest.name, 60) then table.insert(names, str(chest.name, 60)) end
+        end
+        return #names > 0 and table.concat(names, ", ") or nil
     end
 
     local npcs = {}
@@ -428,12 +483,13 @@ local function dungeonOf(state, raw, lootEntry, loot)
         else
             local encounterId, npcId = int(boss.encounterId), int(boss.npcId)
             local x, y = position(boss.mapPosition)
-            local lootIds = (encounterId and bossLoot["e" .. encounterId]) or (npcId and bossLoot["n" .. npcId]) or nil
+            local entry = (encounterId and bossLoot["e" .. encounterId]) or (npcId and bossLoot["n" .. npcId]) or nil
+            local ids = itemList(state, loot, entry and entry.itemIds, where .. " " .. name)
             table.insert(dungeon.bosses, {
                 encounterId = encounterId, npcId = npcId, name = name, x = x, y = y,
                 abilities = abilities(state, boss.abilities, where .. " " .. name),
                 prov = provenance(state, boss.provenance),
-                loot = itemList(state, loot, lootIds, where .. " " .. name),
+                loot = ids, lootSources = sourceCodes(ids, entry and entry.sources), chest = chestOf(entry),
             })
             if encounterId then
                 if state.encounters[encounterId] and state.encounters[encounterId] ~= id then
@@ -455,9 +511,11 @@ local function dungeonOf(state, raw, lootEntry, loot)
         local name, npcId = str(rare.name, 80), int(rare.npcId)
         if name then
             local x, y = position(rare.mapPosition)
+            local entry = npcId and rareLoot[npcId]
+            local ids = itemList(state, loot, entry and entry.itemIds, where .. " " .. name)
             table.insert(dungeon.rares, { npcId = npcId, name = name, levelMin = int(rare.levelMin), levelMax = int(rare.levelMax),
                 elite = rare.elite == true or nil, x = x, y = y, abilities = abilities(state, rare.abilities, where .. " " .. name),
-                loot = itemList(state, loot, npcId and rareLoot[npcId], where .. " " .. name) })
+                loot = ids, lootSources = sourceCodes(ids, entry and entry.sources) })
             if npcId then npcs[npcId] = true end
         end
     end
@@ -465,7 +523,7 @@ local function dungeonOf(state, raw, lootEntry, loot)
     local other = {}
     for _, entry in ipairs(list(lootEntry and lootEntry.dungeonLoot)) do
         local itemId = useItem(state, loot, entry.itemId, where .. " dungeon loot")
-        if itemId then table.insert(other, { itemId = itemId, source = str(entry.sourceName, 60) }) end
+        if itemId then table.insert(other, { itemId = itemId, source = sharedSource(entry) }) end
     end
     table.sort(other, function(a, b)
         if a.itemId ~= b.itemId then return a.itemId < b.itemId end
@@ -689,7 +747,8 @@ local function dungeonBody(d, add)
     if d.layout then add("    layout=" .. fields({ "w", d.layout.width, "h", d.layout.height, "pts", d.layout.points }) .. ",") end
     add("    bosses={")
     for _, b in ipairs(d.bosses) do
-        add("      " .. fields({ "e", b.encounterId, "npc", b.npcId, "name", b.name, "x", b.x, "y", b.y, "ab", b.abilities, "prov", b.prov, "loot", b.loot }) .. ",")
+        add("      " .. fields({ "e", b.encounterId, "npc", b.npcId, "name", b.name, "x", b.x, "y", b.y, "ab", b.abilities, "prov", b.prov, "loot", b.loot,
+            "ls", b.lootSources, "chest", b.chest }) .. ",")
     end
     add("    },")
     add("    trash={")
@@ -700,7 +759,7 @@ local function dungeonBody(d, add)
     add("    rares={")
     for _, r in ipairs(d.rares) do
         add("      " .. fields({ "npc", r.npcId, "name", r.name, "lmin", r.levelMin, "lmax", r.levelMax, "elite", r.elite, "x", r.x, "y", r.y,
-            "ab", r.abilities, "loot", r.loot }) .. ",")
+            "ab", r.abilities, "loot", r.loot, "ls", r.lootSources }) .. ",")
     end
     add("    },")
     add("    other={")
