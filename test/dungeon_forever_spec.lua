@@ -163,7 +163,7 @@ end
 -- 3. In the fake client: guide, runs, saved runs, catalog --------------------------------
 local world
 
-local function installWorld(env)
+local function installWorld()
     local G = _G
     G.IsInInstance = function() return world.instance ~= nil, world.instance and world.instance.type or "none" end
     G.GetInstanceInfo = function()
@@ -188,7 +188,7 @@ local function boot(db)
     world.instance, world.lock = nil, { total = 4, complete = 0 }
     local env = Env.new()
     local addon = env:load()
-    installWorld(env)
+    installWorld()
     if db then GuildweaverDB = db end
     env:login()
     env:advance(3)
@@ -229,10 +229,8 @@ do
     zone(env, HALL)
     equal(guide.CurrentInstanceId(), 3065, "the atlas knows it now")
     truthy(sessions.Current(), "a run starts")
-    local function liveRun()
-        for _, open in pairs(GuildweaverDB.dungeon.active) do return open end
-    end
-    local run = liveRun()
+    -- The one open run (the saved table, not Current()'s summary).
+    local run = select(2, next(GuildweaverDB.dungeon.active))
     kill(env, 777001, "Faldrim Anvilmar")
     local ledger = sessions.BossLedger(run)
     equal(ledger.unknown, 1, "an encounter the registry does not know: role unknown")
