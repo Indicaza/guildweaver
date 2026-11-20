@@ -262,8 +262,48 @@ function Guide.Dungeon(instanceId)
         return nil
     end
     local ok, dungeon = pcall(measure, "guide:build", build)
+    if ok and type(dungeon) == "table" then pcall(Guide.ApplyForeverDb, instanceId, dungeon) end
     cache.dungeons[instanceId] = ok and type(dungeon) == "table" and dungeon or false
     return cache.dungeons[instanceId] or nil
+end
+
+-- ForeverDB.net's data (Data/ForeverDB.generated.lua, GPL-3.0 with its
+-- attribution term, kept apart from the rest: docs/dungeon-guide.md,
+-- "Licences"): when that file is loaded, its loot lists, listed-by codes,
+-- reference rates and resolved drops replace the base ones of the bosses
+-- and rares it names, and its item facts the base ones. Without the file
+-- the journal shows the base data.
+function Guide.ForeverDb()
+    local data = GW.ForeverDbData
+    return type(data) == "table" and data or nil
+end
+
+function Guide.ApplyForeverDb(instanceId, dungeon)
+    local data = Guide.ForeverDb()
+    local build = data and data.dungeons and data.dungeons[instanceId]
+    if type(build) ~= "function" then return false end
+    local patch = build()
+    local function apply(list, patches)
+        for index, p in pairs(patches or {}) do
+            local creature = list and list[index]
+            if creature then
+                creature.loot, creature.ls, creature.rt = p.loot, p.ls, p.rt
+                if p.unres ~= nil then creature.unres = p.unres or nil end
+            end
+        end
+    end
+    apply(dungeon.bosses, patch.bosses)
+    apply(dungeon.rares, patch.rares)
+    if patch.unres ~= nil then dungeon.unres = patch.unres or nil end
+    if patch.other then dungeon.other = patch.other end
+    dungeon.foreverDb = true
+    return true
+end
+
+-- "Data from ForeverDB.net (https://foreverdb.net)" when its data is loaded.
+function Guide.ForeverDbCredit()
+    local data = Guide.ForeverDb()
+    return data and data.source and data.source.credit or nil
 end
 
 function Guide.IsBuilt(instanceId)
@@ -285,6 +325,16 @@ function Guide.Items()
         local atlas = data()
         local ok, items = pcall(atlas and atlas.items or function() return {} end)
         cache.items = ok and type(items) == "table" and items or {}
+        -- ForeverDB's item facts over the base ones (fd: they came from it).
+        local foreverDb = Guide.ForeverDb()
+        local okOverlay, overlay = false, nil
+        if foreverDb and type(foreverDb.items) == "function" then okOverlay, overlay = pcall(foreverDb.items) end
+        if okOverlay and type(overlay) == "table" then
+            for id, item in pairs(overlay) do
+                item.fd = true
+                cache.items[id] = item
+            end
+        end
     end
     return cache.items
 end

@@ -35,7 +35,6 @@ lua5.1 scripts/exportDungeonAtlas.lua \
   --loot  ../web/holdfast/backend/src/Atlas/data/reference-loot.json \
   --wings ../web/holdfast/backend/src/Atlas/data/wing-manifest.json \
   --quests ../web/holdfast/backend/src/Atlas/data/quest-catalog.json \
-  --relationships ../web/holdfast/backend/src/Atlas/data/loot-relationships.json \
   --commit $(git -C ../web/holdfast rev-parse HEAD)
 cp ../web/holdfast/backend/src/Atlas/data/wing-manifest.json test/fixtures/wing-manifest.json
 ```
@@ -48,33 +47,50 @@ loot item without facts, a spell classified two ways, coordinates out of
 range), a creature with more drops than `MAX_LOOT` (64; it fails rather than
 cutting the list) and a file over 480 KB.
 
-The packaged file's header names the Holdfast commit: currently `5b687b7`
-(Indicaza/holdfast#308, on #306 and #307: item facts from the WoW Forever
-client and ForeverDB, boss loot relationships and reference drop rates).
-Regenerate it whenever the atlas, the reference loot, the loot
-relationships or the quest catalog changes on Holdfast `main` (after #306,
-#307 and #308 merge, regenerate from `main` so the header names a `main`
-commit).
+The packaged file's header names the Holdfast commit: currently `dc66556`
+(Indicaza/holdfast#309, on #306–#308: item facts from the WoW Forever
+client, boss loot relationships and reference drop rates). Regenerate it
+whenever the atlas, the reference loot or the quest catalog changes on
+Holdfast `main` (after #306–#309 merge, regenerate from `main` so the header
+names a `main` commit).
 
-### Loot facts and drop rates
+### Licences: ForeverDB's data in its own file
 
-Item facts come from Holdfast's canonical item definitions (the Forever
-client's own item tables first, then ForeverDB, then the Classic client):
-Witherfang's drops, for one, now have names, slots and stats. An item no
-source grades has no quality (`q` nil; the tooltip says so), never a guessed
-one. Items carry two flags: `qi` a quest item, `fv` an item WoW Forever
-added (its facts come from no Classic source).
+The atlas file is exported from Holdfast's MIT base reference loot (the
+Forever and Classic clients only) and holds nothing from ForeverDB.net.
+ForeverDB's data (reference drop rates, its players' loot records, item
+facts it supplies) is GPL-3.0 with ForeverDB's attribution term, so it is
+exported apart, into `Data/ForeverDB.generated.lua`:
 
-With `--relationships` each boss gets `rt`: per loot entry, in loot order,
-`percent:kills:o` (ForeverDB, observed in WoW Forever over that many looted
-kills) or `percent::c` (Classic data), empty when no source has one. A
-boss's own drops that only ForeverDB lists are added to its loot with
-listed-by code `4` ("ForeverDB"); drops it only saw on the corpse (world
-drops, shared ones) are not. The item tooltip shows "Drop rate: 23.5%
-(ForeverDB, 17 kills)" and ForeverDB's credit, "Data from ForeverDB.net",
-which its licence asks for wherever its data is shown. Guildweaver's own
-observed rates come from the website's server and are shown there only; the
-packaged file holds no observations.
+```
+lua5.1 scripts/exportForeverDb.lua \
+  --atlas ../web/holdfast/backend/src/Atlas/data/atlas.json \
+  --base-loot ../web/holdfast/backend/src/Atlas/data/reference-loot.json \
+  --foreverdb-loot ../web/holdfast/backend/src/Atlas/data/foreverdb/reference-loot.json \
+  --relationships ../web/holdfast/backend/src/Atlas/data/foreverdb/loot-relationships.json \
+  --wings ../web/holdfast/backend/src/Atlas/data/wing-manifest.json \
+  --quests ../web/holdfast/backend/src/Atlas/data/quest-catalog.json \
+  --commit $(git -C ../web/holdfast rev-parse HEAD)
+```
+
+It holds only what ForeverDB's data changes: item facts that differ or
+exist only with it (marked `fd` when loaded), and per boss and rare the
+loot list, listed-by codes (`4`: only ForeverDB lists it), reference rates
+(`rt`: `percent:kills:o` observed in WoW Forever over that many looted
+kills, `percent::c` Classic data) and drops still known by id only. Its
+first line is ForeverDB's notice line, unchanged, as its attribution term
+asks. `Guide.ApplyForeverDb` applies it when the guide builds a dungeon;
+without the file (remove it from the TOC) the journal shows the base data.
+Its licence ships in `Licenses/` (copied into the release by
+`release.yml`); the credit "Data from ForeverDB.net (https://foreverdb.net)"
+shows in item tooltips that use its data, in `/gw credits`, in
+`Licenses/README.md` and in the README. Guildweaver's own observed rates are
+on the website only (preliminary until the loot-window coverage is verified
+in game).
+
+Item facts: an item no source grades has no quality (`q` nil; the tooltip
+says so). Items carry `qi` (a quest item) and `fv` (an item WoW Forever
+added, its facts from no Classic source).
 
 The item table is packed: each item is a positional row whose repeated
 strings (slot, armour or weapon type, bind, set) are indexes into one list,
@@ -181,7 +197,6 @@ time the journal or the quest capture asks.
 ```
 lua5.1 scripts/exportDungeonQuests.lua \
   --quests ../web/holdfast/backend/src/Atlas/data/quest-catalog.json \
-  --relationships ../web/holdfast/backend/src/Atlas/data/loot-relationships.json \
   --commit $(git -C ../web/holdfast rev-parse HEAD)
 ```
 
@@ -356,8 +371,9 @@ with two display IDs.
 
 | | |
 | --- | --- |
-| Atlas file | 440 KB (450,751 bytes; budget 480 KB, enforced by the exporter and the spec): 2,437 items and the drop rates (was 413,250 bytes, 2,204 items) |
-| Atlas, Lua memory at login | about 1,005 KB (compiled data; no tables are built; was 940 KB) |
+| Atlas file | 406 KB (416,030 bytes; budget 480 KB, enforced by the exporter and the spec): 2,227 items, nothing from ForeverDB |
+| ForeverDB file | 74 KB (75,755 bytes; budget 160 KB): its item facts, loot lists and rates (GPL-3.0, `Licenses/`) |
+| Lua memory at login | atlas about 946 KB (was 940 KB), ForeverDB file about 182 KB (compiled data; no tables are built until the guide asks) |
 | Art file | 23 KB; about 89 KB of compiled Lua at login, tables built on first use |
 | Quest catalog file | 72 KB (73,646 bytes; budget 256 KB, enforced by its exporter); about 194 KB of compiled Lua at login, about 470 KB once the journal's Quests tab or the quest capture builds it |
 | Quest state | no SavedVariables of its own: the outbound `quest_state` record (the ids the bridge sends) and nothing else |

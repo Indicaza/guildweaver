@@ -1,0 +1,105 @@
+ForeverDB - where each part of this addon comes from, and under which terms
+=========================================================================
+
+The licence is in LICENSE.txt (GPL-3.0 with an attribution term) and the GPL's
+full text in COPYING.txt. In short: you may reuse this addon and its data, but
+keep the notices in the files, and credit "Data from ForeverDB.net
+(https://foreverdb.net)" where your work lists its credits and sources.
+
+1. ForeverDB.net's code
+   Every file outside Data/ (*.lua, *.xml, *.toc) and Media/ (images).
+   Copyright (C) 2026 ForeverDB.net. GPL-3.0 with the attribution term.
+
+2. ForeverDB.net's data (Data/*.lua)
+   Every data file starts with the line
+     -- Data: ForeverDB.net (https://foreverdb.net), build <client build>. ...
+   The data is labelled by where it comes from, in the files and in the addon:
+   - Seen in Forever: what ForeverDB players' addons recorded in WoW Forever and
+     uploaded to ForeverDB.net: drop rates measured over players' kills, where
+     items dropped and where players looted them, vendors, their stock and their
+     Merchant's Favor costs, flight times players timed, new quests and where
+     their givers stand, disenchanting results, items players revealed, rare
+     spawns, gathering spots, players' quest notes. This exists only because
+     ForeverDB players recorded it. Copyright (C) 2026 ForeverDB.net.
+   - ForeverDB.net's own work: gear scoring and stat weights, best-in-slot
+     lists, the quest route planner's numbers, walking routes, guides, tips and
+     texts. Copyright (C) 2026 ForeverDB.net.
+   - The WoW Forever client: names and numbers read from the game's own tables
+     (items, spells, quests, maps, talents, flight paths). These are Blizzard
+     Entertainment's; ForeverDB.net claims nothing in them beyond its selection
+     and arrangement.
+   - Classic data: see 3.
+   Both copyrighted parts above are under GPL-3.0 with the attribution term in
+   LICENSE.txt.
+
+3. Classic data from CMaNGOS classic-db (GPL-3.0)
+   Upstream: https://github.com/cmangos/classic-db, the open World of Warcraft
+   Classic 1.12 world database, Copyright (C) the CMaNGOS project and its
+   contributors, licensed under the GNU General Public License v3.0. Thank you
+   to the CMaNGOS project.
+   - Data/QuestClassic.lua is derived from it as a whole.
+   - Data/Gather.lua, Data/Loot.lua, Data/Rares.lua, Data/DungeonMaps.lua,
+     Data/QuestGuide.lua, Data/QuestXP.lua, Data/Items.lua, Data/NPCs.lua,
+     Data/Collections.lua, Data/GearSources.lua, Data/Supplies.lua,
+     Data/Zones.lua and Data/Travel.lua contain entries derived from it,
+     labelled Classic (c, k or "Classic data" in each file's legend), next to
+     Forever data.
+   ForeverDB.net converts it with its own generator scripts (build_addon_quests.py,
+   build_addon_questxp.py, build_addon_gathering.py, build_addon_loot.py,
+   build_addon_rares.py, build_dungeon_maps.py, build_addon_guide.py,
+   build_addon_data.py, build_addon_collections.py, build_addon_gearfinder.py,
+   build_addon_supplies.py, build_zone_levels.py, build_addon_travel.py).
+   The generated Lua files are the source we distribute; the generator scripts
+   are available on request at https://foreverdb.net/contact.
+
+4. Files the ForeverDB Uploader writes on your PC
+   Data/Helper.lua, Data/Reserves.lua, Data/Live.lua and Data/UploadAck.lua ship
+   empty; the ForeverDB Uploader app fills them with your own status, your
+   guilds' soft reserves and your realm's live data. They are not data to reuse.
+
+5. World of Warcraft
+   World of Warcraft, WoW Forever and their names, places and icons are
+   trademarks or property of Blizzard Entertainment, Inc. ForeverDB is not
+   affiliated with or endorsed by Blizzard Entertainment.
+
+6. The foreverdb.net website and the ForeverDB API
+   Not covered by this addon's licence. The API's terms
+   (https://foreverdb.net/developers): credit ForeverDB.net, with a visible link
+   to https://foreverdb.net, wherever you show the data.
+
+7. OpenMap (MIT licence)
+   Upstream: https://github.com/openmap-world/openmap. Thank you to the OpenMap
+   contributors. ForeverDB's world map works inside Blizzard's own map by
+   OpenMap's method, and adapts its code:
+   - MapCanvas.lua is adapted from OpenMap/Map/WorldMap.lua (the scroll
+     container's zoom levels, the wrapped ResetZoom, the replaced scroll
+     extents, SetView, zoom at the cursor, the glide, the map underneath
+     following the view and never changing in combat).
+   - MapView.lua is adapted from OpenMap/Map/Extras.lua and docs/api.md (the
+     pins of the zones in view placed on the one canvas, lifted above the art).
+   No OpenMap pictures or libraries are included: the art is ForeverDB's own,
+   from the game's own tiles. OpenMap's licence:
+
+   MIT License
+
+   Copyright (c) 2026 OpenMap contributors
+
+   Permission is hereby granted, free of charge, to any person obtaining a copy
+   of this software and associated documentation files (the "Software"), to deal
+   in the Software without restriction, including without limitation the rights
+   to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+   copies of the Software, and to permit persons to whom the Software is
+   furnished to do so, subject to the following conditions:
+
+   The above copyright notice and this permission notice shall be included in all
+   copies or substantial portions of the Software.
+
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+   AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+   SOFTWARE.
+
+Questions about reusing ForeverDB's data: https://foreverdb.net/contact

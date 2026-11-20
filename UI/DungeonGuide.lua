@@ -333,7 +333,7 @@ function GuideUI.ShowItemTooltip(owner, row)
             addLine(tooltip, Guide.REFERENCE_NOTE .. ". Drop chances not shown.", "textFaint", true)
         end
     end
-    if rate or row.listedBy == "ForeverDB" or item.fv then addLine(tooltip, Guide.FOREVERDB_CREDIT, "textFaint") end
+    if rate or row.listedBy == "ForeverDB" or item.fd then addLine(tooltip, Guide.FOREVERDB_CREDIT, "textFaint") end
     pcall(tooltip.Show, tooltip)
     GuideUI.hoveredItem = { owner = owner, row = row }
     if shown and wantsCompare() and type(Globals.GameTooltip_ShowCompareItem) == "function" then

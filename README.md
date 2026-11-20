@@ -184,3 +184,11 @@ A persisted seen cache (1,000 corpses / two hours) prevents duplicate ready/open
 `game_item_definition` is a separate envelope-v1 state stream. It scans a bare `item:<id>` reference, without character identity or item-instance links, for public base definitions. Existing rich `item_definition` records remain available to authenticated tools. Both definition streams retry after item-cache load events. Locale is additive envelope metadata; SavedVariables remains schema 4.
 
 Live-client checks after servers return: ordinary corpse; area-loot two NPC types; shared party corpse; reopen/reload; skin a looted corpse; dungeon boss; uncached item; map with unavailable player coordinates. Inspect `/gw telemetry` and sync after a reload/logout.
+
+## Credits and licences
+
+Data from ForeverDB.net (https://foreverdb.net): reference drop rates and
+some item facts in `Data/ForeverDB.generated.lua`, under GPL-3.0 with
+ForeverDB.net's attribution term. Game data from World of Warcraft: Forever
+(Blizzard Entertainment); Classic reference data from AzerothCore (GPL-2.0)
+and DungeonPlanner. Details in `Licenses/README.md`; `/gw credits` in game.
