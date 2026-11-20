@@ -21,6 +21,10 @@ Theme.SHADOW = Theme.MEDIA .. "Shadow"
 Theme.GRAIN = Theme.MEDIA .. "Grain"
 Theme.GRAIN_SIZE = 256
 
+-- Theme.Panel's styles (below); SetBackground reads their shade.
+local PANEL
+local PANEL_SHADE = { stone = 0.55, inset = 0.72, gold = 0.62 }
+
 Theme.colors = {
     -- Surfaces, darkest to lightest.
     shadow = { 0, 0, 0, 0.45 },
@@ -169,6 +173,12 @@ end
 function Theme.SetBorder(frame, border, alpha)
     local skin = rawget(frame, "gwSkin")
     if not skin then return end
+    -- A Blizzard border (Theme.Panel): its edge colour.
+    if skin.backdrop then
+        local rgb = type(border) == "table" and border or Theme.Color(border)
+        pcall(skin.backdrop.SetBackdropBorderColor, skin.backdrop, rgb[1], rgb[2], rgb[3], alpha or rgb[4] or 1)
+        return
+    end
     for _, texture in ipairs(skin.edges) do
         Theme.Fill(texture, border, alpha)
     end
@@ -176,7 +186,14 @@ end
 
 function Theme.SetBackground(frame, background, alpha)
     local skin = rawget(frame, "gwSkin")
-    if skin then Theme.Fill(skin.bg, background, alpha) end
+    if not skin then return end
+    -- Over Blizzard's rock (Theme.Panel) only the shade changes.
+    if skin.rock then
+        local rgb = type(background) == "table" and background or Theme.Color(background)
+        pcall(skin.shade.SetColorTexture, skin.shade, rgb[1] * 0.5, rgb[2] * 0.5, rgb[3] * 0.5, alpha or (PANEL_SHADE[skin.style] or 0.55))
+        return
+    end
+    Theme.Fill(skin.bg, background, alpha)
 end
 
 -- The shadow of a sheet of paper lifted slightly off the table: a
@@ -273,17 +290,150 @@ function Theme.Rule(parent, color, alpha)
     return texture
 end
 
--- A short gold accent line under a heading, fading to the right.
+
+-- Blizzard's own UI art ------------------------------------------------------------------
+--
+-- Textures the client ships, by path. Each one is used by OpenMap, an
+-- add-on built for WoW Forever's client (Interface 16001), so it is known to
+-- exist there; nothing here is guessed. Every use goes through
+-- Theme.Texture, and a client that lacks a file (SetTexture answers false)
+-- gets the flat look instead.
+Theme.ART = {
+    rock = "Interface\\FrameGeneral\\UI-Background-Rock",
+    tooltipBorder = "Interface\\Tooltips\\UI-Tooltip-Border",
+    goldBorder = "Interface\\DialogFrame\\UI-DialogBox-Gold-Border",
+    slot = "Interface\\Buttons\\UI-Quickslot2",
+    rowHighlight = "Interface\\QuestFrame\\UI-QuestTitleHighlight",
+    mouseHighlight = "Interface\\Buttons\\UI-Common-MouseHilight",
+    questAvailable = "Interface\\GossipFrame\\AvailableQuestIcon",
+    questIncomplete = "Interface\\GossipFrame\\IncompleteQuestIcon",
+    questActive = "Interface\\GossipFrame\\ActiveQuestIcon",
+    skull = "Interface\\TargetingFrame\\UI-TargetingFrame-Skull",
+    book = "Interface\\QuestFrame\\UI-QuestLog-BookIcon",
+}
+
+-- Sets a texture to a file. False when the client has no such file (or the
+-- call fails); the caller then draws its fallback.
+function Theme.Texture(texture, file, horizontal, vertical)
+    if not texture or type(file) == "nil" then return false end
+    local ok, result
+    if horizontal then
+        ok, result = pcall(texture.SetTexture, texture, file, horizontal, vertical or horizontal)
+    else
+        ok, result = pcall(texture.SetTexture, texture, file)
+    end
+    if not ok or result == false then return false end
+    rawset(texture, "gwArt", file)
+    return true
+end
+
+-- The edge colour of a Blizzard border, by theme colour name.
+local function backdropBorder(backdrop, name, alpha)
+    local rgb = type(name) == "table" and name or Theme.Color(name)
+    pcall(backdrop.SetBackdropBorderColor, backdrop, rgb[1], rgb[2], rgb[3], alpha or rgb[4] or 1)
+end
+
+-- A panel in the game's own look: Blizzard's dark rock, shaded so text
+-- reads, inside the tooltip border (or, for "gold", the dialog's gold
+-- edge). style: "stone" (cards, panels), "inset" (wells: the map, the
+-- quest summary), "gold" (a framed centrepiece). Without the art (or a
+-- backdrop) it is Theme.Skin's flat surface and hairline, as before.
+-- Theme.SetBorder and Theme.SetBackground keep working on it.
+PANEL = {
+    stone = { shade = 0.55, edge = "borderGold", edgeAlpha = 0.85, flat = "bgRaised", flatEdge = "border" },
+    inset = { shade = 0.72, edge = "borderStrong", edgeAlpha = 0.9, flat = "bgInset", flatEdge = "border" },
+    gold = { shade = 0.62, edge = "gold", edgeAlpha = 0.9, gold = true, flat = "bgInset", flatEdge = "borderGold" },
+}
+Theme.PANEL = PANEL
+
+function Theme.Panel(frame, style, outset)
+    local spec = PANEL[style] or PANEL.stone
+    local skin = Theme.Skin(frame, spec.flat, spec.flatEdge)
+    skin.style = style
+    if not skin.shade then
+        skin.shade = frame:CreateTexture(nil, "BACKGROUND", nil, -6)
+        skin.shade:SetAllPoints(frame)
+    end
+    -- The rock, tiled, under a dark shade.
+    if Theme.Texture(skin.bg, Theme.ART.rock, "REPEAT", "REPEAT") then
+        pcall(skin.bg.SetHorizTile, skin.bg, true)
+        pcall(skin.bg.SetVertTile, skin.bg, true)
+        pcall(skin.bg.SetVertexColor, skin.bg, 1, 1, 1, 1)
+        pcall(skin.shade.SetColorTexture, skin.shade, 0, 0, 0, spec.shade)
+        skin.shade:Show()
+        skin.rock = true
+    else
+        skin.shade:Hide()
+        skin.rock = false
+    end
+    -- The border: a backdrop child, when the client has the template.
+    local backdrop = skin.backdrop
+    if backdrop == nil then
+        local ok, made = pcall(Globals.CreateFrame, "Frame", nil, frame, "BackdropTemplate")
+        backdrop = ok and made and type(made.SetBackdrop) == "function" and made or false
+        skin.backdrop = backdrop
+    end
+    if backdrop then
+        outset = outset or 2
+        backdrop:ClearAllPoints()
+        backdrop:SetPoint("TOPLEFT", frame, "TOPLEFT", -outset, outset)
+        backdrop:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", outset, -outset)
+        local okLevel, level = pcall(frame.GetFrameLevel, frame)
+        pcall(backdrop.SetFrameLevel, backdrop, (okLevel and tonumber(level) or 1) + 1)
+        local ok = pcall(backdrop.SetBackdrop, backdrop, {
+            edgeFile = spec.gold and Theme.ART.goldBorder or Theme.ART.tooltipBorder,
+            edgeSize = spec.gold and 16 or 12,
+            insets = { left = 3, right = 3, top = 3, bottom = 3 },
+        })
+        if ok then
+            backdropBorder(backdrop, spec.edge, spec.edgeAlpha)
+            for _, edge in ipairs(skin.edges) do edge:Hide() end
+            skin.edgeColor = spec.edge
+        else
+            skin.backdrop = false
+        end
+    end
+    return skin
+end
+
+-- A hover glow: the quest log's row highlight, added over the row.
+function Theme.Highlight(button, file, alpha)
+    if type(button.SetHighlightTexture) ~= "function" then return end
+    pcall(button.SetHighlightTexture, button, file or Theme.ART.rowHighlight, "ADD")
+    if alpha and type(button.GetHighlightTexture) == "function" then
+        local ok, texture = pcall(button.GetHighlightTexture, button)
+        if ok and texture and type(texture.SetAlpha) == "function" then pcall(texture.SetAlpha, texture, alpha) end
+    end
+end
+
+-- A soft hairline that fades in from the left and out to the right: a
+-- quiet divider instead of a hard rule or a bright underline.
+function Theme.Divider(parent, color, alpha)
+    local texture = parent:CreateTexture(nil, "ARTWORK")
+    texture:SetHeight(1)
+    pcall(texture.SetTexture, texture, Theme.WHITE)
+    local rgb = Theme.Color(color or "goldDim")
+    local a = alpha or 0.55
+    if type(texture.SetGradient) == "function" and type(Globals.CreateColor) == "function"
+        and pcall(texture.SetGradient, texture, "HORIZONTAL", Globals.CreateColor(rgb[1], rgb[2], rgb[3], a), Globals.CreateColor(rgb[1], rgb[2], rgb[3], 0)) then
+        return texture
+    end
+    Theme.Fill(texture, color or "goldDim", a * 0.6)
+    return texture
+end
+
+-- A short accent line, fading to the right: now a quiet one-pixel bronze
+-- line (it was a bright gold underline).
 function Theme.Accent(parent, width)
     local texture = parent:CreateTexture(nil, "ARTWORK")
-    texture:SetSize(width or 24, 2)
+    texture:SetSize(width or 24, 1)
     pcall(texture.SetTexture, texture, Theme.WHITE)
-    local gold = Theme.colors.gold
+    local gold = Theme.colors.goldDim
     if type(texture.SetGradient) == "function" and type(Globals.CreateColor) == "function" then
         local ok = pcall(texture.SetGradient, texture, "HORIZONTAL", Globals.CreateColor(gold[1], gold[2], gold[3], 1), Globals.CreateColor(gold[1], gold[2], gold[3], 0))
         if ok then return texture end
     end
-    Theme.Fill(texture, "gold", 0.8)
+    Theme.Fill(texture, "goldDim", 0.6)
     return texture
 end
 

@@ -297,15 +297,17 @@ end
 
 -- Sections, cards, dots -------------------------------------------------------------
 
--- An uppercase section heading with a gold accent under it.
+-- An uppercase section heading, and a soft bronze line running from it to
+-- the right edge (the dungeon journal's chapter line, not an underline).
 function UI.SectionHeader(parent, title)
     local header = create("Frame", parent)
     header:SetHeight(20)
     header.text = UI.Text(header, "heading", "gold")
-    header.text:SetPoint("TOPLEFT", header, "TOPLEFT", 0, 0)
+    header.text:SetPoint("LEFT", header, "LEFT", 0, 0)
     header.text:SetText(string.upper(title))
-    header.accent = Theme.Accent(header, 28)
-    header.accent:SetPoint("TOPLEFT", header.text, "BOTTOMLEFT", 0, -4)
+    header.accent = Theme.Divider(header, "goldDim", 0.7)
+    header.accent:SetPoint("LEFT", header.text, "RIGHT", 8, 0)
+    header.accent:SetPoint("RIGHT", header, "RIGHT", 0, 0)
     function header:SetTitle(text) UI.SetText(self.text, string.upper(text)) end
     return header
 end

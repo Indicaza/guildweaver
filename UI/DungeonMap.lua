@@ -75,7 +75,8 @@ function DungeonMap.New(parent, width, opts)
     local height = math.floor(width / DungeonMap.ASPECT + 0.5)
     local map = UI.CreateFrame("Frame", parent)
     map:SetSize(width + 2, height + 2)
-    Theme.Skin(map, "bgInset", "borderGold", 0.6)
+    -- Framed in the gold dialog edge: the page's centrepiece.
+    Theme.Panel(map, "gold", 3)
     map.gwWidth, map.gwHeight = width, height
     map.canvas = UI.CreateFrame("Frame", map)
     map.canvas:SetPoint("TOPLEFT", map, "TOPLEFT", 1, -1)
