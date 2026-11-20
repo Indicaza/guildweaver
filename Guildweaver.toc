@@ -47,6 +47,7 @@ Systems/SessionCapture.lua
 Systems/FarmingSessions.lua
 Data/DungeonBosses.lua
 Data/DungeonAtlas.generated.lua
+Data/ForeverDB.generated.lua
 Data/DungeonQuests.generated.lua
 Data/DungeonJournalArt.generated.lua
 Systems/DungeonObjectives.lua

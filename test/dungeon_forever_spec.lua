@@ -139,7 +139,11 @@ do
         truthy(dungeon.cov, id .. ": what is known")
         truthy(data.keys[id], id .. ": a dungeon key")
         for _, boss in ipairs(dungeon.bosses) do
-            equal(boss.loot, nil, id .. " " .. boss.name .. ": no Classic loot")
+            -- Their loot now comes from WoW Forever's own sources (the Forever
+            -- client's tables, ForeverDB): never Classic facts for Forever's items.
+            for _, itemId in ipairs(boss.loot or {}) do
+                if itemId >= 25000 then truthy(items[itemId] and items[itemId].fv, id .. " " .. boss.name .. ": " .. itemId .. " is a WoW Forever item") end
+            end
             equal(#(boss.ab or {}), 0, id .. " " .. boss.name .. ": no abilities claimed")
             for _, itemId in ipairs(boss.unres or {}) do equal(items[itemId], nil, "unresolved " .. itemId .. " has no facts") end
             if boss.e then truthy(boss.e == 3480 or boss.e == 3481, "only observed encounter IDs (" .. boss.e .. ")") end
@@ -220,7 +224,9 @@ do
     equal(guide.SourceNote(3065), guide.FOREVER_NOTE)
     equal(guide.SourceNote(36), guide.REFERENCE_NOTE)
     local hall = guide.Dungeon(3065)
-    truthy(#guide.UnresolvedLoot(hall.bosses[1]) > 0, "the first boss's drops by item ID")
+    -- The first boss's drops now have their facts (the Forever client, ForeverDB): none left by ID.
+    equal(#guide.UnresolvedLoot(hall.bosses[1]), 0, "the first boss's drops resolved")
+    truthy(#(hall.bosses[1].loot or {}) > 0, "and listed as loot")
     equal(#guide.UnresolvedLoot({}), 0)
     equal(guide.NormalizeId("3065"), 3065, "a numeric route still works")
     equal(guide.DungeonKeyOf(3065), "the-hall-of-thanes")

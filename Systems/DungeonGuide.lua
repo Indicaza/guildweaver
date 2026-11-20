@@ -262,8 +262,48 @@ function Guide.Dungeon(instanceId)
         return nil
     end
     local ok, dungeon = pcall(measure, "guide:build", build)
+    if ok and type(dungeon) == "table" then pcall(Guide.ApplyForeverDb, instanceId, dungeon) end
     cache.dungeons[instanceId] = ok and type(dungeon) == "table" and dungeon or false
     return cache.dungeons[instanceId] or nil
+end
+
+-- ForeverDB.net's data (Data/ForeverDB.generated.lua, GPL-3.0 with its
+-- attribution term, kept apart from the rest: docs/dungeon-guide.md,
+-- "Licences"): when that file is loaded, its loot lists, listed-by codes,
+-- reference rates and resolved drops replace the base ones of the bosses
+-- and rares it names, and its item facts the base ones. Without the file
+-- the journal shows the base data.
+function Guide.ForeverDb()
+    local overlay = GW.ForeverDbData
+    return type(overlay) == "table" and overlay or nil
+end
+
+function Guide.ApplyForeverDb(instanceId, dungeon)
+    local overlay = Guide.ForeverDb()
+    local build = overlay and overlay.dungeons and overlay.dungeons[instanceId]
+    if type(build) ~= "function" then return false end
+    local patch = build()
+    local function apply(list, patches)
+        for index, p in pairs(patches or {}) do
+            local creature = list and list[index]
+            if creature then
+                creature.loot, creature.ls, creature.rt = p.loot, p.ls, p.rt
+                if p.unres ~= nil then creature.unres = p.unres or nil end
+            end
+        end
+    end
+    apply(dungeon.bosses, patch.bosses)
+    apply(dungeon.rares, patch.rares)
+    if patch.unres ~= nil then dungeon.unres = patch.unres or nil end
+    if patch.other then dungeon.other = patch.other end
+    dungeon.foreverDb = true
+    return true
+end
+
+-- "Data from ForeverDB.net (https://foreverdb.net)" when its data is loaded.
+function Guide.ForeverDbCredit()
+    local overlay = Guide.ForeverDb()
+    return overlay and overlay.source and overlay.source.credit or nil
 end
 
 function Guide.IsBuilt(instanceId)
@@ -285,6 +325,16 @@ function Guide.Items()
         local atlas = data()
         local ok, items = pcall(atlas and atlas.items or function() return {} end)
         cache.items = ok and type(items) == "table" and items or {}
+        -- ForeverDB's item facts over the base ones (fd: they came from it).
+        local foreverDb = Guide.ForeverDb()
+        local okOverlay, overlay = false, nil
+        if foreverDb and type(foreverDb.items) == "function" then okOverlay, overlay = pcall(foreverDb.items) end
+        if okOverlay and type(overlay) == "table" then
+            for id, item in pairs(overlay) do
+                item.fd = true
+                cache.items[id] = item
+            end
+        end
     end
     return cache.items
 end
@@ -532,11 +582,40 @@ end
 
 -- Which reference sources list a creature's item: its digit in the
 -- creature's `ls` (1 AzerothCore, 2 DungeonPlanner, 3 both), as words.
-local LISTED_BY = { ["1"] = "AzerothCore", ["2"] = "DungeonPlanner", ["3"] = "AzerothCore and DungeonPlanner" }
+local LISTED_BY = { ["1"] = "AzerothCore", ["2"] = "DungeonPlanner", ["3"] = "AzerothCore and DungeonPlanner", ["4"] = "ForeverDB" }
 function Guide.ListedBy(creature, index)
     local codes = type(creature) == "table" and creature.ls
     return type(codes) == "string" and LISTED_BY[string.sub(codes, index, index)] or nil
 end
+
+-- A boss drop's reference rate (Holdfast's loot relationships, `rt`): {
+-- percent, kills, method = "observed" (in WoW Forever, over that many looted
+-- kills) | "classic" (Classic data) } or nil. Only the source's own number:
+-- Guildweaver's observed rates are on the website.
+local RATE_METHOD = { o = "observed", c = "classic" }
+function Guide.ReferenceRate(creature, index)
+    local codes = type(creature) == "table" and creature.rt
+    if type(codes) ~= "string" then return nil end
+    local position = 0
+    for entry in string.gmatch(codes .. ",", "([^,]*),") do
+        position = position + 1
+        if position == index then
+            local percent, kills, method = string.match(entry, "^([%d%.]+):(%d*):(%a)$")
+            if not percent then return nil end
+            return { percent = tonumber(percent), kills = tonumber(kills), method = RATE_METHOD[method] or "unknown" }
+        end
+    end
+    return nil
+end
+
+-- "23.5% (ForeverDB, 17 kills)" / "20% (ForeverDB, Classic data)".
+function Guide.RateText(rate)
+    if type(rate) ~= "table" or not rate.percent then return nil end
+    local value = math.floor(rate.percent * 10 + 0.5) / 10
+    if rate.method == "classic" then return value .. "% (ForeverDB, Classic data)" end
+    return value .. "% (ForeverDB" .. (rate.kills and (", " .. rate.kills .. " kills") or "") .. ")"
+end
+Guide.FOREVERDB_CREDIT = "Data from ForeverDB.net"
 
 -- Item ids a creature drops, with wishlist state.
 function Guide.CreatureLoot(creature)
@@ -544,7 +623,8 @@ function Guide.CreatureLoot(creature)
     for index, itemId in ipairs(type(creature) == "table" and creature.loot or {}) do
         local wanted = Guide.Wanted(itemId)
         table.insert(rows, { itemId = itemId, item = Guide.Item(itemId), wanted = wanted,
-            acquired = wanted and Guide.Acquired(wanted.itemKey) or false, listedBy = Guide.ListedBy(creature, index) })
+            acquired = wanted and Guide.Acquired(wanted.itemKey) or false, listedBy = Guide.ListedBy(creature, index),
+            rate = Guide.ReferenceRate(creature, index) })
     end
     return rows
 end
@@ -563,10 +643,10 @@ end
 -- dungeon but missing from the reference lists go to "other" too.
 -- Returns { [creature] = rows, other = rows }; rows as LootRows. The
 -- grouping is cached per dungeon; wishlist state is read on each call.
-local function lootRow(itemId, from, kind, listedBy)
+local function lootRow(itemId, from, kind, listedBy, rate)
     local wanted = Guide.Wanted(itemId)
     return { itemId = itemId, item = Guide.Item(itemId), from = from, kind = kind, wanted = wanted,
-        acquired = wanted and Guide.Acquired(wanted.itemKey) or Guide.Acquired("i:" .. itemId), listedBy = listedBy }
+        acquired = wanted and Guide.Acquired(wanted.itemKey) or Guide.Acquired("i:" .. itemId), listedBy = listedBy, rate = rate }
 end
 
 local function lootGrouping(dungeon)
@@ -579,7 +659,9 @@ local function lootGrouping(dungeon)
             local key = Guide.NormalizeName(creature.name)
             if key and not byName[key] then byName[key] = creature end
             local items = {}
-            for index, itemId in ipairs(creature.loot or {}) do table.insert(items, { itemId, creature.name, Guide.ListedBy(creature, index) }) end
+            for index, itemId in ipairs(creature.loot or {}) do
+                table.insert(items, { itemId, creature.name, Guide.ListedBy(creature, index), Guide.ReferenceRate(creature, index) })
+            end
             grouping.creatures[creature] = items
         end
     end
@@ -597,7 +679,7 @@ function Guide.SourceLoot(instanceId, creature)
     if not dungeon or type(creature) ~= "table" then return {} end
     local rows = {}
     for _, pair in ipairs(lootGrouping(dungeon).creatures[creature] or {}) do
-        table.insert(rows, lootRow(pair[1], pair[2], "creature", pair[3]))
+        table.insert(rows, lootRow(pair[1], pair[2], "creature", pair[3], pair[4]))
     end
     return rows
 end

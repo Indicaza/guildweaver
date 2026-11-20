@@ -91,6 +91,9 @@ jobs:
 
           # Art the client loads by path (the minimap and window emblem).
           cp -R Media dist/Guildweaver/Media
+          # Third-party licences (ForeverDB's data is GPL-3.0 with its
+          # attribution term; Licenses/README.md).
+          cp -R Licenses dist/Guildweaver/Licenses
 
           cat > dist/Guildweaver/Data/BridgeInbox.generated.lua <<'EOF'
           local _, GW = ...

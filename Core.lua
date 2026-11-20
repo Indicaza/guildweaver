@@ -109,6 +109,20 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
     end
 end)
 
+-- Credits and licences (the add-on's Appropriate Legal Notices).
+local function printCredits()
+    GW.Print("Guildweaver credits and licences:")
+    GW.Print("  Game data from World of Warcraft: Forever (Blizzard Entertainment), via Holdfast.")
+    local guide = GW.DungeonGuide
+    local credit = guide and guide.ForeverDbCredit and guide.ForeverDbCredit()
+    if credit then
+        GW.Print("  " .. credit .. ": drop rates and item facts in Data/ForeverDB.generated.lua,")
+        GW.Print("    GPL-3.0 with ForeverDB.net's attribution term (Licenses/ForeverDB-LICENSE.txt, Licenses/ForeverDB-COPYING.txt).")
+    end
+    GW.Print("  Classic reference data: AzerothCore (GPL-2.0), DungeonPlanner. See Licenses/README.md.")
+end
+GW.PrintCredits = printCredits
+
 local function printFishing()
     local stats = GW.FishingCapture and GW.FishingCapture.Stats and GW.FishingCapture.Stats() or nil
     if not stats or (stats.casts == 0 and stats.catches == 0) then
@@ -152,6 +166,11 @@ SlashCmdList.GUILDWEAVER = function(message)
         local hidden = not GW.UiPrefs.MinimapHidden()
         GW.UiPrefs.SetMinimapHidden(hidden)
         GW.Print(hidden and "Minimap button hidden. /gw minimap shows it again." or "Minimap button shown.")
+        return
+    end
+
+    if command == "credits" or command == "licenses" or command == "licences" then
+        printCredits()
         return
     end
 

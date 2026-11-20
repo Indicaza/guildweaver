@@ -1,0 +1,36 @@
+ForeverDB - the ForeverDB.net addon for World of Warcraft: Forever
+Copyright (C) 2026 ForeverDB.net (https://foreverdb.net)
+
+This addon is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License as published by the Free Software
+Foundation, version 3 (GPL-3.0), with the additional term below (permitted by
+section 7(b) of the GPL). The full text of the GPL is in COPYING.txt.
+
+This addon is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+Additional term (GPL-3.0 section 7(b)): attribution
+----------------------------------------------------
+This term applies to ForeverDB.net's own material in this addon: its code, and
+the data ForeverDB.net built and ForeverDB players recorded in WoW Forever (see
+NOTICE.txt for which data that is). If you copy, modify or convey this addon, any
+of its files, or data taken from them, in any form (another addon, a website, an
+app, a bot, a spreadsheet), you must:
+
+  1. keep the line that starts "-- Data: ForeverDB.net (https://foreverdb.net)"
+     and the other copyright and licence notices in every file you take, and
+  2. show this attribution, with the link, in the Appropriate Legal Notices of
+     the work that contains it (its credits, its about text, or wherever it
+     lists its licences and sources):
+
+         Data from ForeverDB.net (https://foreverdb.net)
+
+Data from the foreverdb.net website and the ForeverDB API (https://foreverdb.net/api/v1)
+is not covered by this file: the API's terms (https://foreverdb.net/developers)
+require a visible credit to ForeverDB.net with a link to https://foreverdb.net
+wherever the data is shown.
+
+Parts of this addon come from others, under their own licences: see NOTICE.txt.
+World of Warcraft is a trademark of Blizzard Entertainment, Inc. ForeverDB is not
+affiliated with or endorsed by Blizzard Entertainment.

@@ -309,7 +309,16 @@ function GuideUI.ShowItemTooltip(owner, row)
         if facts then addLine(tooltip, facts, "text", true) end
     end
     if row.from then addLine(tooltip, "Drops from " .. row.from, "textMuted") end
-    if row.listedBy then addLine(tooltip, "Listed by " .. row.listedBy .. " (Classic reference)", "textFaint") end
+    local item = row.item or {}
+    if item.qi then addLine(tooltip, "Quest item", "textMuted") end
+    if not item.q and item.n then addLine(tooltip, "Quality not known yet", "textFaint") end
+    local rate = Guide.RateText(row.rate)
+    if rate then addLine(tooltip, "Drop rate: " .. rate, "text") end
+    if row.listedBy == "ForeverDB" then
+        addLine(tooltip, "Listed by ForeverDB (seen in WoW Forever)", "textFaint")
+    elseif row.listedBy then
+        addLine(tooltip, "Listed by " .. row.listedBy .. " (Classic reference)", "textFaint")
+    end
     if row.item and row.item.set then addLine(tooltip, "Set: " .. row.item.set, "textMuted") end
     if row.acquired then
         addLine(tooltip, "On your wishlist " .. DASH .. " acquired", "good")
@@ -317,7 +326,14 @@ function GuideUI.ShowItemTooltip(owner, row)
         addLine(tooltip, "On your wishlist (" .. tostring(row.wanted.priority) .. ")" .. (row.wanted.note and row.wanted.note ~= "" and (": " .. row.wanted.note) or ""),
             "alertWishlist", true)
     end
-    if row.kind ~= "wishlist" and not row.quest then addLine(tooltip, Guide.REFERENCE_NOTE .. ". Drop chances not shown.", "textFaint", true) end
+    if row.kind ~= "wishlist" and not row.quest then
+        if item.fv then
+            addLine(tooltip, "A WoW Forever item: facts from the Forever client and ForeverDB.", "textFaint", true)
+        elseif not rate then
+            addLine(tooltip, Guide.REFERENCE_NOTE .. ". Drop chances not shown.", "textFaint", true)
+        end
+    end
+    if rate or row.listedBy == "ForeverDB" or item.fd then addLine(tooltip, Guide.FOREVERDB_CREDIT, "textFaint") end
     pcall(tooltip.Show, tooltip)
     GuideUI.hoveredItem = { owner = owner, row = row }
     if shown and wantsCompare() and type(Globals.GameTooltip_ShowCompareItem) == "function" then
