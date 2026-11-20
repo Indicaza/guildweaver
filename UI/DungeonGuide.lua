@@ -51,6 +51,7 @@ local ICONS = {
     info = "Interface\\FriendsFrame\\InformationIcon",
     quest = "Interface\\GossipFrame\\AvailableQuestIcon",
     questActive = "Interface\\GossipFrame\\ActiveQuestIcon",
+    questIncomplete = "Interface\\GossipFrame\\IncompleteQuestIcon",
     blocked = "Interface\\RaidFrame\\ReadyCheck-NotReady",
     waiting = "Interface\\RaidFrame\\ReadyCheck-Waiting",
     crumb = "Interface\\ChatFrame\\ChatFrameExpandArrow",
@@ -67,7 +68,7 @@ local Readiness = GW.DungeonReadiness
 -- and the colour of its short label.
 local QUEST_STATE = {
     completed = { icon = "acquired", color = "good" },
-    accepted = { icon = "questActive", color = "info" },
+    accepted = { icon = "questIncomplete", color = "info" },
     available = { icon = "quest", color = "warn" },
     prerequisites = { icon = "blocked", color = "bad" },
     ineligible = { icon = "blocked", color = "textFaint" },
@@ -80,6 +81,8 @@ local PREREQUISITE_WORDS = { done = "done", accepted = "in your log", missing = 
 local CELL, CELL_GAP = 40, 4
 local REWARD_CELL = 28
 local BOSS_ROW, SMALL_ROW, ABILITY_ROW, RUN_ROW = 42, 30, 26, 42
+-- The boss page's framed header.
+local HERO_HEIGHT = 98
 local CARD_HEIGHT, CARD_GAP, CARD_MIN = 100, 10, 240
 -- The browser's controls: search (140 to 240 wide), the level band and the
 -- type switch, and the gap between them.
@@ -363,6 +366,7 @@ local function rowBase(parent, width, height, onClick)
     local row = UI.CreateFrame("Button", parent)
     row:SetSize(width, height)
     Theme.Skin(row, { 0, 0, 0, 0 }, { 0, 0, 0, 0 })
+    if onClick then Theme.Highlight(row, nil, 0.45) end
     pcall(row.RegisterForClicks, row, "LeftButtonUp")
     row:SetScript("OnClick", function(self) if onClick and self.gwData then onClick(self.gwData, self) end end)
     row:SetScript("OnEnter", function(self)
@@ -479,19 +483,32 @@ end
 -- An ability: spell icon, label, name and the atlas's short summary.
 local function abilityRow(parent)
     local row = rowBase(parent, 300, ABILITY_ROW, nil)
+    row.wash = row:CreateTexture(nil, "BACKGROUND", nil, -6)
+    row.wash:SetAllPoints(row)
+    row.stripe = row:CreateTexture(nil, "BORDER")
+    row.stripe:SetPoint("TOPLEFT", row, "TOPLEFT", 0, 0)
+    row.stripe:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 0, 0)
+    row.stripe:SetWidth(3)
     row.icon = icon(row, 22)
-    row.icon:SetPoint("LEFT", row, "LEFT", 2, 0)
+    row.icon:SetPoint("LEFT", row, "LEFT", 8, 0)
     row.tag = UI.Text(row, "caps", "info", "LEFT")
     row.tag:SetPoint("LEFT", row.icon, "RIGHT", 7, 0)
     row.tag:SetWidth(46)
     row.text = noWrap(UI.Text(row, "label", "text"))
     row.text:SetPoint("LEFT", row.tag, "RIGHT", 2, 0)
     row.text:SetPoint("RIGHT", row, "RIGHT", -4, 0)
-    function row:Fill(ability)
+    -- callout: a key mechanic, drawn with its category's colour on the left
+    -- edge and a faint wash of it, so kicks and dangers stand out.
+    function row:Fill(ability, callout)
         self.gwData, self.gwEnter = ability, GuideUI.ShowSpellTooltip
         setSpellIcon(self.icon, ability.id)
         UI.SetText(self.tag, ability.label)
-        Theme.Tint(self.tag, Guide.LABEL_COLORS[ability.label] or "textMuted")
+        local color = Guide.LABEL_COLORS[ability.label] or "textMuted"
+        Theme.Tint(self.tag, color)
+        self.gwCallout = callout == true
+        Theme.Fill(self.stripe, color, callout and 0.9 or 0)
+        Theme.Fill(self.wash, color, callout and 0.08 or 0)
+        Theme.Font(self.text, callout and "body" or "label")
         UI.SetText(self.text, tostring(ability.spell.n) .. (ability.spell.s and Theme.Colorize("  " .. ability.spell.s, "textFaint") or ""))
         self:SetSelected(false)
         self:Show()
@@ -508,6 +525,14 @@ local function itemCell(parent, size)
     Theme.Skin(cell, "bgInset", "border")
     cell.icon = icon(cell, size - 2)
     cell.icon:SetPoint("CENTER", cell, "CENTER", 0, 0)
+    -- The bag slot's frame (64 px round a 37 px button, as the client's
+    -- item buttons draw it); without it, the hairline in the item's quality.
+    cell.slot = cell:CreateTexture(nil, "OVERLAY", nil, -1)
+    local out = size * 14 / 36
+    cell.slot:SetPoint("TOPLEFT", cell, "TOPLEFT", -out, out)
+    cell.slot:SetPoint("BOTTOMRIGHT", cell, "BOTTOMRIGHT", out, -out)
+    cell.gwSlotArt = Theme.Texture(cell.slot, Theme.ART.slot)
+    UI.SetShown(cell.slot, cell.gwSlotArt)
     cell.wish = cell:CreateTexture(nil, "OVERLAY")
     cell.wish:SetSize(math.floor(size * 0.38), math.floor(size * 0.38))
     cell.wish:SetPoint("TOPRIGHT", cell, "TOPRIGHT", 3, 3)
@@ -522,8 +547,14 @@ local function itemCell(parent, size)
     function cell:Fill(row)
         self.gwData = row
         setIcon(self.icon, GuideUI.ItemIcon(row.itemId))
-        local rgb = QUALITY_RGB[(row.item and row.item.q) or 1] or QUALITY_RGB[1]
-        Theme.SetBorder(self, { rgb[1], rgb[2], rgb[3], (row.item and (row.item.q or 1) >= 2) and 1 or 0.55 })
+        local quality = (row.item and row.item.q) or 1
+        local rgb = QUALITY_RGB[quality] or QUALITY_RGB[1]
+        Theme.SetBorder(self, { rgb[1], rgb[2], rgb[3], quality >= 2 and 1 or 0.55 })
+        if self.gwSlotArt then
+            -- Common and poor items keep the plain metal; better ones take their colour.
+            if quality >= 2 then pcall(self.slot.SetVertexColor, self.slot, rgb[1], rgb[2], rgb[3], 1)
+            else pcall(self.slot.SetVertexColor, self.slot, 1, 1, 1, 1) end
+        end
         self.gwWanted, self.gwAcquired = (row.wanted and not row.acquired) and true or false, row.acquired == true
         UI.SetShown(self.wish, self.gwWanted)
         UI.SetShown(self.check, self.gwAcquired)
@@ -875,12 +906,23 @@ local function dungeonCard(parent)
         if self.gwData then GuideUI.Navigate(dungeonPage(self.gwData.id)) end
     end)
     card:SetHeight(CARD_HEIGHT)
+    Theme.Panel(card, "stone")
+    Theme.SetBorder(card, "borderStrong")
+    Theme.Highlight(card, nil, 0.25)
+    card:SetScript("OnEnter", function(self) Theme.SetBorder(self, "gold") end)
     card.art = card:CreateTexture(nil, "BACKGROUND", nil, -5)
-    card.art:SetPoint("TOPLEFT", card, "TOPLEFT", 1, -1)
-    card.art:SetPoint("BOTTOMRIGHT", card, "BOTTOMRIGHT", -1, 1)
+    card.art:SetPoint("TOPLEFT", card, "TOPLEFT", 3, -3)
+    card.art:SetPoint("BOTTOMRIGHT", card, "BOTTOMRIGHT", -3, 3)
     pcall(card.art.SetTexCoord, card.art, 0, 1, 0.3, 0.7)
-    pcall(card.art.SetAlpha, card.art, 0.32)
+    pcall(card.art.SetAlpha, card.art, 0.5)
     card.art:Hide()
+    -- No map art: the Guildweaver emblem, large and faint, on the right.
+    card.emblem = card:CreateTexture(nil, "BACKGROUND", nil, -5)
+    card.emblem:SetSize(CARD_HEIGHT - 12, CARD_HEIGHT - 12)
+    card.emblem:SetPoint("RIGHT", card, "RIGHT", -6, 0)
+    pcall(card.emblem.SetTexture, card.emblem, Theme.EMBLEM)
+    pcall(card.emblem.SetAlpha, card.emblem, 0.14)
+    card.emblem:Hide()
     -- A dark wash on the left keeps the text readable over the map.
     card.wash = card:CreateTexture(nil, "BACKGROUND", nil, -4)
     card.wash:SetPoint("TOPLEFT", card, "TOPLEFT", 1, -1)
@@ -894,11 +936,12 @@ local function dungeonCard(parent)
     card.name = noWrap(UI.Text(card, "title", "goldBright"))
     card.name:SetPoint("TOPLEFT", card, "TOPLEFT", 14, -12)
     card.name:SetPoint("RIGHT", card, "RIGHT", -12, 0)
-    card.accent = Theme.Accent(card, 32)
-    card.accent:SetPoint("TOPLEFT", card.name, "BOTTOMLEFT", 0, -5)
-    card.meta = noWrap(UI.Text(card, "small", "textMuted"))
-    card.meta:SetPoint("TOPLEFT", card.accent, "BOTTOMLEFT", 0, -6)
+    card.meta = noWrap(UI.Text(card, "small", "text"))
+    card.meta:SetPoint("TOPLEFT", card.name, "BOTTOMLEFT", 0, -6)
     card.meta:SetPoint("RIGHT", card, "RIGHT", -12, 0)
+    card.ready = noWrap(UI.Text(card, "small", "textMuted"))
+    card.ready:SetPoint("TOPLEFT", card.meta, "BOTTOMLEFT", 0, -4)
+    card.ready:SetPoint("RIGHT", card, "RIGHT", -12, 0)
     card.kind = noWrap(UI.Text(card, "caps", "textFaint"))
     card.kind:SetPoint("BOTTOMLEFT", card, "BOTTOMLEFT", 14, 11)
     card.flags = noWrap(UI.Text(card, "small", "text", "RIGHT"))
@@ -906,7 +949,7 @@ local function dungeonCard(parent)
     card.wish = icon(card, 13, "OVERLAY")
     setIcon(card.wish, ICONS.wish, false)
     card.wish:SetPoint("RIGHT", card.flags, "LEFT", -3, 0)
-    card:SetScript("OnLeave", function(self) Theme.SetBorder(self, self.gwSelected and "gold" or "border") end)
+    card:SetScript("OnLeave", function(self) Theme.SetBorder(self, self.gwSelected and "gold" or "borderStrong") end)
     function card:Fill(dungeon, info)
         self.gwData = dungeon
         UI.SetText(self.name, dungeon.name)
@@ -928,6 +971,15 @@ local function dungeonCard(parent)
             table.insert(flags, Theme.Colorize("Your level", "gold"))
         end
         UI.SetText(self.flags, table.concat(flags, "   "))
+        -- The character's quest readiness, when the dungeon has quests to hold.
+        local readiness = GuideUI.QuestReadiness and GuideUI.QuestReadiness(dungeon.id) or nil
+        if readiness and readiness.required > 0 then
+            local line = Readiness.OVERVIEW_LABELS[readiness.readiness]
+            if readiness.readiness == "missing" then line = readiness.counts.available .. (readiness.counts.available == 1 and " quest" or " quests") .. " to pick up" end
+            UI.SetText(self.ready, Theme.Colorize(line, READINESS_COLOR[readiness.readiness]))
+        else
+            UI.SetText(self.ready, "")
+        end
         -- The diamond sits before the flags, of which the count is the first.
         UI.SetShown(self.wish, info.wanted > 0)
         -- The map strip, set once per card and never in combat.
@@ -941,8 +993,9 @@ local function dungeonCard(parent)
             end
         end
         UI.SetShown(self.art, art ~= nil and self.gwArt == art)
+        UI.SetShown(self.emblem, not (art ~= nil and self.gwArt == art))
         self.gwSelected = info.selected
-        Theme.SetBorder(self, info.selected and "gold" or "border")
+        Theme.SetBorder(self, info.selected and "gold" or "borderStrong")
         self:Show()
     end
     function card:Clear()
@@ -1215,7 +1268,9 @@ local function questRow(parent)
         self.gwData = quest
         local style = quest.state and QUEST_STATE[quest.state] or nil
         local done = not style and Guide.QuestCompleted(quest.id)
-        setIcon(self.icon, style and ICONS[style.icon] or (done and ICONS.acquired or ICONS.quest), false)
+        -- In the log: the grey "?" until its objectives are done, then the gold one.
+        local iconName = style and (quest.state == "accepted" and quest.turnIn and "questActive" or style.icon) or nil
+        setIcon(self.icon, iconName and ICONS[iconName] or (done and ICONS.acquired or ICONS.quest), false)
         UI.SetText(self.name, tostring(quest.name))
         local facts = {}
         if style then
@@ -1349,16 +1404,21 @@ local function buildDungeonPage(view)
     page.detail = scrollArea(view, "detail", page.right)
     page.detail:SetPoint("TOPLEFT", page.right, "TOPLEFT", 0, 0)
     local d = page.detail.child
-    page.portrait = UI.Portrait(d, 72)
+    -- The encounter's header: the portrait and name on Blizzard's rock.
+    page.hero = UI.CreateFrame("Frame", d)
+    page.hero:SetPoint("TOPLEFT", d, "TOPLEFT", 0, 0)
+    page.hero:SetHeight(HERO_HEIGHT)
+    Theme.Panel(page.hero, "stone")
+    page.portrait = UI.Portrait(page.hero, 80)
     pcall(page.portrait.EnableMouse, page.portrait, false)
-    page.portrait:SetPoint("TOPLEFT", d, "TOPLEFT", 0, 0)
-    page.name = noWrap(UI.Text(d, "pageTitle", "goldBright"))
-    page.name:SetPoint("TOPLEFT", page.portrait, "TOPRIGHT", 12, -10)
-    page.name:SetPoint("RIGHT", d, "RIGHT", 0, 0)
-    page.facts = noWrap(UI.Text(d, "label", "textMuted"))
+    page.portrait:SetPoint("TOPLEFT", d, "TOPLEFT", 10, -9)
+    page.name = noWrap(UI.Text(page.hero, "pageTitle", "goldBright"))
+    page.name:SetPoint("TOPLEFT", page.portrait, "TOPRIGHT", 14, -12)
+    page.name:SetPoint("RIGHT", d, "RIGHT", -10, 0)
+    page.facts = noWrap(UI.Text(page.hero, "label", "textMuted"))
     page.facts:SetPoint("TOPLEFT", page.name, "BOTTOMLEFT", 0, -6)
-    page.facts:SetPoint("RIGHT", d, "RIGHT", 0, 0)
-    page.detailBadge = sourceBadge(d)
+    page.facts:SetPoint("RIGHT", d, "RIGHT", -10, 0)
+    page.detailBadge = sourceBadge(page.hero)
     page.detailBadge:SetPoint("TOPLEFT", page.facts, "BOTTOMLEFT", 0, -6)
     page.keyHeader = UI.SectionHeader(d, "Key mechanics")
     page.moreHeader = UI.SectionHeader(d, "Other abilities")
@@ -1373,6 +1433,12 @@ local function buildDungeonPage(view)
     page.quests:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -52)
     page.questRows = pool(function() return questRow(page.quests.child) end)
     page.questHeads = pool(function() return UI.SectionHeader(page.quests.child, "") end)
+    page.questBox = UI.CreateFrame("Frame", page.quests.child)
+    Theme.Panel(page.questBox, "inset")
+    page.questBox.stripe = page.questBox:CreateTexture(nil, "BORDER")
+    page.questBox.stripe:SetPoint("TOPLEFT", page.questBox, "TOPLEFT", 3, -3)
+    page.questBox.stripe:SetPoint("BOTTOMLEFT", page.questBox, "BOTTOMLEFT", 3, 3)
+    page.questBox.stripe:SetWidth(3)
     page.questSummary = wrapText(page.quests.child, "label", "text", 400)
     page.runs = scrollArea(view, "runs", page)
     page.runs:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -52)
@@ -1578,7 +1644,7 @@ local function refreshCreature(page, instanceId, dungeon, current, states)
         for _, ability in ipairs(Guide.TopMechanics(creature, nil, 4)) do
             shown[ability] = true
             count = count + 1
-            page.abilityRows:Get(count):Fill(ability)
+            page.abilityRows:Get(count):Fill(ability, true)
         end
         topCount = count
         for _, ability in ipairs(abilities) do
@@ -1619,7 +1685,8 @@ function GuideUI.LayoutCreature(page)
     if not shown then return end
     local d = page.detail.child
     local width = page.detail:ContentWidth()
-    local y = 92
+    page.hero:SetWidth(width)
+    local y = HERO_HEIGHT + 12
     local function place(widget, height)
         widget:SetWidth(width)
         widget:ClearAllPoints()
@@ -1667,15 +1734,22 @@ local function layoutQuests(page)
     local child = page.quests.child
     local y = 0
     local summary = page.questSummary
+    local box = page.questBox
     if rawget(page, "gwQuestSummary") then
         summary:ClearAllPoints()
-        summary:SetPoint("TOPLEFT", child, "TOPLEFT", 0, 0)
-        summary:SetWidth(width)
+        summary:SetPoint("TOPLEFT", child, "TOPLEFT", 16, -10)
+        summary:SetWidth(math.max(60, width - 28))
         summary:Show()
         local ok, measured = pcall(summary.GetStringHeight, summary)
-        y = y + math.max(14, ok and tonumber(measured) or 28) + 12
+        local height = math.max(14, ok and tonumber(measured) or 28) + 20
+        box:ClearAllPoints()
+        box:SetPoint("TOPLEFT", child, "TOPLEFT", 0, 0)
+        box:SetSize(width, height)
+        box:Show()
+        y = y + height + 14
     else
         summary:Hide()
+        box:Hide()
     end
     local layout = rawget(page, "gwQuestLayout")
     if not layout then
@@ -1703,6 +1777,8 @@ end
 -- no quest catalog for it (the atlas list is shown as before).
 local function questReadiness(instanceId)
     if not Readiness or type(Readiness.ForGuide) ~= "function" then return nil end
+    -- The quest tables are built out of combat only (about 470 KB, once).
+    if inCombat() and type(Readiness.IsBuilt) == "function" and not Readiness.IsBuilt() then return nil end
     local ok, result = pcall(Readiness.ForGuide, instanceId)
     return ok and result or nil
 end
@@ -1823,6 +1899,7 @@ local function refreshQuests(page, instanceId)
     end
     table.insert(lines, Theme.Colorize("Quest facts are Classic reference data, not confirmed on Forever.", "textFaint"))
     UI.SetText(page.questSummary, table.concat(lines, "\n"))
+    Theme.Fill(page.questBox.stripe, READINESS_COLOR[result.readiness], 0.9)
     page.gwQuestSummary = true
     layoutQuests(page)
     return shown, result

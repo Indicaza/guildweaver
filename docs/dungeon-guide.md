@@ -229,6 +229,44 @@ node scripts/readinessParity.mjs ../web/holdfast/backend test/fixtures/readiness
 `atlasRepository.js`. Currently from Holdfast `dc54ca8`, Indicaza/holdfast#305,
 whose rules are main's.)
 
+## The look (sprint step 5A)
+
+The journal draws its frames with the game's own interface art, through the
+theme (`UI/Theme.lua`), never one-off styling in a view:
+
+| Piece | Art | Without it |
+| --- | --- | --- |
+| Dungeon cards, the boss header (`Theme.Panel` "stone") | `FrameGeneral\UI-Background-Rock`, darkened, in `Tooltips\UI-Tooltip-Border` (bronze at rest, gold on hover and when selected) | the flat panel and hairline |
+| The map (`Theme.Panel` "gold") | the rock in `DialogFrame\UI-DialogBox-Gold-Border` | the flat inset and a gold hairline |
+| The quest summary (`Theme.Panel` "inset") | the rock, darker, in the tooltip border, with a stripe in the readiness colour | the flat inset |
+| Loot and reward cells | `Buttons\UI-Quickslot2` round the icon (64 px round a 37 px button, as the client's item buttons), tinted in the item's quality from Uncommon up | the quality hairline |
+| Clickable rows and cards | `QuestFrame\UI-QuestTitleHighlight` on hover | the hover fill |
+| Quest states | `GossipFrame\AvailableQuestIcon`, `IncompleteQuestIcon` (in the log), `ActiveQuestIcon` (ready to turn in) | |
+| Section headers | a one-pixel bronze line from the title to the edge, fading out (`Theme.Divider`); the bright gold underlines are gone | a flat bronze line |
+| Cards without map art (WoW Forever's dungeons, Naxxramas) | the Guildweaver emblem, large and faint | |
+
+Every file in the table is used by OpenMap, an add-on built for the WoW
+Forever client (Interface 16001), so it is known to exist there. Each goes
+through `Theme.Texture`, which notices a file the client lacks (`SetTexture`
+answers false); borders need the client's `BackdropTemplate`. Either
+missing, the view keeps the flat look it had before, never an empty frame.
+No art is downloaded or bundled; the add-on's own `Media/` is unchanged.
+
+Key mechanics on a boss page are callouts: a stripe and a faint wash in the
+category's colour (kick blue, tank red, healer green, dispel purple, move
+amber, crowd control gold), and the ability name in the body font. Other
+abilities stay plain rows. The boss header is framed, with an 80 px
+portrait (was 72). Cards show the character's quest readiness under the
+level band ("2 quests to pick up", "Quests ready"), only for dungeons with
+required quests; the quest tables are never built for them mid-fight.
+
+Cost (fake client, `test/journal_polish_spec.lua` and a timing script):
+login memory is unchanged; the first open makes one border frame per framed
+panel (258 frames instead of 216) and builds the quest tables for the
+cards' readiness (about 470 KB, once a session; already built at login
+where the client only offers per-quest completion checks). Navigation,
+resizing and boss pages make no new frames and cost the same as before.
+
 ## Client art: maps and portraits
 
 `Data/DungeonJournalArt.generated.lua` (`GW.DungeonJournalArt`) holds IDs
@@ -465,9 +503,40 @@ minute of questing (bounded captures and list reads), the payload's shape
 again), a second character's own stream, and the journal's summary, groups
 and chains.
 
+`test/journal_polish_spec.lua` covers the look: the art asked for (rock,
+borders, slot frames, highlights) and the fallbacks when the client lacks a
+file or the backdrop template; card borders at rest and on hover; no
+underline; readiness on cards; the emblem for cards without art; the framed
+map, boss header and quest summary; mechanic callouts; slot tinting; every
+page (46: the dungeons, all 11 wings, all 9 WoW Forever dungeons, the 7
+raids, their quest tabs and last bosses) laid out within bounds at four
+sizes from 420 x 380 to 1700 x 980; and that the cards never build the
+quest tables in combat.
+
 The fake client proves behaviour, not looks: it draws nothing.
 
 ## In-game checklist (not yet done in the client)
+
+The look (sprint step 5A), at the smallest, the default and a large window:
+
+- Cards: Blizzard's dark rock inside a thin bronze tooltip border; hovering
+  brightens the border to gold with a soft highlight; the map strip shows
+  through, or the faint emblem on WoW Forever dungeons and Naxxramas. The
+  name has no underline. The readiness line reads well over the art.
+- The map: a gold dialog edge that does not cover pins at the map's edges;
+  the floor arrows and label under it.
+- Section headers ("Bosses", "Key mechanics", "Loot", the quest groups): a
+  thin line from the title to the right edge, no bright underline.
+- A boss page (Deadmines, VanCleef): the rock header with the round
+  portrait, name and facts readable; the first mechanics with coloured
+  stripes; other abilities plain.
+- Loot: each icon in the bag-slot frame, Uncommon and better tinted; the
+  wishlist diamond and acquired check still on top; tooltips unchanged.
+- Quests: the summary box with its coloured stripe; the grey "?" for quests
+  in the log, the gold "?" when ready to turn in, the "!" to pick up.
+- If a file is missing on the client, the journal shows the old flat panel
+  there instead, and nothing broken.
+
 
 Quest readiness:
 

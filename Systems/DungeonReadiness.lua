@@ -39,6 +39,11 @@ local function data()
     return cache.data or nil
 end
 
+-- Whether the quest tables are built (the journal does not build them in combat).
+function R.IsBuilt()
+    return cache.data ~= nil
+end
+
 function R.Available()
     return data() ~= nil
 end
