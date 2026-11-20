@@ -35,6 +35,7 @@ lua5.1 scripts/exportDungeonAtlas.lua \
   --loot  ../web/holdfast/backend/src/Atlas/data/reference-loot.json \
   --wings ../web/holdfast/backend/src/Atlas/data/wing-manifest.json \
   --quests ../web/holdfast/backend/src/Atlas/data/quest-catalog.json \
+  --relationships ../web/holdfast/backend/src/Atlas/data/loot-relationships.json \
   --commit $(git -C ../web/holdfast rev-parse HEAD)
 cp ../web/holdfast/backend/src/Atlas/data/wing-manifest.json test/fixtures/wing-manifest.json
 ```
@@ -47,11 +48,33 @@ loot item without facts, a spell classified two ways, coordinates out of
 range), a creature with more drops than `MAX_LOOT` (64; it fails rather than
 cutting the list) and a file over 480 KB.
 
-The packaged file's header names the Holdfast commit: currently `7e9ab46`
-(Indicaza/holdfast#303: the nine WoW Forever dungeons, on top of #301's
-reference loot and #300's wings). Regenerate it whenever the atlas, the
-reference loot or the quest catalog changes on Holdfast `main` (after #303
-merges, regenerate from `main` so the header names a `main` commit).
+The packaged file's header names the Holdfast commit: currently `5b687b7`
+(Indicaza/holdfast#308, on #306 and #307: item facts from the WoW Forever
+client and ForeverDB, boss loot relationships and reference drop rates).
+Regenerate it whenever the atlas, the reference loot, the loot
+relationships or the quest catalog changes on Holdfast `main` (after #306,
+#307 and #308 merge, regenerate from `main` so the header names a `main`
+commit).
+
+### Loot facts and drop rates
+
+Item facts come from Holdfast's canonical item definitions (the Forever
+client's own item tables first, then ForeverDB, then the Classic client):
+Witherfang's drops, for one, now have names, slots and stats. An item no
+source grades has no quality (`q` nil; the tooltip says so), never a guessed
+one. Items carry two flags: `qi` a quest item, `fv` an item WoW Forever
+added (its facts come from no Classic source).
+
+With `--relationships` each boss gets `rt`: per loot entry, in loot order,
+`percent:kills:o` (ForeverDB, observed in WoW Forever over that many looted
+kills) or `percent::c` (Classic data), empty when no source has one. A
+boss's own drops that only ForeverDB lists are added to its loot with
+listed-by code `4` ("ForeverDB"); drops it only saw on the corpse (world
+drops, shared ones) are not. The item tooltip shows "Drop rate: 23.5%
+(ForeverDB, 17 kills)" and ForeverDB's credit, "Data from ForeverDB.net",
+which its licence asks for wherever its data is shown. Guildweaver's own
+observed rates come from the website's server and are shown there only; the
+packaged file holds no observations.
 
 The item table is packed: each item is a positional row whose repeated
 strings (slot, armour or weapon type, bind, set) are indexes into one list,
@@ -158,6 +181,7 @@ time the journal or the quest capture asks.
 ```
 lua5.1 scripts/exportDungeonQuests.lua \
   --quests ../web/holdfast/backend/src/Atlas/data/quest-catalog.json \
+  --relationships ../web/holdfast/backend/src/Atlas/data/loot-relationships.json \
   --commit $(git -C ../web/holdfast rev-parse HEAD)
 ```
 
@@ -332,8 +356,8 @@ with two display IDs.
 
 | | |
 | --- | --- |
-| Atlas file | 404 KB (413,250 bytes; budget 480 KB, enforced by the exporter and the spec). Before packing the items, the same data was 479,123 bytes |
-| Atlas, Lua memory at login | about 940 KB (compiled data; no tables are built). The unpacked item table costs what it did before packing |
+| Atlas file | 440 KB (450,751 bytes; budget 480 KB, enforced by the exporter and the spec): 2,437 items and the drop rates (was 413,250 bytes, 2,204 items) |
+| Atlas, Lua memory at login | about 1,005 KB (compiled data; no tables are built; was 940 KB) |
 | Art file | 23 KB; about 89 KB of compiled Lua at login, tables built on first use |
 | Quest catalog file | 72 KB (73,646 bytes; budget 256 KB, enforced by its exporter); about 194 KB of compiled Lua at login, about 470 KB once the journal's Quests tab or the quest capture builds it |
 | Quest state | no SavedVariables of its own: the outbound `quest_state` record (the ids the bridge sends) and nothing else |

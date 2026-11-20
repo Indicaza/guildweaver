@@ -90,7 +90,7 @@ do
     env:advance(3)
     local guide = addon.DungeonGuide
     local data = addon.DungeonAtlasData
-    equal(data.source.commit, "7e9ab4642e2096c4db7e99921c882ad4f1a5c93e", "Holdfast #303 (WoW Forever dungeons)")
+    equal(data.source.commit, "5b687b75bfa7ac4f6ab23ddbef0e4628f0618584", "Holdfast #308 (loot intelligence: definitions, relationships, rates)")
 
     -- Lazy: nothing built at login.
     for id in pairs(guide.Index()) do falsy(guide.IsBuilt(id), "dungeon " .. id .. " is built only when asked") end
@@ -161,7 +161,8 @@ do
     -- Item facts for every item the journal lists.
     for id in pairs(guide.Index()) do
         for _, row in ipairs(guide.LootRows(id)) do
-            if row.kind ~= "wishlist" then truthy(row.item and row.item.n and row.item.q, "facts for item " .. row.itemId) end
+            -- A name always; the quality too, except for WoW Forever's own items no source grades yet.
+            if row.kind ~= "wishlist" then truthy(row.item and row.item.n and (row.item.q or row.item.fv), "facts for item " .. row.itemId) end
         end
     end
 end
