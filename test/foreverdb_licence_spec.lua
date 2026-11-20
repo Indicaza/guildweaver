@@ -64,10 +64,10 @@ do
     equal(#guide.UnresolvedLoot(boss), 0)
     equal(found.item.fd, true, "its facts are marked as ForeverDB's (for the credit)")
     equal(guide.ForeverDbCredit(), "Data from ForeverDB.net (https://foreverdb.net)")
-    local print = addon.Print
+    local original = addon.Print
     addon.Print = function(text) table.insert(printed, text) end
     addon.PrintCredits()
-    addon.Print = print
+    addon.Print = original
     contains(table.concat(printed, "\n"), "Data from ForeverDB.net (https://foreverdb.net)")
     contains(table.concat(printed, "\n"), "GPL-3.0")
 end
@@ -83,10 +83,10 @@ do
     equal(#guide.UnresolvedLoot(boss), 3, "the girdle, bracers and staff by item id")
     equal(guide.ForeverDbCredit(), nil)
     printed = {}
-    local print = addon.Print
+    local original = addon.Print
     addon.Print = function(text) table.insert(printed, text) end
     addon.PrintCredits()
-    addon.Print = print
+    addon.Print = original
     equal(string.find(table.concat(printed, "\n"), "ForeverDB", 1, true), nil, "no ForeverDB credit without its data")
 end
 
