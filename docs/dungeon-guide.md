@@ -267,6 +267,28 @@ cards' readiness (about 470 KB, once a session; already built at login
 where the client only offers per-quest completion checks). Navigation,
 resizing and boss pages make no new frames and cost the same as before.
 
+## Loot observations (drop rates)
+
+`Systems/MobLootCapture.lua` already reports each corpse's loot window
+(`mob_loot`, one per corpse GUID, saved across `/reload` so a corpse is never
+reported twice). For drop rates (Holdfast `docs/loot-sources.md`, "Observed
+drop rates") each report now says whether the window was a complete look at
+the corpse's loot:
+
+- `capture.inspection = "complete"`: every item slot was tied to its corpse
+  (`GetLootSourceInfo`) and nobody could have taken items first; `"partial"`
+  with `partialReason` `unmapped-slot` (a slot with no corpse) or
+  `free-for-all` (free-for-all looting in a group). `slotCount`: the window's slots.
+- An atlas boss's or rare's window that held only coins is reported with no
+  items (complete windows only): a kill without an item drop, so Holdfast
+  has an honest denominator. Trash coin-only windows are not reported.
+
+Nothing else changed: no new events, no new SavedVariables, no network.
+Holdfast counts one corpse once however many Guildweaver players saw it.
+
+Not verified in the client: that `GetLootSourceInfo` maps every slot on
+Forever, and what a second looter sees under group loot.
+
 ## Client art: maps and portraits
 
 `Data/DungeonJournalArt.generated.lua` (`GW.DungeonJournalArt`) holds IDs

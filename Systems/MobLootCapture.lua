@@ -108,6 +108,31 @@ function GW.MobLootCapture.ResetSeenCache()
     lastPrune = nil
 end
 
+-- An atlas boss or rare (Data/DungeonAtlas.generated.lua's NPC index): the
+-- creatures whose loot windows count as loot opportunities even when they
+-- held only coins.
+local function atlasCreature(npcId)
+    local guide = GW.DungeonGuide
+    return npcId and guide and type(guide.InstanceFor) == "function" and guide.InstanceFor(nil, npcId) ~= nil or false
+end
+
+-- Whether this window shows a corpse's whole loot (docs/dungeon-guide.md,
+-- "Loot observations"): every slot mapped to its corpse, and nobody else
+-- could have taken items first (free-for-all in a group). "partial" windows
+-- still report what they saw, but never count toward a drop rate's
+-- denominator.
+local function inspectionOf(loot)
+    -- Coins (and currencies) carry no item; their amounts never match a
+    -- corpse's quantity, so only item slots are checked.
+    for _, output in ipairs(loot.outputs) do
+        local item = not output.isCoin and (not output.currencyId or output.currencyId == 0)
+        if item and not output.sourceMappingComplete then return "partial", "unmapped-slot" end
+    end
+    local group = tonumber(safe(Globals.GetNumGroupMembers)) or 0
+    if group > 1 and safe(Globals.GetLootMethod) == "freeforall" then return "partial", "free-for-all" end
+    return "complete", nil
+end
+
 local function skinningWindow()
     local capture = GW.SkinningCapture
     if not capture then return false end
@@ -145,6 +170,7 @@ function GW.MobLootCapture.CaptureNow()
         return nil
     end
     local sources = {}
+    local inspection, partialReason = inspectionOf(loot)
     for _, output in ipairs(loot.outputs) do
         if output.itemId and output.sourceMappingComplete and not output.isCoin and (not output.currencyId or output.currencyId == 0) then
             local assigned = {}
@@ -165,6 +191,20 @@ function GW.MobLootCapture.CaptureNow()
             end
         end
     end
+    -- A boss or rare whose window held only coins: no item dropped. With a
+    -- complete inspection that is an opportunity with no drop, so it is
+    -- reported too (bosses and rares only, which keeps the volume small).
+    if inspection == "complete" then
+        for _, output in ipairs(loot.outputs) do
+            if output.isCoin then
+                for _, source in ipairs(output.sources or {}) do
+                    if source.npcId and not sources[source.guid] and atlasCreature(source.npcId) then
+                        sources[source.guid] = { npcId = source.npcId, outputs = {} }
+                    end
+                end
+            end
+        end
+    end
     -- A Need/Greed roll that follows can name its creature from this
     -- window, when the item was on exactly one corpse (LootRolls).
     if GW.LootRolls and GW.LootRolls.NoteLootWindow then
@@ -176,8 +216,11 @@ function GW.MobLootCapture.CaptureNow()
     local dungeonRun = dungeon and dungeon.Context and dungeon.Context() or nil
     for guid, source in pairs(sources) do
         local scope = scopeKey(guid)
+        local first = seen[scope] == nil
         local previous = seen[scope] or { at = now, outputs = {} }
-        local changed = false
+        -- A first look at a corpse is always reported (even with no items);
+        -- a look again only when it shows more.
+        local changed = first
         for id, output in pairs(source.outputs) do
             if not previous.outputs[id] or output.quantity > previous.outputs[id].quantity then
                 previous.outputs[id] = output
@@ -196,7 +239,8 @@ function GW.MobLootCapture.CaptureNow()
                 outputs = outputs,
                 context = { location = location, instance = instanceContext(), lootMethod = safe(Globals.GetLootMethod),
                     dungeonRun = dungeonRun },
-                capture = { attribution = "loot_source_pairs", visibility = "visible_to_observer", yieldBasis = "loot_window" },
+                capture = { attribution = "loot_source_pairs", visibility = "visible_to_observer", yieldBasis = "loot_window",
+                    inspection = inspection, partialReason = partialReason, slotCount = #loot.outputs },
             }, { capturedAt = previous.at, characterId = snapshot.characterId, realm = snapshot.realm,
                 region = snapshot.region, gameBuild = snapshot.gameBuild })
             if envelope and GW.Store.SetTelemetryEvent("mob_loot:" .. tostring(snapshot.characterId) .. ":" .. guid, envelope) then
