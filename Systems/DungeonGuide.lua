@@ -274,13 +274,13 @@ end
 -- and rares it names, and its item facts the base ones. Without the file
 -- the journal shows the base data.
 function Guide.ForeverDb()
-    local data = GW.ForeverDbData
-    return type(data) == "table" and data or nil
+    local overlay = GW.ForeverDbData
+    return type(overlay) == "table" and overlay or nil
 end
 
 function Guide.ApplyForeverDb(instanceId, dungeon)
-    local data = Guide.ForeverDb()
-    local build = data and data.dungeons and data.dungeons[instanceId]
+    local overlay = Guide.ForeverDb()
+    local build = overlay and overlay.dungeons and overlay.dungeons[instanceId]
     if type(build) ~= "function" then return false end
     local patch = build()
     local function apply(list, patches)
@@ -302,8 +302,8 @@ end
 
 -- "Data from ForeverDB.net (https://foreverdb.net)" when its data is loaded.
 function Guide.ForeverDbCredit()
-    local data = Guide.ForeverDb()
-    return data and data.source and data.source.credit or nil
+    local overlay = Guide.ForeverDb()
+    return overlay and overlay.source and overlay.source.credit or nil
 end
 
 function Guide.IsBuilt(instanceId)
