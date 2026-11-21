@@ -332,16 +332,16 @@ do
     -- The journal's checklist draws them as notes, not as steps to do.
     local noteLines, stepNotes = 0, 0
     for _, group in ipairs(editedAddon.DungeonGuideUI.PlanLines(plan)) do
-        for _, line in ipairs(group.lines) do
-            if line.note and line.depth == 0 then noteLines = noteLines + 1 end
-            if line.note and line.depth == 1 then stepNotes = stepNotes + 1 end
-            if line.note then truthy(not line.isNext, "a note is never the next step") end
+        for _, row in ipairs(group.lines) do
+            if row.note and row.depth == 0 then noteLines = noteLines + 1 end
+            if row.note and row.depth == 1 then stepNotes = stepNotes + 1 end
+            if row.note then truthy(not row.isNext, "a note is never the next step") end
         end
     end
     equal(noteLines, 2, "instruction lines in the checklist")
     for _, group in ipairs(editedAddon.DungeonGuideUI.PlanLines(EP.ForGuide(36, stateOf(fixture.states.freshAlliance)))) do
-        for _, line in ipairs(group.lines) do
-            if line.note and line.depth == 1 then stepNotes = stepNotes + 1 end
+        for _, row in ipairs(group.lines) do
+            if row.note and row.depth == 1 then stepNotes = stepNotes + 1 end
         end
     end
     equal(stepNotes, 2, "a quest's published steps are lettered notes under it")
