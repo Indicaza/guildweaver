@@ -1,0 +1,137 @@
+{
+ "schemaVersion": 1,
+ "note": "SYNTHETIC test bundle: the parity fixture made-up quest edits, in the shape of Holdfast studio export (questPlans).",
+ "questPlans": [
+  {
+   "schemaVersion": 1,
+   "instanceId": 36,
+   "revision": "parity-1",
+   "entrance": {
+    "mapId": 1436,
+    "x": 0.4205,
+    "y": 0.7183,
+    "zoneName": "Westfall",
+    "verified": true,
+    "source": "synthetic parity fixture"
+   },
+   "instructions": [
+    {
+     "section": "enter",
+     "text": "Synthetic: gather at the entrance.",
+     "verified": false,
+     "source": "synthetic parity fixture"
+    },
+    {
+     "section": "collect",
+     "text": "Synthetic: start in Westfall.",
+     "verified": false,
+     "source": "synthetic parity fixture"
+    }
+   ],
+   "quests": [
+    {
+     "questId": 214,
+     "shareable": "no",
+     "verified": false,
+     "source": "synthetic parity fixture"
+    },
+    {
+     "questId": 168,
+     "shareable": "yes",
+     "giver": {
+      "name": "Synthetic giver",
+      "location": {
+       "mapId": 1436,
+       "x": 0.5,
+       "y": 0.5,
+       "zoneName": "Westfall"
+      }
+     },
+     "steps": [
+      {
+       "text": "Synthetic step one."
+      },
+      {
+       "text": "Synthetic step two."
+      }
+     ],
+     "verified": true,
+     "source": "synthetic parity fixture"
+    },
+    {
+     "questId": 166,
+     "turnIn": {
+      "name": "Gryan Stoutmantle",
+      "location": {
+       "mapId": 1436,
+       "x": 0.5633,
+       "y": 0.4752,
+       "zoneName": "Westfall"
+      }
+     },
+     "verified": false,
+     "source": "synthetic parity fixture"
+    },
+    {
+     "questId": 167,
+     "prerequisites": [
+      -168
+     ],
+     "verified": false,
+     "source": "synthetic parity fixture"
+    },
+    {
+     "questId": 2040,
+     "turnIn": {
+      "name": "Synthetic turn-in"
+     },
+     "verified": false,
+     "source": "synthetic parity fixture"
+    },
+    {
+     "questId": 424242,
+     "shareable": "yes",
+     "verified": false,
+     "source": "synthetic parity fixture"
+    }
+   ]
+  },
+  {
+   "schemaVersion": 1,
+   "instanceId": 3065,
+   "revision": "parity-2",
+   "quests": [
+    {
+     "questId": 96394,
+     "prerequisites": [
+      96393
+     ],
+     "verified": false,
+     "source": "synthetic parity fixture"
+    },
+    {
+     "questId": 96393,
+     "giver": {
+      "name": "Synthetic Thane",
+      "location": {
+       "mapId": 1455,
+       "x": 0.3,
+       "y": 0.4,
+       "zoneName": "Ironforge"
+      }
+     },
+     "verified": false,
+     "source": "synthetic parity fixture"
+    },
+    {
+     "questId": 98423,
+     "relevance": "optional",
+     "shareable": "yes",
+     "verified": false,
+     "source": "synthetic parity fixture"
+    }
+   ]
+  }
+ ],
+ "questPlanProblems": []
+}

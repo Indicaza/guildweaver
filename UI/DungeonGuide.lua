@@ -64,6 +64,8 @@ local QUALITY = { [0] = "9d9d9d", [1] = "ffffff", [2] = "1eff00", [3] = "0070dd"
 local QUALITY_RGB = { [0] = { 0.62, 0.62, 0.62 }, [1] = { 1, 1, 1 }, [2] = { 0.12, 1, 0 }, [3] = { 0, 0.44, 0.87 }, [4] = { 0.64, 0.21, 0.93 }, [5] = { 1, 0.5, 0 } }
 local FACTIONS = { A = "Alliance", H = "Horde", B = "Both factions" }
 local Readiness = GW.DungeonReadiness
+-- The preparation checklist (GW.DungeonQuestPlan), shown on the quest tab.
+local Plan = GW.DungeonQuestPlan
 -- A quest's state for the current character (GW.DungeonReadiness): its icon
 -- and the colour of its short label.
 local QUEST_STATE = {
@@ -1366,6 +1368,67 @@ local function questRow(parent)
     return row
 end
 
+-- One line of the preparation checklist: a number (top-level step) or a
+-- letter (its parts), the step, where it stands, and a waypoint button
+-- when the step has a place to go.
+local PLAN_STATUS_COLOR = { done = "good", todo = "text", blocked = "bad", unknown = "textFaint", ineligible = "textFaint" }
+local PLAN_INDENT, PLAN_ROW, PLAN_CHILD_ROW = 18, 22, 19
+local function planRow(parent)
+    local row = UI.CreateFrame("Frame", parent)
+    row:SetSize(300, PLAN_ROW)
+    row.mark = row:CreateTexture(nil, "BACKGROUND")
+    row.mark:SetPoint("TOPLEFT", row, "TOPLEFT", 0, 0)
+    row.mark:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", 0, 0)
+    row.number = noWrap(UI.Text(row, "label", "gold", "RIGHT"))
+    row.text = noWrap(UI.Text(row, "label", "text"))
+    row.status = noWrap(UI.Text(row, "small", "textMuted", "RIGHT"))
+    row.go = UI.Button(row, "Waypoint", { width = 72, height = 18, variant = "ghost", role = "small", onClick = function()
+        local record = row.gwData and row.gwData.record
+        if not record or not Plan then return end
+        local how, text = Plan.SetWaypoint(record)
+        row.gwWaypointSet = how
+        local lead = how == "tomtom" and "TomTom waypoint: " or (how == "blizzard" and "Map pin: " or "Not on a map the client confirms; go to ")
+        if GW.Print then pcall(GW.Print, lead .. tostring(text)) end
+    end })
+    function row:Fill(line)
+        self.gwData = line
+        UI.SetText(self.number, line.label or "")
+        local color = line.note and "textMuted" or (line.isNext and "goldBright" or (line.status == "done" and "textMuted" or (PLAN_STATUS_COLOR[line.status] or "text")))
+        UI.SetText(self.text, Theme.Colorize(line.text or "", color))
+        -- A published note (the website's Dungeon Content Studio) is guidance, not a step.
+        local status = line.note and Theme.Colorize(line.verified and "Note" or "Note (unverified)", "textFaint")
+            or (line.isNext and Theme.Colorize("Next", "goldBright"))
+            or Theme.Colorize(line.optional and "If no one shares" or (Plan.STATUS_LABELS[line.status] or ""), PLAN_STATUS_COLOR[line.status] or "textMuted")
+        UI.SetText(self.status, status)
+        Theme.Fill(self.mark, "goldBright", line.isNext and 0.12 or 0)
+        if line.record then self.go:Show() else self.go:Hide() end
+        self:Show()
+        return self:Layout(self.gwWidth or 300)
+    end
+    function row:Layout(width)
+        self.gwWidth = width
+        self:SetWidth(width)
+        local line = self.gwData or {}
+        local x = (line.depth or 0) * PLAN_INDENT
+        self.number:ClearAllPoints()
+        self.number:SetPoint("TOPLEFT", self, "TOPLEFT", x, -3)
+        self.number:SetWidth(22)
+        self.go:ClearAllPoints()
+        self.go:SetPoint("TOPRIGHT", self, "TOPRIGHT", 0, -1)
+        self.status:ClearAllPoints()
+        self.status:SetPoint("TOPRIGHT", self, "TOPRIGHT", line.record and -78 or 0, -3)
+        self.status:SetWidth(112)
+        self.text:ClearAllPoints()
+        self.text:SetPoint("TOPLEFT", self, "TOPLEFT", x + 28, -3)
+        self.text:SetPoint("RIGHT", self.status, "LEFT", -8, 0)
+        local height = (line.depth or 0) > 0 and PLAN_CHILD_ROW or PLAN_ROW
+        self:SetHeight(height)
+        return height
+    end
+    function row:Clear() self:Hide() end
+    return row
+end
+
 local function buildDungeonPage(view)
     local page = UI.CreateFrame("Frame", view)
     page.title = noWrap(UI.Text(page, "pageTitle", "goldBright"))
@@ -1455,6 +1518,8 @@ local function buildDungeonPage(view)
     page.quests:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -52)
     page.questRows = pool(function() return questRow(page.quests.child) end)
     page.questHeads = pool(function() return UI.SectionHeader(page.quests.child, "") end)
+    page.planRows = pool(function() return planRow(page.quests.child) end)
+    page.planHeads = pool(function() return UI.SectionHeader(page.quests.child, "") end)
     page.questBox = UI.CreateFrame("Frame", page.quests.child)
     Theme.Panel(page.questBox, "inset")
     page.questBox.stripe = page.questBox:CreateTexture(nil, "BORDER")
@@ -1802,12 +1867,18 @@ local function layoutQuests(page)
         for index = 1, rawget(page, "gwQuestCount") or 0 do layout[index] = { row = index } end
     end
     for _, item in ipairs(layout) do
-        if item.head then
-            local header = page.questHeads:Get(item.head)
+        if item.head or item.planHead then
+            local header = item.head and page.questHeads:Get(item.head) or page.planHeads:Get(item.planHead)
             header:ClearAllPoints()
             header:SetPoint("TOPLEFT", child, "TOPLEFT", 0, -y)
             header:SetWidth(width)
             y = y + 30
+        elseif item.plan then
+            local row = page.planRows:Get(item.plan)
+            row:ClearAllPoints()
+            row:SetPoint("TOPLEFT", child, "TOPLEFT", 0, -y)
+            y = y + row:Layout(width) + 2
+            if item.last then y = y + 12 end
         else
             local row = page.questRows:Get(item.row)
             row:ClearAllPoints()
@@ -1828,6 +1899,56 @@ local function questReadiness(instanceId)
     return ok and result or nil
 end
 GuideUI.QuestReadiness = questReadiness
+
+-- The preparation checklist for a guide page, or nil. Never built in
+-- combat: the last one shown for the page stays until the fight ends.
+local function questPlan(instanceId)
+    if not Plan or type(Plan.ForGuide) ~= "function" then return nil end
+    local last = rawget(state, "lastPlan")
+    if inCombat() then return last and last.id == instanceId and last.plan or nil end
+    local ok, plan = pcall(Plan.ForGuide, instanceId)
+    plan = ok and plan or nil
+    state.lastPlan = { id = instanceId, plan = plan }
+    return plan
+end
+GuideUI.QuestPlan = questPlan
+
+-- The checklist's lines in order: collect, share, enter, then after the
+-- run (optional and repeatable quests are the groups below it). Top-level
+-- steps are numbered through, their parts lettered.
+local PLAN_GROUPS = { "collect", "share", "enter", "turnIn", "unknown" }
+function GuideUI.PlanLines(plan)
+    local groups, number = {}, 0
+    local notesOf = {}
+    for _, section in ipairs(plan.sections or {}) do notesOf[section.key] = section.notes end
+    for _, key in ipairs(PLAN_GROUPS) do
+        local steps = plan.bySection[key]
+        if steps and #steps > 0 then
+            local lines = {}
+            for index, note in ipairs(notesOf[key] or {}) do
+                table.insert(lines, { id = key .. ":instruction" .. index, label = "", text = note.text, depth = 0, note = true, verified = note.verified })
+            end
+            for _, entry in ipairs(steps) do
+                local label
+                if key == "share" then label = "or" else
+                    number = number + 1
+                    label = number .. "."
+                end
+                local leaf = #entry.children == 0
+                table.insert(lines, { id = entry.id, label = label, text = entry.text, status = entry.status, depth = 0, isNext = entry.id == plan.next,
+                    record = leaf and entry.waypoint and plan.waypointById[entry.waypoint] or nil })
+                for index, child in ipairs(entry.children) do
+                    table.insert(lines, { id = child.id, label = (index <= 26 and string.char(96 + index) or tostring(index)) .. ".", text = child.text,
+                        status = child.status, depth = 1, isNext = child.id == plan.next, optional = child.optional,
+                        note = child.kind == "note" or nil, verified = child.verified,
+                        record = child.waypoint and plan.waypointById[child.waypoint] or nil })
+                end
+            end
+            table.insert(groups, { key = key, title = Plan.SECTION_TITLES[key], lines = lines })
+        end
+    end
+    return groups
+end
 
 -- One quest row's data: the catalog's quest with the atlas's objective,
 -- rewards and giver when the atlas lists it, and the character's state.
@@ -1892,6 +2013,8 @@ local function refreshQuests(page, instanceId)
         end
         page.questRows:Trim(#quests)
         page.questHeads:Trim(0)
+        page.planRows:Trim(0)
+        page.planHeads:Trim(0)
         page.gwQuestCount = #quests
         page.gwQuestLayout = nil
         page.gwQuestSummary = nil
@@ -1906,6 +2029,26 @@ local function refreshQuests(page, instanceId)
     local turnIn = {}
     for _, entry in ipairs(log and log.entries or {}) do if entry.isComplete then turnIn[entry.questId] = true end end
     local layout, rowCount, headCount, shown = {}, 0, 0, 0
+    -- The checklist first: what to do, in order.
+    local plan = questPlan(instanceId)
+    local planCount, planHeadCount, nextLine = 0, 0, nil
+    for _, group in ipairs(plan and GuideUI.PlanLines(plan) or {}) do
+        planHeadCount = planHeadCount + 1
+        page.planHeads:Get(planHeadCount):SetTitle(group.title)
+        page.planHeads:Get(planHeadCount):Show()
+        table.insert(layout, { planHead = planHeadCount })
+        for index, line in ipairs(group.lines) do
+            planCount = planCount + 1
+            local row = page.planRows:Get(planCount)
+            row.gwWidth = width
+            row:Fill(line)
+            if line.isNext then nextLine = line end
+            table.insert(layout, { plan = planCount, last = index == #group.lines })
+        end
+    end
+    page.planRows:Trim(planCount)
+    page.planHeads:Trim(planHeadCount)
+    page.gwPlan = plan
     for _, group in ipairs(questGroups(result)) do
         local title, entries = group[1], group[2]
         if #entries > 0 then
@@ -1930,6 +2073,7 @@ local function refreshQuests(page, instanceId)
     page.gwQuestLayout = layout
     local characterState = result.state
     local lines = { Theme.Colorize(Readiness.READINESS_LABELS[result.readiness], READINESS_COLOR[result.readiness]) .. SEP .. Readiness.Summary(result) }
+    if nextLine then table.insert(lines, Theme.Colorize("Next: ", "goldBright") .. tostring(nextLine.text)) end
     if not characterState then
         table.insert(lines, Theme.Colorize("Your quests have not been read yet (they are, out of combat).", "textFaint"))
     elseif characterState.completed.coverage ~= "full" or characterState.questLog.coverage ~= "full" then
