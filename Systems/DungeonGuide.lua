@@ -262,9 +262,102 @@ function Guide.Dungeon(instanceId)
         return nil
     end
     local ok, dungeon = pcall(measure, "guide:build", build)
-    if ok and type(dungeon) == "table" then pcall(Guide.ApplyForeverDb, instanceId, dungeon) end
+    if ok and type(dungeon) == "table" then
+        pcall(Guide.ApplyForeverDb, instanceId, dungeon)
+        pcall(Guide.ApplyEditorial, instanceId, dungeon)
+    end
     cache.dungeons[instanceId] = ok and type(dungeon) == "table" and dungeon or false
     return cache.dungeons[instanceId] or nil
+end
+
+-- Published editorial content from Holdfast's Dungeon Content Studio
+-- (A.editorial in the generated atlas, built on first use): boss guides and
+-- mechanics callouts, dungeon notes, edited names and level bands. Absent
+-- in an export without it; the journal then shows the atlas alone.
+function Guide.Editorial(instanceId)
+    local atlas = data()
+    local build = atlas and atlas.editorial
+    if type(build) ~= "function" then return nil end
+    if cache.editorial == nil then
+        local ok, entries = pcall(build)
+        cache.editorial = ok and type(entries) == "table" and entries or false
+    end
+    return cache.editorial and cache.editorial[tonumber(instanceId)] or nil
+end
+
+-- Textures packaged with the add-on for a dungeon: { card, portraits = { [bossKey] } }.
+function Guide.EditorialArt(instanceId)
+    local atlas = data()
+    local art = atlas and atlas.editorialArt
+    return type(art) == "table" and art[tonumber(instanceId)] or nil
+end
+
+function Guide.BossKey(boss)
+    return tostring(boss.e or boss.npc or boss.name)
+end
+
+-- Lays the entry over a built dungeon. The boss order is the atlas's: run
+-- tracking and saved runs refer to bosses by position.
+function Guide.ApplyEditorial(instanceId, dungeon)
+    local entry = Guide.Editorial(instanceId)
+    if type(entry) ~= "table" then return false end
+    local byKey = {}
+    for _, boss in ipairs(dungeon.bosses or {}) do byKey[Guide.BossKey(boss)] = boss end
+    for _, patch in ipairs(entry.bosses or {}) do
+        local boss = byKey[patch.k]
+        if boss then
+            if patch.n then boss.atlasName, boss.name = boss.name, patch.n end
+            boss.ed = patch
+        end
+    end
+    if entry.n then dungeon.atlasName, dungeon.name = dungeon.name, entry.n end
+    if entry.lmin then dungeon.lmin = entry.lmin end
+    if entry.lmax then dungeon.lmax = entry.lmax end
+    if entry.ent then dungeon.entrance = { map = entry.ent.m, x = entry.ent.x, y = entry.ent.y } end
+    dungeon.ed = entry
+    return true
+end
+
+local MECHANIC_LABELS = { interrupt = "KICK", ["tank-danger"] = "TANK", ["healer-danger"] = "HEAL", dispel = "DISPEL", positioning = "MOVE",
+    ["crowd-control"] = "CC", ["special-mechanic"] = "NOTE" }
+local ROLE_WORDS = { tank = "Tank", healer = "Healer", dps = "Damage" }
+Guide.EDITORIAL_TEXT = { { "desc", nil }, { "strat", "Strategy" }, { "tank", "Tank" }, { "heal", "Healer" }, { "dps", "Damage" },
+    { "pos", "Positioning" }, { "kick", "Interrupts" }, { "disp", "Dispels" } }
+
+-- A boss's editorial guide as lines { text, color }: mechanics callouts first
+-- (label, ability, roles, instruction), then the guide's text.
+function Guide.EditorialLines(creature)
+    local ed = type(creature) == "table" and creature.ed or nil
+    local lines = {}
+    if type(ed) ~= "table" then return lines end
+    for _, m in ipairs(ed.mech or {}) do
+        local label = MECHANIC_LABELS[m.t] or "NOTE"
+        local roles = {}
+        for role in string.gmatch(m.r or "", "[^,]+") do table.insert(roles, ROLE_WORDS[role] or role) end
+        table.insert(lines, { label = label, color = Guide.LABEL_COLORS[label] or "textMuted", ability = m.a, high = m.p == "high",
+            roles = #roles > 0 and table.concat(roles, ", ") or nil, text = m.i, verified = m.v == true })
+    end
+    for _, field in ipairs(Guide.EDITORIAL_TEXT) do
+        if ed[field[1]] then table.insert(lines, { heading = field[2], text = ed[field[1]] }) end
+    end
+    return lines
+end
+
+-- The dungeon's editorial notes for its source badge: subtitle, warnings,
+-- preparation, tips, group, route, attribution.
+function Guide.EditorialNotes(dungeon)
+    local ed = type(dungeon) == "table" and dungeon.ed or nil
+    local lines = {}
+    if type(ed) ~= "table" then return lines end
+    if ed.sub then table.insert(lines, ed.sub) end
+    if ed.desc then table.insert(lines, ed.desc) end
+    for _, group in ipairs({ { "warn", "Warning: " }, { "prep", "Prepare: " }, { "tips", "Tip: " } }) do
+        for _, line in ipairs(ed[group[1]] or {}) do table.insert(lines, group[2] .. line) end
+    end
+    if ed.comp then table.insert(lines, "Group: " .. ed.comp) end
+    if ed.route then table.insert(lines, "Route: " .. ed.route) end
+    if ed.attr then table.insert(lines, ed.attr) end
+    return lines
 end
 
 -- ForeverDB.net's data (Data/ForeverDB.generated.lua, GPL-3.0 with its

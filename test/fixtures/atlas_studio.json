@@ -1,0 +1,863 @@
+{
+ "schemaVersion": 1,
+ "generatedAt": "2026-11-19T05:19:59.568Z",
+ "sources": [
+  {
+   "source": "wago-classic-era",
+   "revision": "wow_classic_era 1.15.8.63829+",
+   "retrievedAt": "2026-11-18T01:20:52.248Z",
+   "url": "https://wago.tools/db2?product=wow_classic_era",
+   "license": "Factual game data extracted from the World of Warcraft Classic Era client (Blizzard Entertainment). Names and numbers only; no art."
+  },
+  {
+   "source": "azerothcore",
+   "revision": "6ffb62abb867dabb258de6813ff5d06d6b011543",
+   "retrievedAt": "2026-11-18T01:20:52.248Z",
+   "url": "https://github.com/azerothcore/azerothcore-wotlk/tree/6ffb62abb867dabb258de6813ff5d06d6b011543/data/sql/base/db_world",
+   "license": "AzerothCore world database, GPL-2.0 (https://github.com/azerothcore/azerothcore-wotlk). A WotLK (3.3.5) emulator database: vanilla content as the emulator models it."
+  },
+  {
+   "source": "azerothcore",
+   "revision": "6ffb62abb867dabb258de6813ff5d06d6b011543",
+   "retrievedAt": "2026-11-18T04:21:05.615Z",
+   "url": "https://github.com/azerothcore/azerothcore-wotlk/tree/6ffb62abb867dabb258de6813ff5d06d6b011543",
+   "license": "AzerothCore world database, GPL-2.0 (https://github.com/azerothcore/azerothcore-wotlk). A WotLK (3.3.5) emulator database: vanilla content as the emulator models it."
+  },
+  {
+   "source": "wago-classic-era",
+   "revision": "wow_classic_era (latest)",
+   "retrievedAt": "2026-11-18T08:16:15.790Z",
+   "url": "https://wago.tools/db2?product=wow_classic_era",
+   "license": "Factual game data extracted from the World of Warcraft Classic Era client (Blizzard Entertainment). Names and numbers only; no art."
+  },
+  {
+   "source": "azerothcore",
+   "revision": "6ffb62abb867dabb258de6813ff5d06d6b011543",
+   "retrievedAt": "2026-11-19T05:19:59.568Z",
+   "url": "https://github.com/azerothcore/azerothcore-wotlk/tree/6ffb62abb867dabb258de6813ff5d06d6b011543/data/sql/base/db_world",
+   "license": "AzerothCore world database, GPL-2.0 (https://github.com/azerothcore/azerothcore-wotlk). A WotLK (3.3.5) emulator database: vanilla content as the emulator models it."
+  },
+  {
+   "source": "openmap-forever",
+   "revision": "0f4d2e4b6fe82b9032618fd3b824eaaa5b36dcef (client build 1.60.1.70888)",
+   "retrievedAt": "2026-11-16T23:56:53.000Z",
+   "url": "https://github.com/openmap-world/openmap/blob/0f4d2e4b6fe82b9032618fd3b824eaaa5b36dcef/OpenMap/Data/Forever/Places.lua",
+   "license": "OpenMap, MIT (https://github.com/openmap-world/openmap/blob/main/LICENSE). Places.lua is generated from the WoW Forever client's tables: names and numbers only, no art."
+  }
+ ],
+ "note": "Real atlas entries (trimmed: no creatures, rares, maps or quests) for the editorial parity spec.",
+ "dungeons": [
+  {
+   "instanceId": 36,
+   "name": "Deadmines",
+   "kind": "dungeon",
+   "maxPlayers": 10,
+   "description": null,
+   "levelMin": 15,
+   "levelMax": 28,
+   "recommendedLevel": null,
+   "zoneName": "Westfall",
+   "zoneMapId": 1436,
+   "entrance": {
+    "mapId": 1436,
+    "x": 0.3804,
+    "y": 0.7751
+   },
+   "entrances": [
+    {
+     "mapId": 1436,
+     "zoneName": "Westfall",
+     "x": 0.3804,
+     "y": 0.7751,
+     "label": "DeadMines Entrance",
+     "areaTriggerId": 78
+    }
+   ],
+   "artworkUrl": null,
+   "maps": [],
+   "bosses": [
+    {
+     "encounterId": 2741,
+     "npcId": 644,
+     "name": "Rhahk'Zor",
+     "order": 0,
+     "portraitUrl": null,
+     "floorId": "layout",
+     "mapPosition": {
+      "x": 0.172,
+      "y": 0.609
+     },
+     "abilities": [
+      {
+       "spellId": 6304,
+       "name": "Rhahk'Zor Slam",
+       "category": "crowd-control",
+       "priority": "high",
+       "interruptible": null,
+       "summary": "instant · stun",
+       "details": null,
+       "source": "classic-reference",
+       "verifiedForForever": false
+      }
+     ],
+     "strategy": null,
+     "provenance": [
+      {
+       "source": "wago-classic-era",
+       "revision": "wow_classic_era 1.15.8.63829+",
+       "confidence": "high",
+       "tier": "classic-reference",
+       "retrievedAt": "2026-11-18T01:20:52.248Z",
+       "url": "https://wago.tools/db2?product=wow_classic_era",
+       "note": "DungeonEncounter: boss list and order"
+      },
+      {
+       "source": "azerothcore",
+       "revision": "6ffb62abb867dabb258de6813ff5d06d6b011543",
+       "confidence": "medium",
+       "tier": "community-unverified",
+       "retrievedAt": "2026-11-18T01:20:52.248Z",
+       "url": "https://github.com/azerothcore/azerothcore-wotlk/tree/6ffb62abb867dabb258de6813ff5d06d6b011543/data/sql/base/db_world",
+       "note": "creature_template: unique exact name match"
+      },
+      {
+       "source": "azerothcore",
+       "revision": "6ffb62abb867dabb258de6813ff5d06d6b011543",
+       "confidence": "medium",
+       "tier": "community-unverified",
+       "retrievedAt": "2026-11-18T04:21:05.615Z",
+       "url": "https://github.com/azerothcore/azerothcore-wotlk/tree/6ffb62abb867dabb258de6813ff5d06d6b011543",
+       "note": "creature: spawn position on the spawn layout"
+      },
+      {
+       "source": "azerothcore",
+       "revision": "6ffb62abb867dabb258de6813ff5d06d6b011543",
+       "confidence": "medium",
+       "tier": "community-unverified",
+       "retrievedAt": "2026-11-18T04:21:05.615Z",
+       "url": "https://github.com/azerothcore/azerothcore-wotlk/tree/6ffb62abb867dabb258de6813ff5d06d6b011543",
+       "note": "smart_scripts, creature_template_spell, C++ script spell enums: which spells it casts"
+      },
+      {
+       "source": "wago-classic-era",
+       "revision": "wow_classic_era (latest)",
+       "confidence": "low",
+       "tier": "classic-reference",
+       "retrievedAt": "2026-11-18T08:16:15.790Z",
+       "url": "https://wago.tools/db2?product=wow_classic_era",
+       "note": "Spell facts from the client; category and priority derived by rule (Atlas/atlasContent.js classifySpell)"
+      }
+     ]
+    },
+    {
+     "encounterId": 2742,
+     "npcId": 643,
+     "name": "Sneed",
+     "order": 1000,
+     "portraitUrl": null,
+     "floorId": null,
+     "mapPosition": null,
+     "abilities": [],
+     "strategy": null,
+     "provenance": [
+      {
+       "source": "wago-classic-era",
+       "revision": "wow_classic_era 1.15.8.63829+",
+       "confidence": "high",
+       "tier": "classic-reference",
+       "retrievedAt": "2026-11-18T01:20:52.248Z",
+       "url": "https://wago.tools/db2?product=wow_classic_era",
+       "note": "DungeonEncounter: boss list and order"
+      },
+      {
+       "source": "azerothcore",
+       "revision": "6ffb62abb867dabb258de6813ff5d06d6b011543",
+       "confidence": "medium",
+       "tier": "community-unverified",
+       "retrievedAt": "2026-11-18T01:20:52.248Z",
+       "url": "https://github.com/azerothcore/azerothcore-wotlk/tree/6ffb62abb867dabb258de6813ff5d06d6b011543/data/sql/base/db_world",
+       "note": "creature_template: unique exact name match"
+      }
+     ]
+    },
+    {
+     "encounterId": 2743,
+     "npcId": 1763,
+     "name": "Gilnid",
+     "order": 2000,
+     "portraitUrl": null,
+     "floorId": "layout",
+     "mapPosition": {
+      "x": 0.386,
+      "y": 0.563
+     },
+     "abilities": [
+      {
+       "spellId": 5213,
+       "name": "Molten Metal",
+       "category": "tank-danger",
+       "priority": "low",
+       "interruptible": false,
+       "summary": "2s cast · not interruptible",
+       "details": null,
+       "source": "classic-reference",
+       "verifiedForForever": false
+      }
+     ],
+     "strategy": null,
+     "provenance": [
+      {
+       "source": "wago-classic-era",
+       "revision": "wow_classic_era 1.15.8.63829+",
+       "confidence": "high",
+       "tier": "classic-reference",
+       "retrievedAt": "2026-11-18T01:20:52.248Z",
+       "url": "https://wago.tools/db2?product=wow_classic_era",
+       "note": "DungeonEncounter: boss list and order"
+      },
+      {
+       "source": "azerothcore",
+       "revision": "6ffb62abb867dabb258de6813ff5d06d6b011543",
+       "confidence": "medium",
+       "tier": "community-unverified",
+       "retrievedAt": "2026-11-18T01:20:52.248Z",
+       "url": "https://github.com/azerothcore/azerothcore-wotlk/tree/6ffb62abb867dabb258de6813ff5d06d6b011543/data/sql/base/db_world",
+       "note": "creature_template: unique exact name match"
+      },
+      {
+       "source": "azerothcore",
+       "revision": "6ffb62abb867dabb258de6813ff5d06d6b011543",
+       "confidence": "medium",
+       "tier": "community-unverified",
+       "retrievedAt": "2026-11-18T04:21:05.615Z",
+       "url": "https://github.com/azerothcore/azerothcore-wotlk/tree/6ffb62abb867dabb258de6813ff5d06d6b011543",
+       "note": "creature: spawn position on the spawn layout"
+      },
+      {
+       "source": "azerothcore",
+       "revision": "6ffb62abb867dabb258de6813ff5d06d6b011543",
+       "confidence": "medium",
+       "tier": "community-unverified",
+       "retrievedAt": "2026-11-18T04:21:05.615Z",
+       "url": "https://github.com/azerothcore/azerothcore-wotlk/tree/6ffb62abb867dabb258de6813ff5d06d6b011543",
+       "note": "smart_scripts, creature_template_spell, C++ script spell enums: which spells it casts"
+      },
+      {
+       "source": "wago-classic-era",
+       "revision": "wow_classic_era (latest)",
+       "confidence": "low",
+       "tier": "classic-reference",
+       "retrievedAt": "2026-11-18T08:16:15.790Z",
+       "url": "https://wago.tools/db2?product=wow_classic_era",
+       "note": "Spell facts from the client; category and priority derived by rule (Atlas/atlasContent.js classifySpell)"
+      }
+     ]
+    },
+    {
+     "encounterId": 2744,
+     "npcId": 647,
+     "name": "Captain Greenskin",
+     "order": 3000,
+     "portraitUrl": null,
+     "floorId": "layout",
+     "mapPosition": {
+      "x": 0.802,
+      "y": 0.209
+     },
+     "abilities": [
+      {
+       "spellId": 5208,
+       "name": "Poisoned Harpoon",
+       "category": "interrupt",
+       "priority": "high",
+       "interruptible": true,
+       "summary": "2s cast · interruptible · Poison effect",
+       "details": null,
+       "source": "classic-reference",
+       "verifiedForForever": false
+      }
+     ],
+     "strategy": null,
+     "provenance": [
+      {
+       "source": "wago-classic-era",
+       "revision": "wow_classic_era 1.15.8.63829+",
+       "confidence": "high",
+       "tier": "classic-reference",
+       "retrievedAt": "2026-11-18T01:20:52.248Z",
+       "url": "https://wago.tools/db2?product=wow_classic_era",
+       "note": "DungeonEncounter: boss list and order"
+      },
+      {
+       "source": "azerothcore",
+       "revision": "6ffb62abb867dabb258de6813ff5d06d6b011543",
+       "confidence": "medium",
+       "tier": "community-unverified",
+       "retrievedAt": "2026-11-18T01:20:52.248Z",
+       "url": "https://github.com/azerothcore/azerothcore-wotlk/tree/6ffb62abb867dabb258de6813ff5d06d6b011543/data/sql/base/db_world",
+       "note": "creature_template: unique exact name match"
+      },
+      {
+       "source": "azerothcore",
+       "revision": "6ffb62abb867dabb258de6813ff5d06d6b011543",
+       "confidence": "medium",
+       "tier": "community-unverified",
+       "retrievedAt": "2026-11-18T04:21:05.615Z",
+       "url": "https://github.com/azerothcore/azerothcore-wotlk/tree/6ffb62abb867dabb258de6813ff5d06d6b011543",
+       "note": "creature: spawn position on the spawn layout"
+      },
+      {
+       "source": "azerothcore",
+       "revision": "6ffb62abb867dabb258de6813ff5d06d6b011543",
+       "confidence": "medium",
+       "tier": "community-unverified",
+       "retrievedAt": "2026-11-18T04:21:05.615Z",
+       "url": "https://github.com/azerothcore/azerothcore-wotlk/tree/6ffb62abb867dabb258de6813ff5d06d6b011543",
+       "note": "smart_scripts, creature_template_spell, C++ script spell enums: which spells it casts"
+      },
+      {
+       "source": "wago-classic-era",
+       "revision": "wow_classic_era (latest)",
+       "confidence": "low",
+       "tier": "classic-reference",
+       "retrievedAt": "2026-11-18T08:16:15.790Z",
+       "url": "https://wago.tools/db2?product=wow_classic_era",
+       "note": "Spell facts from the client; category and priority derived by rule (Atlas/atlasContent.js classifySpell)"
+      }
+     ]
+    },
+    {
+     "encounterId": 2745,
+     "npcId": 646,
+     "name": "Mr. Smite",
+     "order": 4000,
+     "portraitUrl": null,
+     "floorId": "layout",
+     "mapPosition": {
+      "x": 0.764,
+      "y": 0.099
+     },
+     "abilities": [
+      {
+       "spellId": 6435,
+       "name": "Smite Slam",
+       "category": "crowd-control",
+       "priority": "high",
+       "interruptible": null,
+       "summary": "instant · stun",
+       "details": null,
+       "source": "classic-reference",
+       "verifiedForForever": false
+      },
+      {
+       "spellId": 6432,
+       "name": "Smite Stomp",
+       "category": "crowd-control",
+       "priority": "high",
+       "interruptible": null,
+       "summary": "instant · stun · area",
+       "details": null,
+       "source": "classic-reference",
+       "verifiedForForever": false
+      },
+      {
+       "spellId": 6264,
+       "name": "Nimble Reflexes",
+       "category": "special-mechanic",
+       "priority": "low",
+       "interruptible": null,
+       "summary": "instant",
+       "details": null,
+       "source": "classic-reference",
+       "verifiedForForever": false
+      },
+      {
+       "spellId": 3391,
+       "name": "Thrash",
+       "category": "special-mechanic",
+       "priority": "low",
+       "interruptible": null,
+       "summary": "instant",
+       "details": null,
+       "source": "classic-reference",
+       "verifiedForForever": false
+      }
+     ],
+     "strategy": null,
+     "provenance": [
+      {
+       "source": "wago-classic-era",
+       "revision": "wow_classic_era 1.15.8.63829+",
+       "confidence": "high",
+       "tier": "classic-reference",
+       "retrievedAt": "2026-11-18T01:20:52.248Z",
+       "url": "https://wago.tools/db2?product=wow_classic_era",
+       "note": "DungeonEncounter: boss list and order"
+      },
+      {
+       "source": "azerothcore",
+       "revision": "6ffb62abb867dabb258de6813ff5d06d6b011543",
+       "confidence": "medium",
+       "tier": "community-unverified",
+       "retrievedAt": "2026-11-18T01:20:52.248Z",
+       "url": "https://github.com/azerothcore/azerothcore-wotlk/tree/6ffb62abb867dabb258de6813ff5d06d6b011543/data/sql/base/db_world",
+       "note": "creature_template: unique exact name match"
+      },
+      {
+       "source": "azerothcore",
+       "revision": "6ffb62abb867dabb258de6813ff5d06d6b011543",
+       "confidence": "medium",
+       "tier": "community-unverified",
+       "retrievedAt": "2026-11-18T04:21:05.615Z",
+       "url": "https://github.com/azerothcore/azerothcore-wotlk/tree/6ffb62abb867dabb258de6813ff5d06d6b011543",
+       "note": "creature: spawn position on the spawn layout"
+      },
+      {
+       "source": "azerothcore",
+       "revision": "6ffb62abb867dabb258de6813ff5d06d6b011543",
+       "confidence": "medium",
+       "tier": "community-unverified",
+       "retrievedAt": "2026-11-18T04:21:05.615Z",
+       "url": "https://github.com/azerothcore/azerothcore-wotlk/tree/6ffb62abb867dabb258de6813ff5d06d6b011543",
+       "note": "smart_scripts, creature_template_spell, C++ script spell enums: which spells it casts"
+      },
+      {
+       "source": "wago-classic-era",
+       "revision": "wow_classic_era (latest)",
+       "confidence": "low",
+       "tier": "classic-reference",
+       "retrievedAt": "2026-11-18T08:16:15.790Z",
+       "url": "https://wago.tools/db2?product=wow_classic_era",
+       "note": "Spell facts from the client; category and priority derived by rule (Atlas/atlasContent.js classifySpell)"
+      }
+     ]
+    },
+    {
+     "encounterId": 2746,
+     "npcId": 645,
+     "name": "Cookie",
+     "order": 5000,
+     "portraitUrl": null,
+     "floorId": "layout",
+     "mapPosition": {
+      "x": 0.859,
+      "y": 0.233
+     },
+     "abilities": [
+      {
+       "spellId": 6306,
+       "name": "Acid Splash",
+       "category": "healer-danger",
+       "priority": "high",
+       "interruptible": false,
+       "summary": "1s cast · not interruptible · area",
+       "details": null,
+       "source": "classic-reference",
+       "verifiedForForever": false
+      },
+      {
+       "spellId": 5174,
+       "name": "Cookie's Cooking",
+       "category": "interrupt",
+       "priority": "high",
+       "interruptible": true,
+       "summary": "2s cast · interruptible · heals",
+       "details": null,
+       "source": "classic-reference",
+       "verifiedForForever": false
+      }
+     ],
+     "strategy": null,
+     "provenance": [
+      {
+       "source": "wago-classic-era",
+       "revision": "wow_classic_era 1.15.8.63829+",
+       "confidence": "high",
+       "tier": "classic-reference",
+       "retrievedAt": "2026-11-18T01:20:52.248Z",
+       "url": "https://wago.tools/db2?product=wow_classic_era",
+       "note": "DungeonEncounter: boss list and order"
+      },
+      {
+       "source": "azerothcore",
+       "revision": "6ffb62abb867dabb258de6813ff5d06d6b011543",
+       "confidence": "medium",
+       "tier": "community-unverified",
+       "retrievedAt": "2026-11-18T01:20:52.248Z",
+       "url": "https://github.com/azerothcore/azerothcore-wotlk/tree/6ffb62abb867dabb258de6813ff5d06d6b011543/data/sql/base/db_world",
+       "note": "creature_template: unique exact name match"
+      },
+      {
+       "source": "azerothcore",
+       "revision": "6ffb62abb867dabb258de6813ff5d06d6b011543",
+       "confidence": "medium",
+       "tier": "community-unverified",
+       "retrievedAt": "2026-11-18T04:21:05.615Z",
+       "url": "https://github.com/azerothcore/azerothcore-wotlk/tree/6ffb62abb867dabb258de6813ff5d06d6b011543",
+       "note": "creature: spawn position on the spawn layout"
+      },
+      {
+       "source": "azerothcore",
+       "revision": "6ffb62abb867dabb258de6813ff5d06d6b011543",
+       "confidence": "medium",
+       "tier": "community-unverified",
+       "retrievedAt": "2026-11-18T04:21:05.615Z",
+       "url": "https://github.com/azerothcore/azerothcore-wotlk/tree/6ffb62abb867dabb258de6813ff5d06d6b011543",
+       "note": "smart_scripts, creature_template_spell, C++ script spell enums: which spells it casts"
+      },
+      {
+       "source": "wago-classic-era",
+       "revision": "wow_classic_era (latest)",
+       "confidence": "low",
+       "tier": "classic-reference",
+       "retrievedAt": "2026-11-18T08:16:15.790Z",
+       "url": "https://wago.tools/db2?product=wow_classic_era",
+       "note": "Spell facts from the client; category and priority derived by rule (Atlas/atlasContent.js classifySpell)"
+      }
+     ]
+    },
+    {
+     "encounterId": 2747,
+     "npcId": 639,
+     "name": "Edwin VanCleef",
+     "order": 6000,
+     "portraitUrl": null,
+     "floorId": "layout",
+     "mapPosition": {
+      "x": 0.802,
+      "y": 0.293
+     },
+     "abilities": [
+      {
+       "spellId": 3391,
+       "name": "Thrash",
+       "category": "special-mechanic",
+       "priority": "low",
+       "interruptible": null,
+       "summary": "instant",
+       "details": null,
+       "source": "classic-reference",
+       "verifiedForForever": false
+      },
+      {
+       "spellId": 5200,
+       "name": "VanCleef's Allies",
+       "category": "special-mechanic",
+       "priority": "low",
+       "interruptible": null,
+       "summary": "instant",
+       "details": null,
+       "source": "classic-reference",
+       "verifiedForForever": false
+      }
+     ],
+     "strategy": null,
+     "provenance": [
+      {
+       "source": "wago-classic-era",
+       "revision": "wow_classic_era 1.15.8.63829+",
+       "confidence": "high",
+       "tier": "classic-reference",
+       "retrievedAt": "2026-11-18T01:20:52.248Z",
+       "url": "https://wago.tools/db2?product=wow_classic_era",
+       "note": "DungeonEncounter: boss list and order"
+      },
+      {
+       "source": "azerothcore",
+       "revision": "6ffb62abb867dabb258de6813ff5d06d6b011543",
+       "confidence": "medium",
+       "tier": "community-unverified",
+       "retrievedAt": "2026-11-18T01:20:52.248Z",
+       "url": "https://github.com/azerothcore/azerothcore-wotlk/tree/6ffb62abb867dabb258de6813ff5d06d6b011543/data/sql/base/db_world",
+       "note": "creature_template: unique exact name match"
+      },
+      {
+       "source": "azerothcore",
+       "revision": "6ffb62abb867dabb258de6813ff5d06d6b011543",
+       "confidence": "medium",
+       "tier": "community-unverified",
+       "retrievedAt": "2026-11-18T04:21:05.615Z",
+       "url": "https://github.com/azerothcore/azerothcore-wotlk/tree/6ffb62abb867dabb258de6813ff5d06d6b011543",
+       "note": "creature: spawn position on the spawn layout"
+      },
+      {
+       "source": "azerothcore",
+       "revision": "6ffb62abb867dabb258de6813ff5d06d6b011543",
+       "confidence": "medium",
+       "tier": "community-unverified",
+       "retrievedAt": "2026-11-18T04:21:05.615Z",
+       "url": "https://github.com/azerothcore/azerothcore-wotlk/tree/6ffb62abb867dabb258de6813ff5d06d6b011543",
+       "note": "smart_scripts, creature_template_spell, C++ script spell enums: which spells it casts"
+      },
+      {
+       "source": "wago-classic-era",
+       "revision": "wow_classic_era (latest)",
+       "confidence": "low",
+       "tier": "classic-reference",
+       "retrievedAt": "2026-11-18T08:16:15.790Z",
+       "url": "https://wago.tools/db2?product=wow_classic_era",
+       "note": "Spell facts from the client; category and priority derived by rule (Atlas/atlasContent.js classifySpell)"
+      }
+     ]
+    }
+   ],
+   "creatures": [],
+   "rares": [],
+   "rareCount": 1,
+   "quests": [],
+   "provenance": [
+    {
+     "source": "wago-classic-era",
+     "revision": "wow_classic_era 1.15.8.63829+",
+     "confidence": "high",
+     "tier": "classic-reference",
+     "retrievedAt": "2026-11-18T01:20:52.248Z",
+     "url": "https://wago.tools/db2?product=wow_classic_era",
+     "note": "Map: name, kind, size"
+    },
+    {
+     "source": "wago-classic-era",
+     "revision": "wow_classic_era 1.15.8.63829+",
+     "confidence": "high",
+     "tier": "classic-reference",
+     "retrievedAt": "2026-11-18T01:20:52.248Z",
+     "url": "https://wago.tools/db2?product=wow_classic_era",
+     "note": "LFGDungeons: level band"
+    },
+    {
+     "source": "wago-classic-era",
+     "revision": "wow_classic_era 1.15.8.63829+",
+     "confidence": "high",
+     "tier": "classic-reference",
+     "retrievedAt": "2026-11-18T01:20:52.248Z",
+     "url": "https://wago.tools/db2?product=wow_classic_era",
+     "note": "DungeonEncounter: boss list and order"
+    },
+    {
+     "source": "wago-classic-era",
+     "revision": "wow_classic_era 1.15.8.63829+",
+     "confidence": "medium",
+     "tier": "classic-reference",
+     "retrievedAt": "2026-11-18T01:20:52.248Z",
+     "url": "https://wago.tools/db2?product=wow_classic_era",
+     "note": "AreaTrigger positions (client) joined to areatrigger_teleport (AzerothCore)"
+    },
+    {
+     "source": "azerothcore",
+     "revision": "6ffb62abb867dabb258de6813ff5d06d6b011543",
+     "confidence": "medium",
+     "tier": "community-unverified",
+     "retrievedAt": "2026-11-18T01:20:52.248Z",
+     "url": "https://github.com/azerothcore/azerothcore-wotlk/tree/6ffb62abb867dabb258de6813ff5d06d6b011543/data/sql/base/db_world",
+     "note": "quest_template by dungeon zone (QuestSortID), creature_queststarter, creature_template"
+    },
+    {
+     "source": "azerothcore",
+     "revision": "6ffb62abb867dabb258de6813ff5d06d6b011543",
+     "confidence": "medium",
+     "tier": "community-unverified",
+     "retrievedAt": "2026-11-18T04:21:05.615Z",
+     "url": "https://github.com/azerothcore/azerothcore-wotlk/tree/6ffb62abb867dabb258de6813ff5d06d6b011543",
+     "note": "creature, creature_template: spawn layout, rares (rank 2/4) and elite trash with high-priority spells"
+    },
+    {
+     "source": "wago-classic-era",
+     "revision": "wow_classic_era (latest)",
+     "confidence": "low",
+     "tier": "classic-reference",
+     "retrievedAt": "2026-11-18T08:16:15.790Z",
+     "url": "https://wago.tools/db2?product=wow_classic_era",
+     "note": "Spell facts from the client; category and priority derived by rule (Atlas/atlasContent.js classifySpell)"
+    }
+   ]
+  },
+  {
+   "instanceId": 3065,
+   "name": "The Hall of Thanes",
+   "kind": "dungeon",
+   "maxPlayers": 5,
+   "description": null,
+   "levelMin": 13,
+   "levelMax": 20,
+   "recommendedLevel": null,
+   "zoneName": "Ironforge",
+   "zoneMapId": 1455,
+   "entrance": {
+    "mapId": 1455,
+    "x": 0.277,
+    "y": 0.479
+   },
+   "entrances": [
+    {
+     "mapId": 1455,
+     "zoneName": "Ironforge",
+     "x": 0.277,
+     "y": 0.479,
+     "label": "The Hall of Thanes (Entrance)",
+     "areaTriggerId": null
+    }
+   ],
+   "artworkUrl": null,
+   "maps": [],
+   "bosses": [
+    {
+     "encounterId": null,
+     "npcId": 261306,
+     "name": "Faldrim Anvilmar",
+     "order": 1000,
+     "portraitUrl": null,
+     "floorId": null,
+     "mapPosition": null,
+     "abilities": [],
+     "loot": [],
+     "strategy": null,
+     "provenance": [
+      {
+       "source": "openmap-forever",
+       "revision": "0f4d2e4b6fe82b9032618fd3b824eaaa5b36dcef (client build 1.60.1.70888)",
+       "confidence": "high",
+       "tier": "forever-reference",
+       "retrievedAt": "2026-11-16T23:56:53.000Z",
+       "url": "https://github.com/openmap-world/openmap/blob/0f4d2e4b6fe82b9032618fd3b824eaaa5b36dcef/OpenMap/Data/Forever/Places.lua",
+       "note": "The Forever client's tables (OpenMap Places.lua): instance map ID, name, Group Finder level band, entrance, encounter names in order"
+      },
+      {
+       "source": "dungeon-planner",
+       "revision": "377442628b547659090afe561aa41c7444ba39b2",
+       "confidence": "low",
+       "tier": "community-unverified",
+       "retrievedAt": "2026-11-17T15:20:39.000Z",
+       "url": "https://github.com/xdk78/DungeonPlanner/tree/377442628b547659090afe561aa41c7444ba39b2/data-src/bosses",
+       "note": "DungeonPlanner: NPC IDs and floor names from Forever web guides"
+      }
+     ]
+    },
+    {
+     "encounterId": null,
+     "npcId": null,
+     "name": "Infurnus",
+     "order": 2000,
+     "portraitUrl": null,
+     "floorId": null,
+     "mapPosition": null,
+     "abilities": [],
+     "loot": [],
+     "strategy": null,
+     "provenance": [
+      {
+       "source": "openmap-forever",
+       "revision": "0f4d2e4b6fe82b9032618fd3b824eaaa5b36dcef (client build 1.60.1.70888)",
+       "confidence": "high",
+       "tier": "forever-reference",
+       "retrievedAt": "2026-11-16T23:56:53.000Z",
+       "url": "https://github.com/openmap-world/openmap/blob/0f4d2e4b6fe82b9032618fd3b824eaaa5b36dcef/OpenMap/Data/Forever/Places.lua",
+       "note": "The Forever client's tables (OpenMap Places.lua): instance map ID, name, Group Finder level band, entrance, encounter names in order"
+      }
+     ]
+    },
+    {
+     "encounterId": null,
+     "npcId": 261311,
+     "name": "Plunder",
+     "order": 3000,
+     "portraitUrl": null,
+     "floorId": null,
+     "mapPosition": null,
+     "abilities": [],
+     "loot": [],
+     "strategy": null,
+     "provenance": [
+      {
+       "source": "openmap-forever",
+       "revision": "0f4d2e4b6fe82b9032618fd3b824eaaa5b36dcef (client build 1.60.1.70888)",
+       "confidence": "high",
+       "tier": "forever-reference",
+       "retrievedAt": "2026-11-16T23:56:53.000Z",
+       "url": "https://github.com/openmap-world/openmap/blob/0f4d2e4b6fe82b9032618fd3b824eaaa5b36dcef/OpenMap/Data/Forever/Places.lua",
+       "note": "The Forever client's tables (OpenMap Places.lua): instance map ID, name, Group Finder level band, entrance, encounter names in order"
+      },
+      {
+       "source": "dungeon-planner",
+       "revision": "377442628b547659090afe561aa41c7444ba39b2",
+       "confidence": "low",
+       "tier": "community-unverified",
+       "retrievedAt": "2026-11-17T15:20:39.000Z",
+       "url": "https://github.com/xdk78/DungeonPlanner/tree/377442628b547659090afe561aa41c7444ba39b2/data-src/bosses",
+       "note": "DungeonPlanner: NPC IDs and floor names from Forever web guides"
+      }
+     ]
+    },
+    {
+     "encounterId": null,
+     "npcId": 261319,
+     "name": "Durgen Dirgehammer",
+     "order": 4000,
+     "portraitUrl": null,
+     "floorId": null,
+     "mapPosition": null,
+     "abilities": [],
+     "loot": [],
+     "strategy": null,
+     "provenance": [
+      {
+       "source": "openmap-forever",
+       "revision": "0f4d2e4b6fe82b9032618fd3b824eaaa5b36dcef (client build 1.60.1.70888)",
+       "confidence": "high",
+       "tier": "forever-reference",
+       "retrievedAt": "2026-11-16T23:56:53.000Z",
+       "url": "https://github.com/openmap-world/openmap/blob/0f4d2e4b6fe82b9032618fd3b824eaaa5b36dcef/OpenMap/Data/Forever/Places.lua",
+       "note": "The Forever client's tables (OpenMap Places.lua): instance map ID, name, Group Finder level band, entrance, encounter names in order"
+      },
+      {
+       "source": "dungeon-planner",
+       "revision": "377442628b547659090afe561aa41c7444ba39b2",
+       "confidence": "low",
+       "tier": "community-unverified",
+       "retrievedAt": "2026-11-17T15:20:39.000Z",
+       "url": "https://github.com/xdk78/DungeonPlanner/tree/377442628b547659090afe561aa41c7444ba39b2/data-src/bosses",
+       "note": "DungeonPlanner: NPC IDs and floor names from Forever web guides"
+      }
+     ]
+    }
+   ],
+   "creatures": [],
+   "rares": [],
+   "rareCount": null,
+   "quests": [],
+   "origin": "forever",
+   "floorNames": [
+    "The Hall of Thanes"
+   ],
+   "coverage": {
+    "identity": "client",
+    "bosses": "client-names",
+    "encounterIds": "none",
+    "npcIds": "partial",
+    "maps": "none",
+    "abilities": "none",
+    "rares": "unknown",
+    "trash": "unknown"
+   },
+   "provenance": [
+    {
+     "source": "openmap-forever",
+     "revision": "0f4d2e4b6fe82b9032618fd3b824eaaa5b36dcef (client build 1.60.1.70888)",
+     "confidence": "high",
+     "tier": "forever-reference",
+     "retrievedAt": "2026-11-16T23:56:53.000Z",
+     "url": "https://github.com/openmap-world/openmap/blob/0f4d2e4b6fe82b9032618fd3b824eaaa5b36dcef/OpenMap/Data/Forever/Places.lua",
+     "note": "The Forever client's tables (OpenMap Places.lua): instance map ID, name, Group Finder level band, entrance, encounter names in order"
+    },
+    {
+     "source": "dungeon-planner",
+     "revision": "377442628b547659090afe561aa41c7444ba39b2",
+     "confidence": "low",
+     "tier": "community-unverified",
+     "retrievedAt": "2026-11-17T15:20:39.000Z",
+     "url": "https://github.com/xdk78/DungeonPlanner/tree/377442628b547659090afe561aa41c7444ba39b2/data-src/bosses",
+     "note": "DungeonPlanner: NPC IDs and floor names from Forever web guides"
+    }
+   ]
+  }
+ ]
+}

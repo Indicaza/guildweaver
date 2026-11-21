@@ -497,6 +497,25 @@ do
     truthy(kick, "Cookie's kick")
     equal(page.abilityRows.items[1].tag.gwText, "KICK", "dangerous interrupts first")
 
+    -- Published Dungeon Content Studio content (synthetic here): the boss page
+    -- gets a Guide section with its mechanics callouts and notes; without an
+    -- editorial entry the section stays hidden.
+    local cookieKey = guide.BossKey(guide.Dungeon(36).bosses[6])
+    addon.DungeonAtlasData.editorial = function()
+        return { [36] = { id = 36, bosses = { { k = cookieKey, mech = { { a = "Synthetic Mechanic", t = "interrupt", p = "high", i = "Synthetic instruction.", r = "dps", v = true } },
+            tank = "Synthetic tank note." } } } }
+    end
+    guide.cache.dungeons[36], guide.cache.editorial = nil, nil
+    guideUI.Show(36, 6)
+    truthy(page.guideHeader.shown, "the guide section shows")
+    contains(page.guideText.gwText, "Synthetic Mechanic")
+    contains(page.guideText.gwText, "Synthetic instruction.")
+    contains(page.guideText.gwText, "Synthetic tank note.")
+    addon.DungeonAtlasData.editorial = nil
+    guide.cache.dungeons[36], guide.cache.editorial = nil, nil
+    guideUI.Show(36, 6)
+    falsy(page.guideHeader.shown, "no editorial entry, no guide section")
+
     -- Trash: a compact page, with the loot attributed to it by name.
     guideUI.Navigate(guideUI.Pages.creature(36, "trash", 7))
     equal(page.name.gwText, "Sneed's Shredder")
