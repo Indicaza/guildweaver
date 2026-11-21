@@ -1,0 +1,82 @@
+{
+ "schemaVersion": 1,
+ "generatedFrom": "parity-fixture",
+ "limits": {
+  "name": 80,
+  "subtitle": 80,
+  "description": 600,
+  "longtext": 400,
+  "listItems": 6,
+  "listLine": 160,
+  "mechanics": 10,
+  "ability": 60,
+  "instruction": 240,
+  "dungeonBytes": 6144,
+  "totalBytes": 49152
+ },
+ "dungeons": [
+  {
+   "id": 36,
+   "rev": "11",
+   "n": "The Deadmines",
+   "lmin": 17,
+   "ent": {
+    "m": 1436,
+    "x": 380,
+    "y": 775
+   },
+   "bosses": [
+    {
+     "k": "2741",
+     "e": 2741,
+     "npc": 644,
+     "disp": "Synthetic dispel note."
+    }
+   ]
+  },
+  {
+   "id": 3065,
+   "rev": "12",
+   "sub": "Synthetic subtitle",
+   "tips": [
+    "Tip with \"quotes\" and a back\\slash.",
+    "Tip two…"
+   ],
+   "route": "Line one.\nLine two.",
+   "bosses": [
+    {
+     "k": "261306",
+     "npc": 261306,
+     "strat": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…",
+     "mech": [
+      {
+       "a": "Shadow Bolt",
+       "t": "interrupt",
+       "p": "high",
+       "i": "Interrupt whenever possible.",
+       "r": "tank,dps",
+       "v": true
+      },
+      {
+       "a": "Low thing",
+       "t": "positioning",
+       "p": "low",
+       "i": "Move out."
+      }
+     ]
+    },
+    {
+     "k": "Infurnus",
+     "tank": "Synthetic tank note."
+    }
+   ]
+  }
+ ],
+ "art": {
+  "3065": {
+   "card": "Interface\\AddOns\\Guildweaver\\Media\\Atlas\\3065_card"
+  }
+ },
+ "artSkipped": [],
+ "note": "SYNTHETIC editorial content over real atlas dungeons (parity fixture)."
+}

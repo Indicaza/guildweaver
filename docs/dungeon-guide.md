@@ -518,6 +518,50 @@ opens it.
 - `GW.Perf` records `guide:build`, `guide:map` and `guide:refresh`
   (`/gw perf`).
 
+## Editorial content (Dungeon Content Studio)
+
+Holdfast's Dungeon Content Studio (`/admin/dungeons`) publishes editorial content over the atlas: boss guides, mechanics callouts, dungeon notes, and edited names, levels and entrances. Its `docs/dungeon-content-studio.md` describes the studio itself.
+
+Publishing on the website does not change the add-on. Content reaches players with the next add-on release, which takes three steps:
+
+1. **Holdfast, against the production data directory.** This writes the bundle of active published revisions and the packaged textures:
+
+   ```
+   node backend/scripts/exportEditorialBundle.mjs --out editorial-bundle.json --art Media/Atlas
+   ```
+
+2. **Here.** Regenerate the atlas with the same arguments as above, plus the bundle:
+
+   ```
+   lua5.1 scripts/exportDungeonAtlas.lua ... --editorial editorial-bundle.json --commit <holdfast sha>
+   ```
+
+3. Release the add-on as usual.
+
+How the export behaves:
+
+- **The rules live in Holdfast.** `Atlas/Editorial/addonTransform.js` decides what wins over the import, cuts text to the limits and orders mechanics by priority. The exporter only checks the bundle against the same limits (`Export.EDITORIAL`) and renders it with the same literal syntax (`Export.literal`).
+- **Limits stop the export.** An entry over a limit, an unknown field, a boss key the atlas lacks, or more than 6144 bytes per dungeon / 49152 in all stops the export. Nothing is cut silently.
+- **The CMS's add-on preview and byte count are exact.** `test/dungeon_editorial_spec.lua` compares the rendering with Holdfast's expected lines byte for byte, using `test/fixtures/editorial_*`, written by Holdfast's `backend/scripts/addonEditorialParity.mjs`.
+- **Without `--editorial`, the generated file is unchanged.**
+- **In the generated file**:
+  - `A.editorial()` returns the entries by instance ID (keys documented in the exporter).
+  - `A.editorialArt` lists packaged textures.
+  - `GW.DungeonGuide.ApplyEditorial` lays an entry over a built dungeon: name, level band and entrance, and `boss.ed` and `dungeon.ed`. The boss order stays the atlas's, because runs refer to bosses by position.
+- **In the journal**:
+  - Boss pages get a **Guide** section: mechanics callouts (label, ability, high priority, roles, unverified) and the guide's text.
+  - The dungeon's notes are added to its source badge tooltip.
+  - Packaged card art replaces the map strip on the dungeon card.
+  - A packaged portrait is used only when the client has no creature model for the boss.
+- **Art formats.** The client loads add-on textures from the add-on folder, and this add-on ships uncompressed `.tga` (`Media/*.tga`). Everything else it draws comes from client file IDs and display IDs.
+  - CMS art therefore arrives only as power-of-two TGA textures (card 512×256, portrait 128×128) under `Media/Atlas/`, converted by Holdfast from PNG uploads. JPEG and WebP stay website-only, with the originals kept in the CMS.
+  - A 512×256 texture is 512 KB uncompressed in the zip.
+  - There is no runtime download.
+- **Not yet checked in the WoW Forever client**:
+  - that packaged `Media/Atlas` textures draw on cards and portraits;
+  - that the Guide section's text wraps and scrolls well in a real window;
+  - that the badge tooltip with notes is readable.
+
 ## Tests
 
 `test/dungeon_guide_spec.lua` (atlas exporter, packaged atlas, lookups, the
