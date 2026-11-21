@@ -68,6 +68,7 @@ Systems/Quests.lua
 Systems/DungeonGuide.lua
 Systems/DungeonCatalog.lua
 Systems/DungeonReadiness.lua
+Systems/DungeonQuestPlan.lua
 Systems/CharacterQuests.lua
 Telemetry/Compatibility.lua
 UI/Theme.lua

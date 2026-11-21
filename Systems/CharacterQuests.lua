@@ -270,13 +270,23 @@ local function withTurnIns(completed)
     return completed
 end
 
+local function completeOf(log)
+    local complete = {}
+    for _, entry in ipairs(log.entries or {}) do
+        if entry.isComplete == true or entry.isComplete == false then complete[entry.questId] = entry.isComplete end
+    end
+    return complete
+end
+
 local function buildState()
     local who = character()
     local completed, log = session.completed, session.log
     session.state = {
         faction = who.faction, race = who.race, classToken = who.classToken, level = who.level,
         completed = { coverage = completed.coverage, ids = completed.ids, checked = completed.checked },
-        questLog = { coverage = log.coverage, ids = log.ids },
+        -- Whether each logged quest's objectives are done (true/false; absent
+        -- when the client did not say): the planner's turn-in list.
+        questLog = { coverage = log.coverage, ids = log.ids, complete = completeOf(log) },
         capturedAt = now(),
     }
     return session.state, who
