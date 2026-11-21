@@ -268,6 +268,37 @@ node scripts/readinessParity.mjs ../web/holdfast/backend test/fixtures/readiness
 `atlasRepository.js`. Currently from Holdfast `dc54ca8`, Indicaza/holdfast#305,
 whose rules are main's.)
 
+## Quest preparation checklist
+
+The quest tab opens with an ordered checklist: what to collect, from whom
+and where, what a group member could share instead, when to go in, and
+what to turn in after the run. `Systems/DungeonQuestPlan.lua` is a port of
+Holdfast's planner (`backend/src/Atlas/atlasQuestPlan.js`,
+`docs/dungeon-quest-planner.md` there), built on `GW.DungeonReadiness`.
+
+- Sections shown: Collect before you go, Or ask your group to share,
+  Enter, After the run (turn-ins and follow-ups), Not known. Optional and
+  repeatable quests stay in the quest groups below the checklist.
+- Top-level steps are numbered, their parts lettered; the next step is
+  highlighted and named in the summary.
+- Built only out of combat (the last one stays during a fight) and cached
+  by page and character state. `GW.CharacterQuests` re-reads the quest log
+  on QUEST_LOG_UPDATE / QUEST_ACCEPTED / QUEST_TURNED_IN, debounced, and
+  the journal refreshes when the state changes.
+- Waypoint button: TomTom (`TomTom:AddWaypoint(mapId, x, y, { title,
+  from = "Guildweaver" })`, the previous one removed), else the client's
+  user waypoint (`C_Map.SetUserWaypoint`, super-tracked), else the
+  coordinates as text. A waypoint is set only when `C_Map.GetMapInfo(mapId)`
+  exists and names the record's zone: catalog map ids are projected from
+  AzerothCore spawns and not verified on Forever.
+- No editorial data is packaged: turn-in locations are "not in our data".
+- The quest data (`Data/DungeonQuests.generated.lua`) now carries each
+  zone's UiMap id (table `M`) and the shareable flag (`s`/`n`).
+
+Parity: `node scripts/questPlanParity.mjs <holdfast backend> test/fixtures/quest-plan-parity.json`
+regenerates the cases `test/dungeon_quest_plan_spec.lua` checks (ids,
+kinds, statuses, order, waypoints, next, readiness; not text).
+
 ## The look (sprint step 5A)
 
 The journal draws its frames with the game's own interface art, through the

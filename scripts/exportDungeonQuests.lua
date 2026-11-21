@@ -130,7 +130,15 @@ function Quests.normalize(catalog)
                 else
                     local quest = questOf(rawQuest, problems)
                     if quest then
-                        quests[quest.id] = quests[quest.id] or quest
+                        local kept = quests[quest.id]
+                        if not kept then
+                            quests[quest.id] = quest
+                        elseif not kept.giver and quest.giver then
+                            -- A dungeon's entry without a giver takes the first
+                            -- named one another entry gives (Holdfast's planner
+                            -- does the same: atlasQuestPlanRepository.js).
+                            kept.giver, kept.zone, kept.mapId, kept.x, kept.y = quest.giver, quest.zone, quest.mapId, quest.x, quest.y
+                        end
                         table.insert(entry.ids, quest.id)
                         table.insert(entry.rel, RELEVANCE[relevance])
                         entry.wings[#entry.ids] = str(rawQuest.wing, 80)
