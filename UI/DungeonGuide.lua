@@ -208,6 +208,9 @@ end
 -- A dungeon card's art: a strip of the dungeon's own map from the client
 -- (its first floor's centre tile), or nothing.
 function GuideUI.CardArt(instanceId)
+    -- Card art published in the Dungeon Content Studio, packaged as a texture.
+    local art = Guide.EditorialArt(instanceId)
+    if art and art.card then return art.card end
     local floors = Guide.Floors(instanceId)
     local floor = floors[1]
     return floor and floor.t and (floor.t[6] or floor.t[1]) or nil
@@ -1504,6 +1507,9 @@ local function buildDungeonPage(view)
     page.cells = pool(function() return itemCell(d, CELL) end)
     page.abilityEmpty = wrapText(d, "label", "textFaint", 300)
     page.lootEmpty = wrapText(d, "label", "textFaint", 300)
+    -- The Dungeon Content Studio's guide for the creature (mechanics callouts, notes).
+    page.guideHeader = UI.SectionHeader(d, "Guide")
+    page.guideText = wrapText(d, "label", "text", 300)
 
     -- Full width: quests and runs.
     page.quests = scrollArea(view, "quests", page)
@@ -1687,7 +1693,10 @@ local function refreshCreature(page, instanceId, dungeon, current, states)
     elseif creature then
         local displayId = Guide.DisplayId(instanceId, creature)
         observed = kind == "boss" and states[creature] or nil
-        page.portrait:SetCreature(displayId, kind == "rare" and ICONS.rare or (kind == "trash" and ICONS.trash or nil))
+        -- Without a client model, a portrait packaged from the studio.
+        local art = kind == "boss" and Guide.EditorialArt(instanceId)
+        local packaged = art and art.portraits and art.portraits[Guide.BossKey(creature)] or nil
+        page.portrait:SetCreature(displayId, kind == "rare" and ICONS.rare or (kind == "trash" and ICONS.trash or packaged))
         page.portrait:SetState(observed or (displayId and "available" or "unknown"))
         UI.SetText(page.name, creature.name)
         local facts = {}
@@ -1750,7 +1759,18 @@ local function refreshCreature(page, instanceId, dungeon, current, states)
     end
     UI.SetText(page.lootEmpty, lootEmpty)
     layoutGrid(page.cells, loot, d, 0, 0, width, CELL, CELL_GAP)
-    page.gwCreature = { kind = kind, top = topCount, count = count, loot = loot, noAbilities = #abilities == 0 }
+    local guide = {}
+    for _, line in ipairs(kind ~= "other" and Guide.EditorialLines(creature) or {}) do
+        if line.label then
+            table.insert(guide, Theme.Colorize(line.label, line.color) .. "  " .. tostring(line.ability) .. (line.high and Theme.Colorize("  high priority", "warn") or "")
+                .. (line.roles and Theme.Colorize("  " .. line.roles, "textMuted") or "") .. (line.verified and "" or Theme.Colorize("  unverified", "textFaint"))
+                .. (line.text and ("\n" .. line.text) or ""))
+        else
+            table.insert(guide, (line.heading and (Theme.Colorize(line.heading, "gold") .. "\n") or "") .. line.text)
+        end
+    end
+    UI.SetText(page.guideText, table.concat(guide, "\n\n"))
+    page.gwCreature = { kind = kind, top = topCount, count = count, loot = loot, noAbilities = #abilities == 0, guide = #guide > 0 }
     page.gwUnresolved = #unresolved > 0 or nil
     page.gwLootCount, page.gwAbilityCount = #loot, count
     GuideUI.LayoutCreature(page)
@@ -1772,6 +1792,15 @@ function GuideUI.LayoutCreature(page)
         widget:SetPoint("TOPLEFT", d, "TOPLEFT", 0, -y)
         widget:Show()
         y = y + height
+    end
+    if shown.guide then
+        place(page.guideHeader, 26)
+        page.guideText:SetWidth(width)
+        local ok, measured = pcall(page.guideText.GetStringHeight, page.guideText)
+        place(page.guideText, (ok and tonumber(measured) or 60) + 10)
+    else
+        page.guideHeader:Hide()
+        page.guideText:Hide()
     end
     if shown.kind ~= "other" then
         place(page.keyHeader, 26)
@@ -2132,6 +2161,8 @@ local function refreshDungeonPage(view, current)
         for _, key in ipairs(Guide.WingsOf(instanceId)) do table.insert(names, Guide.Entry(key).name) end
         table.insert(lines, "Played as wings: " .. table.concat(names, ", ") .. ". This page covers the whole dungeon.")
     end
+    -- Published editorial notes (Dungeon Content Studio).
+    for _, note in ipairs(Guide.EditorialNotes(dungeon)) do table.insert(lines, note) end
     page.badge:Set(forever and "WoW Forever" or "Classic reference", lines)
     page.badge:Show()
     page.empty:Hide()

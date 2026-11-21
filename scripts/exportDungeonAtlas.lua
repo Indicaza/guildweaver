@@ -5,6 +5,7 @@
 --   lua5.1 scripts/exportDungeonAtlas.lua [--check] --atlas <atlas.json>
 --       [--loot <reference-loot.json>] [--wings <wing-manifest.json>]
 --       [--quests <quest-catalog.json>] [--relationships <loot-relationships.json>]
+--       [--editorial <editorial-bundle.json>]
 --       --commit <holdfast sha> [--out <file.lua>]
 --
 -- Inputs come from Indicaza/holdfast at one commit:
@@ -19,6 +20,11 @@
 --                                               (optional; "Data from ForeverDB.net")
 --   backend/src/Atlas/data/quest-catalog.json   quest lists of WoW Forever's own dungeons
 --                                               (optional; the atlas has none for them)
+--   editorial-bundle.json                       published Dungeon Content Studio content
+--                                               (optional; Holdfast's
+--                                               backend/scripts/exportEditorialBundle.mjs).
+--                                               Checked, never cut: an entry over a
+--                                               limit stops the export.
 -- Nothing is added that those files do not say. Fields the game cannot use
 -- (art URLs, provenance URLs, area triggers, long descriptions) are left out.
 -- Output is deterministic: the same inputs and commit give byte-identical Lua
@@ -968,6 +974,157 @@ local function dungeonBody(d, add)
     add("  }")
 end
 
+-- Editorial content (Dungeon Content Studio) -----------------------------------------
+--
+-- The bundle is already in the add-on's shape: Holdfast's
+-- Atlas/Editorial/addonTransform.js applied the rules (what wins over the
+-- import, text cut to the limits, mechanics ordered by priority). Here it is
+-- only checked against the same limits, and rendered with the same literal
+-- syntax, so the CMS's add-on preview and Lua budget are exact.
+
+Export.EDITORIAL = {
+    schema = 1,
+    name = 80, subtitle = 80, description = 600, longtext = 400, listItems = 6, listLine = 160,
+    mechanics = 10, ability = 60, instruction = 240, dungeonBytes = 6144, totalBytes = 49152,
+}
+local EDITORIAL_TEXT = { n = "name", sub = "subtitle", desc = "description", comp = "longtext", route = "longtext", qnotes = "longtext", attr = "longtext" }
+local EDITORIAL_LISTS = { tips = true, prep = true, warn = true }
+local EDITORIAL_BOSS_TEXT = { n = "name", desc = "longtext", strat = "longtext", tank = "longtext", heal = "longtext", dps = "longtext",
+    pos = "longtext", kick = "longtext", disp = "longtext" }
+local EDITORIAL_ART = "^Interface\\AddOns\\Guildweaver\\Media\\Atlas\\[%w_]+$"
+
+-- Characters (code points) of a UTF-8 string.
+local function chars(value)
+    local _, count = string.gsub(value, "[^\128-\191]", "")
+    return count
+end
+
+local RESERVED = {}
+for word in string.gmatch("and break do else elseif end false for function if in local nil not or repeat return then true until while", "%a+") do
+    RESERVED[word] = true
+end
+
+-- A Lua literal, as Holdfast's luaLiteral() writes it: keys sorted, bare
+-- identifiers, arrays as lists, integers only.
+function Export.literal(value)
+    if value == nil or value == NULL then return "nil" end
+    local kind = type(value)
+    if kind == "boolean" then return value and "true" or "false" end
+    if kind == "number" then
+        if value ~= math.floor(value) then error("only integers reach the add-on", 0) end
+        return string.format("%d", value)
+    end
+    if kind == "string" then return quote(value) end
+    if kind ~= "table" then error("cannot write " .. kind, 0) end
+    local count = 0
+    for _ in pairs(value) do count = count + 1 end
+    if count > 0 and count == #value then
+        local parts = {}
+        for index = 1, #value do parts[index] = Export.literal(value[index]) end
+        return "{" .. table.concat(parts, ",") .. "}"
+    end
+    local parts = {}
+    for _, key in ipairs(sortedKeys(value)) do
+        if type(key) ~= "string" then error("mixed table keys", 0) end
+        local name = (string.match(key, "^[%a_][%w_]*$") and not RESERVED[key]) and key or ("[" .. quote(key) .. "]")
+        table.insert(parts, name .. "=" .. Export.literal(value[key]))
+    end
+    return "{" .. table.concat(parts, ",") .. "}"
+end
+
+-- The line one dungeon's entry adds (and the bytes Holdfast counts).
+function Export.editorialLine(entry)
+    return "  [" .. entry.id .. "]=" .. Export.literal(entry) .. ","
+end
+
+-- Checks a decoded bundle against the normalized atlas. Returns { entries,
+-- art, bytes } and adds a problem for anything out of bounds.
+function Export.editorial(bundle, normalized, problems, mediaExists)
+    local limits = Export.EDITORIAL
+    local function fail(text) table.insert(problems, "editorial: " .. text) end
+    if type(bundle) ~= "table" or present(bundle.schemaVersion) ~= limits.schema then
+        fail("not a schemaVersion " .. limits.schema .. " editorial bundle")
+        return { entries = {}, art = {}, bytes = 0 }
+    end
+    local byId = {}
+    for _, d in ipairs(normalized.dungeons) do byId[d.id] = d end
+    local function text(where, value, limit)
+        if type(value) ~= "string" or value == "" then fail(where .. " is not text") return end
+        if chars(value) > limits[limit] then fail(string.format("%s is %d characters (limit %d)", where, chars(value), limits[limit])) end
+    end
+    local entries, total, seen = {}, 0, {}
+    for index, entry in ipairs(list(bundle.dungeons)) do
+        local id = int(entry.id)
+        local where = "dungeon " .. tostring(id or index)
+        if not id or not byId[id] then fail(where .. " is not in the atlas")
+        elseif seen[id] then fail(where .. " is listed twice")
+        else
+            seen[id] = true
+            for key, value in pairs(entry) do
+                if EDITORIAL_TEXT[key] then text(where .. " " .. key, value, EDITORIAL_TEXT[key])
+                elseif EDITORIAL_LISTS[key] then
+                    if type(value) ~= "table" or #value == 0 or #value > limits.listItems then fail(where .. " " .. key .. " has 1 to " .. limits.listItems .. " lines") end
+                    for line, item in ipairs(list(value)) do text(where .. " " .. key .. " " .. line, item, "listLine") end
+                elseif key == "lmin" or key == "lmax" then
+                    if not int(value) or value < 1 or value > 80 then fail(where .. " " .. key .. " is not a level") end
+                elseif key == "ent" then
+                    if type(value) ~= "table" or not int(value.m) or value.m < 1 or not int(value.x) or not int(value.y)
+                        or value.x < 0 or value.x > 1000 or value.y < 0 or value.y > 1000 then fail(where .. " entrance is not a map position") end
+                elseif key == "order" then
+                    for _, bossKey in ipairs(list(value)) do if type(bossKey) ~= "string" then fail(where .. " boss order is not boss keys") end end
+                elseif key == "bosses" then
+                    local d = byId[id]
+                    local keys = {}
+                    for _, b in ipairs(d.bosses) do keys[tostring(b.encounterId or b.npcId or b.name)] = true end
+                    for _, boss in ipairs(list(value)) do
+                        local bossWhere = where .. " boss " .. tostring(boss.k)
+                        if type(boss.k) ~= "string" or not keys[boss.k] then fail(bossWhere .. " is not a boss of this dungeon") end
+                        for bossKey, field in pairs(boss) do
+                            if EDITORIAL_BOSS_TEXT[bossKey] then text(bossWhere .. " " .. bossKey, field, EDITORIAL_BOSS_TEXT[bossKey])
+                            elseif bossKey == "mech" then
+                                if type(field) ~= "table" or #field == 0 or #field > limits.mechanics then fail(bossWhere .. " has 1 to " .. limits.mechanics .. " mechanics") end
+                                for m, mechanic in ipairs(list(field)) do
+                                    text(bossWhere .. " mechanic " .. m, mechanic.a, "ability")
+                                    if mechanic.i ~= nil then text(bossWhere .. " mechanic " .. m .. " instruction", mechanic.i, "instruction") end
+                                    if not CATEGORIES[mechanic.t] then fail(bossWhere .. " mechanic " .. m .. " has no known type") end
+                                    if not PRIORITY_RANK[mechanic.p] then fail(bossWhere .. " mechanic " .. m .. " has no known priority") end
+                                    if mechanic.r ~= nil and (type(mechanic.r) ~= "string" or not string.match(mechanic.r, "^[%a,]+$")) then fail(bossWhere .. " mechanic " .. m .. " roles") end
+                                    if mechanic.v ~= nil and mechanic.v ~= true then fail(bossWhere .. " mechanic " .. m .. " verified is true or absent") end
+                                end
+                            elseif bossKey ~= "k" and bossKey ~= "e" and bossKey ~= "npc" then fail(bossWhere .. " has an unknown field " .. tostring(bossKey)) end
+                        end
+                    end
+                elseif key ~= "id" and key ~= "rev" then fail(where .. " has an unknown field " .. tostring(key)) end
+            end
+            local line = Export.editorialLine(entry)
+            local bytes = #line + 1
+            if bytes > limits.dungeonBytes then fail(string.format("%s is %d bytes (limit %d)", where, bytes, limits.dungeonBytes)) end
+            total = total + bytes
+            table.insert(entries, { id = id, line = line })
+        end
+    end
+    if total > limits.totalBytes then fail(string.format("%d bytes in all (limit %d)", total, limits.totalBytes)) end
+    table.sort(entries, function(a, b) return a.id < b.id end)
+    -- Packaged textures: [instanceId] = { card = path, portraits = { [bossKey] = path } }.
+    local art = {}
+    local rawArt = present(bundle.art)
+    for key, slot in pairs(type(rawArt) == "table" and rawArt or {}) do
+        local id = tonumber(key)
+        local paths = {}
+        if type(slot) == "table" then
+            if slot.card ~= nil then table.insert(paths, slot.card) end
+            for _, path in pairs(type(slot.portraits) == "table" and slot.portraits or {}) do table.insert(paths, path) end
+        end
+        if not id or not seen[id] then fail("art for dungeon " .. tostring(key) .. " without its published entry") end
+        for _, path in ipairs(paths) do
+            if type(path) ~= "string" or not string.match(path, EDITORIAL_ART) then fail("art path " .. tostring(path) .. " is not under Media\\Atlas")
+            elseif mediaExists and not mediaExists(path) then fail("art " .. path .. " has no .tga in Media/Atlas") end
+        end
+        if id then art[id] = slot end
+    end
+    return { entries = entries, art = art, bytes = total }
+end
+
 function Export.render(n, commit)
     assert(type(commit) == "string" and string.match(commit, "^%x+$") and #commit >= 7, "a Holdfast commit sha is required")
     local lines = {}
@@ -1108,15 +1265,39 @@ function Export.render(n, commit)
         dungeonBody(d, add)
         add("end")
     end
+    -- Published editorial content (Dungeon Content Studio), built on first use:
+    -- per dungeon n name, sub subtitle, desc, lmin/lmax, ent {m,x,y}, tips,
+    -- prep, warn, comp group, route, qnotes, attr, order (boss keys), bosses
+    -- { k key, e encounter, npc, n, desc, strat, tank, heal, dps, pos, kick,
+    -- disp, mech { a ability, t type, p priority, i instruction, r roles, v } }.
+    -- editorialArt: textures packaged under Media/Atlas.
+    if n.editorial and #n.editorial.entries > 0 then
+        add("A.editorialSource = " .. Export.literal({ revision = n.editorial.generatedFrom }))
+        add("function A.editorial()")
+        add("  return {")
+        for _, entry in ipairs(n.editorial.entries) do add(entry.line) end
+        add("  }")
+        add("end")
+        if next(n.editorial.art) then
+            add("A.editorialArt = {")
+            for _, id in ipairs(sortedKeys(n.editorial.art)) do add("  [" .. id .. "]=" .. Export.literal(n.editorial.art[id]) .. ",") end
+            add("}")
+        end
+    end
     add("if GW then GW.DungeonAtlasData = A end")
     add("return A")
     return table.concat(lines, "\n") .. "\n"
 end
 
-function Export.run(atlasJson, lootJson, commit, wingsJson, questsJson, relationshipsJson)
+function Export.run(atlasJson, lootJson, commit, wingsJson, questsJson, relationshipsJson, editorialJson, mediaExists)
     local normalized, problems = Export.normalize(Export.decode(atlasJson), lootJson and Export.decode(lootJson) or nil,
         wingsJson and Export.decode(wingsJson) or nil, questsJson and Export.decode(questsJson) or nil,
         relationshipsJson and Export.decode(relationshipsJson) or nil)
+    if editorialJson then
+        local bundle = Export.decode(editorialJson)
+        normalized.editorial = Export.editorial(bundle, normalized, problems, mediaExists)
+        normalized.editorial.generatedFrom = type(bundle) == "table" and str(bundle.generatedFrom) or nil
+    end
     local text = Export.render(normalized, commit)
     if #text > Export.MAX_BYTES then
         table.insert(problems, string.format("generated file is %d bytes (limit %d)", #text, Export.MAX_BYTES))
@@ -1144,12 +1325,17 @@ local function main(args)
         end
     end
     if not options.atlas or not options.commit then
-        io.stderr:write("usage: lua5.1 scripts/exportDungeonAtlas.lua [--check] --atlas <atlas.json> [--loot <reference-loot.json>] [--wings <wing-manifest.json>] [--quests <quest-catalog.json>] [--relationships <loot-relationships.json>] --commit <sha> [--out <file.lua>]\n")
+        io.stderr:write("usage: lua5.1 scripts/exportDungeonAtlas.lua [--check] --atlas <atlas.json> [--loot <reference-loot.json>] [--wings <wing-manifest.json>] [--quests <quest-catalog.json>] [--relationships <loot-relationships.json>] [--editorial <editorial-bundle.json>] --commit <sha> [--out <file.lua>]\n")
         os.exit(2)
     end
     local text, problems, normalized = Export.run(readFile(options.atlas), options.loot and readFile(options.loot) or nil, options.commit,
         options.wings and readFile(options.wings) or nil, options.quests and readFile(options.quests) or nil,
-        options.relationships and readFile(options.relationships) or nil)
+        options.relationships and readFile(options.relationships) or nil, options.editorial and readFile(options.editorial) or nil,
+        function(path)
+            local file = io.open("Media/Atlas/" .. string.match(path, "([%w_]+)$") .. ".tga", "rb")
+            if file then file:close() end
+            return file ~= nil
+        end)
     if #problems > 0 then
         io.stderr:write("atlas problems:\n  " .. table.concat(problems, "\n  ") .. "\n")
         os.exit(1)
