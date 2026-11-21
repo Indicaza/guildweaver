@@ -122,6 +122,14 @@ function R.Catalog(guideId)
     return { curated = row[1] == true, entries = entries, instanceId = instanceId, wingKey = wingKey }
 end
 
+-- A dungeon's published quest edits (Holdfast's Dungeon Content Studio,
+-- packaged by scripts/exportDungeonQuests.lua --editorial), or nil.
+function R.Editorial(instanceId)
+    local tables = data()
+    local editorial = tables and tables.editorial
+    return type(editorial) == "table" and editorial[tonumber(instanceId)] or nil
+end
+
 -- Every quest id the catalog knows (dungeon, optional, prerequisite,
 -- repeatable): what a per-quest completion check must ask. Sorted.
 function R.AllQuestIds()

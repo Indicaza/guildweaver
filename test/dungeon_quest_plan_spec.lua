@@ -75,7 +75,7 @@ local function flatten(steps, depth, rows)
     end
     return rows
 end
-local checked, steps, seenNext = 0, 0, {}
+local checked, steps, seenNext, editorialCases = 0, 0, {}, 0
 for _, case in ipairs(fixture.cases) do
     local label = tostring(case.guide) .. "/" .. case.state
     local catalog = R.Catalog(case.guide)
@@ -84,8 +84,24 @@ for _, case in ipairs(fixture.cases) do
     else
         truthy(catalog, label)
         local entrance = present(case.entrance)
+        -- Editorial cases: the same SYNTHETIC documents, through the exporter's own packaging.
+        local editorial, catalogIds
+        if present(case.editorial) then
+            local packaging = {}
+            editorial = Quests.editorialFromBundle({ questPlans = { fixture.editorials[case.editorial] } }, packaging)[case.guide]
+            equal(#packaging, 0, label .. " packages without problems")
+            truthy(editorial, label .. " editorial record")
+            catalogIds = {}
+            for _, entry in ipairs(R.Catalog(case.guide).entries) do catalogIds[entry.quest.questId] = true end
+            editorialCases = editorialCases + 1
+        end
         local plan = P.Build({ entries = catalog.entries, state = stateOf(fixture.states[case.state]), wingKey = catalog.wingKey,
-            entrance = entrance and { mapId = entrance.mapId, x = entrance.x, y = entrance.y, zoneName = present(entrance.zoneName) } })
+            entrance = entrance and { mapId = entrance.mapId, x = entrance.x, y = entrance.y, zoneName = present(entrance.zoneName) },
+            editorial = editorial, catalogIds = catalogIds })
+        if editorial then
+            equal(plan.editorial.used, case.used, label .. " editorial used")
+            for _, section in ipairs(plan.sections) do equal(#section.notes, case.notes[section.key], label .. " " .. section.key .. " notes") end
+        end
         equal(plan.readiness, case.readiness, label .. " readiness")
         equal(plan.next, present(case.next), label .. " next")
         if plan.next then seenNext[string.match(plan.next, "^[^:]+")] = true end
@@ -113,6 +129,10 @@ for _, case in ipairs(fixture.cases) do
             equal(got.x, row[3], label .. " " .. row[1] .. " x")
             equal(got.y, row[4], label .. " " .. row[1] .. " y")
             equal(got.targetType, row[5], label .. " " .. row[1] .. " target type")
+            if row[6] ~= nil then
+                equal(got.source, row[6], label .. " " .. row[1] .. " source")
+                equal(got.verified, row[7], label .. " " .. row[1] .. " verified")
+            end
         end
         local codes = {}
         for _, problem in ipairs(plan.problems) do table.insert(codes, problem.code) end
@@ -121,6 +141,7 @@ for _, case in ipairs(fixture.cases) do
     checked = checked + 1
 end
 truthy(checked >= 100, "parity cases")
+truthy(editorialCases >= 18, "parity cases with published quest edits")
 truthy(steps > 1000, "parity steps")
 for _, kind in ipairs({ "collect", "enter" }) do truthy(seenNext[kind], "the fixture has a next step in " .. kind) end
 
@@ -248,6 +269,88 @@ do
     for _, entry in ipairs(fresh2.bySection.collect) do if entry.questId == 155 then listed = true end end
     truthy(not listed, "the finished chain is gone")
     _G.C_QuestLog = nil
+end
+
+-- 6. Published quest edits in the package (scripts/exportDungeonQuests.lua --editorial) -----
+-- test/fixtures/editorial_quest_bundle.json: SYNTHETIC edits in the shape of
+-- Holdfast's studio export bundle (questPlans), the parity fixture's own.
+do
+    local bundleJson = read("test/fixtures/editorial_quest_bundle.json")
+    local packagedText = read("Data/DungeonQuests.generated.lua")
+    local problems = {}
+    local records = Quests.editorialFromBundle(Export.decode(bundleJson), problems)
+    equal(#problems, 0, "the synthetic bundle packages cleanly")
+    truthy(records[36] and records[3065], "one record per dungeon")
+    equal(records[36].revision, "parity-1")
+    equal(records[36].entrance.x, 421, "coordinates in permille")
+    equal(records[36].quests[2].steps[2], "Synthetic step two.")
+    equal(Quests.literal(records[36]), Quests.literal(Quests.editorialFromBundle(Export.decode(bundleJson), {})[36]), "deterministic")
+
+    -- Refused, never cut: a bundle Holdfast flagged, an over-long step, a bad location, a duplicate dungeon.
+    local function refused(bundle, label)
+        local found = {}
+        Quests.editorialFromBundle(Export.decode(bundle), found)
+        truthy(#found > 0, label .. " is refused")
+    end
+    refused('{"questPlans":[],"questPlanProblems":[{"instanceId":36,"code":"editorial-location-dropped"}]}', "a bundle Holdfast flagged")
+    refused('{"questPlans":[{"schemaVersion":1,"instanceId":36,"quests":[{"questId":166,"steps":[{"text":"' .. string.rep("x", 201) .. '"}]}]}]}', "a step over 200 bytes")
+    refused('{"questPlans":[{"schemaVersion":1,"instanceId":36,"quests":[{"questId":166,"turnIn":{"location":{"mapId":1436,"x":1.5,"y":0.2}}}]}]}', "coordinates outside 0-1")
+    refused('{"questPlans":[{"schemaVersion":2,"instanceId":36}]}', "another schema")
+    refused('{"questPlans":[{"schemaVersion":1,"instanceId":36},{"schemaVersion":1,"instanceId":36}]}', "a dungeon twice")
+    refused('{"questPlans":[{"schemaVersion":1,"instanceId":36,"quests":[{"questId":166},{"questId":166}]}]}', "a quest twice")
+
+    -- The generated file with edits: the in-game planner reads them (offline, from the package).
+    local function withEditorial(fileText)
+        local start = string.find(fileText, "local E = {}\n", 1, true)
+        truthy(start, "the generated file has its E table")
+        local lines = {}
+        for id, packed in pairs(records) do table.insert(lines, string.format("E[%d]=%s\n", id, Quests.literal(packed))) end
+        table.sort(lines)
+        return string.sub(fileText, 1, start + #"local E = {}\n" - 1) .. table.concat(lines) .. string.sub(fileText, start + #"local E = {}\n")
+    end
+    local packaged = string.gsub(packagedText, "\r\n", "\n")
+    equal(string.find(packaged, "\nE%["), nil, "the packaged file carries no edits until one is published and exported")
+    local edited = withEditorial(packaged)
+    truthy(#edited < Quests.MAX_BYTES, "still under budget")
+    local editedEnv = Env.new()
+    local editedAddon = editedEnv:load()
+    local chunk = assert(loadstring(edited))
+    local holder = {}
+    chunk("Guildweaver", holder)
+    editedAddon.DungeonQuestData = holder.DungeonQuestData
+    local ER, EP = editedAddon.DungeonReadiness, editedAddon.DungeonQuestPlan
+    equal(ER.Editorial(36).revision, "parity-1")
+    equal(ER.Editorial(48), nil, "a dungeon without edits")
+    local plan = EP.ForGuide(36, stateOf(fixture.states.defiasDone))
+    truthy(plan.editorial.used, "the journal's plan uses the published edits")
+    local entranceWp = plan.waypointById["wp:entrance"]
+    equal(entranceWp.source, "editorial")
+    equal(entranceWp.verified, true)
+    local notes = 0
+    for _, section in ipairs(plan.sections) do notes = notes + #section.notes end
+    equal(notes, 2, "both instructions reach their sections")
+    -- The journal's checklist draws them as notes, not as steps to do.
+    local noteLines, stepNotes = 0, 0
+    for _, group in ipairs(editedAddon.DungeonGuideUI.PlanLines(plan)) do
+        for _, line in ipairs(group.lines) do
+            if line.note and line.depth == 0 then noteLines = noteLines + 1 end
+            if line.note and line.depth == 1 then stepNotes = stepNotes + 1 end
+            if line.note then truthy(not line.isNext, "a note is never the next step") end
+        end
+    end
+    equal(noteLines, 2, "instruction lines in the checklist")
+    for _, group in ipairs(editedAddon.DungeonGuideUI.PlanLines(EP.ForGuide(36, stateOf(fixture.states.freshAlliance)))) do
+        for _, line in ipairs(group.lines) do
+            if line.note and line.depth == 1 then stepNotes = stepNotes + 1 end
+        end
+    end
+    equal(stepNotes, 2, "a quest's published steps are lettered notes under it")
+    local hall = EP.ForGuide(3065, stateOf(fixture.states.freshAlliance))
+    local collected = {}
+    for _, entry in ipairs(hall.bySection.collect) do collected[entry.questId] = true end
+    truthy(not collected[96394], "the edited chain: 96394 waits on the dungeon quest 96393")
+    truthy(hall.waypointById["wp:giver:96393"], "the edited giver location gives a waypoint")
+    equal(hall.waypointById["wp:giver:96393"].source, "editorial")
 end
 
 print("dungeon quest plan spec passed (" .. checked .. " parity cases, " .. steps .. " steps from Holdfast " .. string.sub(fixture.commit, 1, 7) .. ")")

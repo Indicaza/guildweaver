@@ -4,7 +4,10 @@
 // Each case keeps what the add-on must reproduce: every step's id, kind,
 // quest, status and waypoint in order (text is the client's own), the
 // waypoints (UiMap id, permille x/y, target type), next and readiness.
-// No editorial data: the add-on plans from the packaged catalog alone.
+// Editorial cases: SYNTHETIC published quest edits (contract schema 1, made
+// up for tests, not game facts), passed through Holdfast's own export
+// normalization (exportableEditorialQuestPlan) exactly as the add-on
+// packages them; the add-on's spec feeds the same documents to its planner.
 import { writeFileSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
@@ -12,6 +15,8 @@ import path from "node:path";
 
 const [backend, out] = process.argv.slice(2);
 const { atlasQuestPlanFromState } = await import(pathToFileURL(path.join(backend, "src/Atlas/atlasQuestPlanRepository.js")).href);
+const { exportableEditorialQuestPlan } = await import(pathToFileURL(path.join(backend, "src/Atlas/atlasQuestPlan.js")).href);
+const { loadAtlas } = await import(pathToFileURL(path.join(backend, "src/Atlas/atlasData.js")).href);
 const commit = execSync("git rev-parse HEAD", { cwd: backend }).toString().trim();
 
 const entries = (ids, complete = {}) => ids.map((questId) => (questId in complete ? { questId, isComplete: complete[questId] } : { questId }));
@@ -34,6 +39,43 @@ const states = {
   unknownWho: { ...base, faction: null, race: null, classToken: null, level: null },
 };
 const guides = [36, 70, 230, 229, "blackrock-spire:lower", "blackrock-spire:upper", 3065, 2974, 209, 189, "scarlet-monastery:library", 1];
+
+// SYNTHETIC editorial documents (ids and NPC names are the catalog's; every
+// edit, location, step and instruction is made up for the parity test).
+const SYNTHETIC = "synthetic parity fixture";
+const rawEditorials = {
+  deadmines: { schemaVersion: 1, instanceId: 36, revision: "parity-1",
+    entrance: { mapId: 1436, x: 0.4205, y: 0.7183, zoneName: "Westfall", verified: true, source: SYNTHETIC },
+    instructions: [{ section: "enter", text: "Synthetic: gather at the entrance.", verified: false, source: SYNTHETIC },
+      { section: "collect", text: "Synthetic: start in Westfall.", verified: false, source: SYNTHETIC }],
+    quests: [
+      { questId: 214, shareable: "no", verified: false, source: SYNTHETIC },
+      { questId: 168, shareable: "yes", giver: { name: "Synthetic giver", location: { mapId: 1436, x: 0.5, y: 0.5, zoneName: "Westfall" } },
+        steps: [{ text: "Synthetic step one." }, { text: "Synthetic step two." }], verified: true, source: SYNTHETIC },
+      { questId: 166, turnIn: { name: "Gryan Stoutmantle", location: { mapId: 1436, x: 0.5633, y: 0.4752, zoneName: "Westfall" } }, verified: false, source: SYNTHETIC },
+      { questId: 167, prerequisites: [-168], verified: false, source: SYNTHETIC },
+      { questId: 2040, turnIn: { name: "Synthetic turn-in" }, verified: false, source: SYNTHETIC },
+      { questId: 424242, shareable: "yes", verified: false, source: SYNTHETIC },
+    ] },
+  hall: { schemaVersion: 1, instanceId: 3065, revision: "parity-2",
+    quests: [
+      { questId: 96394, prerequisites: [96393], verified: false, source: SYNTHETIC },
+      { questId: 96393, giver: { name: "Synthetic Thane", location: { mapId: 1455, x: 0.3, y: 0.4, zoneName: "Ironforge" } }, verified: false, source: SYNTHETIC },
+      { questId: 98423, shareable: "yes", relevance: "optional", verified: false, source: SYNTHETIC },
+    ] },
+  uldaman: { schemaVersion: 1, instanceId: 70, revision: null,
+    quests: [
+      { questId: 2198, turnIn: { name: "Synthetic turn-in", location: { mapId: 1418, x: 0.1, y: 0.2, zoneName: "Badlands" } }, verified: true, source: SYNTHETIC },
+      { questId: 721, shareable: "no", steps: [{ text: "Synthetic step." }], verified: false, source: SYNTHETIC },
+    ] },
+};
+const editorials = Object.fromEntries(Object.entries(rawEditorials).map(([name, raw]) => {
+  const { document, problems } = exportableEditorialQuestPlan(raw, raw.instanceId);
+  if (problems.length) throw new Error(`${name}: ${JSON.stringify(problems)}`);
+  return [name, document];
+}));
+const editorialCases = [["deadmines", 36], ["hall", 3065], ["uldaman", 70]];
+const editorialStates = ["nothing", "freshAlliance", "defiasHalfway", "defiasDone", "dwarf42", "hordeOrc"];
 
 const flatten = (steps, depth, rows) => {
   for (const step of steps) {
@@ -60,5 +102,25 @@ for (const guide of guides) {
     });
   }
 }
-writeFileSync(out, JSON.stringify({ generatedBy: "Holdfast backend/src/Atlas/atlasQuestPlan.js", commit, states, cases }));
-console.log(`${cases.length} cases, ${cases.filter((entry) => entry.missing).length} without a catalog entry`);
+const atlas = loadAtlas();
+for (const [name, instanceId] of editorialCases) {
+  const dungeon = atlas.byId.get(instanceId);
+  const atlasEntrance = dungeon?.entrance ? { mapId: dungeon.entrance.mapId, x: Math.round(dungeon.entrance.x * 1000), y: Math.round(dungeon.entrance.y * 1000),
+    zoneName: dungeon.zoneName ?? null } : null;
+  for (const stateName of editorialStates) {
+    const outcome = atlasQuestPlanFromState(String(instanceId), { state: states[stateName], editorial: editorials[name] });
+    if (outcome.status !== "ok") throw new Error(`${name}/${stateName}: ${outcome.problems.join("; ")}`);
+    const plan = outcome.result;
+    cases.push({
+      guide: instanceId, state: stateName, editorial: name, entrance: atlasEntrance,
+      readiness: plan.readiness.readiness, next: plan.next, used: plan.editorial.used,
+      sections: Object.fromEntries(plan.sections.map((section) => [section.key, flatten(section.steps, 0, [])])),
+      notes: Object.fromEntries(plan.sections.map((section) => [section.key, section.notes.length])),
+      waypoints: plan.waypoints.map((waypoint) => [waypoint.id, waypoint.mapId, Math.round(waypoint.x * 1000), Math.round(waypoint.y * 1000), waypoint.targetType,
+        waypoint.source, waypoint.verified]),
+      problems: plan.problems.map((problem) => problem.code),
+    });
+  }
+}
+writeFileSync(out, JSON.stringify({ generatedBy: "Holdfast backend/src/Atlas/atlasQuestPlan.js", commit, states, editorials, cases }));
+console.log(`${cases.length} cases (${cases.filter((entry) => entry.editorial).length} with editorial edits), ${cases.filter((entry) => entry.missing).length} without a catalog entry`);

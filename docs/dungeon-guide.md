@@ -291,13 +291,38 @@ Holdfast's planner (`backend/src/Atlas/atlasQuestPlan.js`,
   coordinates as text. A waypoint is set only when `C_Map.GetMapInfo(mapId)`
   exists and names the record's zone: catalog map ids are projected from
   AzerothCore spawns and not verified on Forever.
-- No editorial data is packaged: turn-in locations are "not in our data".
+- Published quest edits from Holdfast's Dungeon Content Studio are packaged
+  at export time (no download in game) and laid over the catalog before any
+  state is decided, as Holdfast does: shareability, prerequisite chains,
+  giver and turn-in locations (waypoints marked `editorial`, verified or
+  not), the entrance, a quest's steps (lettered notes under it) and
+  per-section instructions (note lines, never the next step). Without an
+  edit, a turn-in location is "not in our data".
 - The quest data (`Data/DungeonQuests.generated.lua`) now carries each
   zone's UiMap id (table `M`) and the shareable flag (`s`/`n`).
 
+Packaging the edits: export the studio's bundle from Holdfast
+(`GET /api/admin/atlas-studio/export/addon`, or
+`node backend/scripts/exportEditorialBundle.mjs --out bundle.json`), then
+
+```
+lua5.1 scripts/exportDungeonQuests.lua   --quests ../web/holdfast/backend/src/Atlas/data/quest-catalog.json   --commit $(git -C ../web/holdfast rev-parse HEAD) --editorial bundle.json
+```
+
+It writes `E[instanceId]` (contract schema 1, permille coordinates) into
+`Data/DungeonQuests.generated.lua`. It refuses, never cuts: a bundle whose
+`questPlanProblems` is not empty, a text over its bound (step or
+instruction 200 bytes, notes 500), coordinates outside 0-1, a duplicate
+dungeon or quest, or a file over the 256 KB budget. Without `--editorial`
+the file is as before, with an empty `E`.
+
 Parity: `node scripts/questPlanParity.mjs <holdfast backend> test/fixtures/quest-plan-parity.json`
 regenerates the cases `test/dungeon_quest_plan_spec.lua` checks (ids,
-kinds, statuses, order, waypoints, next, readiness; not text).
+kinds, statuses, order, waypoints, next, readiness; not text), including
+18 cases with SYNTHETIC published edits for Deadmines, The Hall of Thanes
+and Uldaman (made up for the test, not game facts), packaged through the
+exporter's own code. `test/fixtures/editorial_quest_bundle.json` is the
+same synthetic edits as a studio bundle.
 
 ## The look (sprint step 5A)
 

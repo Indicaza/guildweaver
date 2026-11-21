@@ -1393,9 +1393,11 @@ local function planRow(parent)
     function row:Fill(line)
         self.gwData = line
         UI.SetText(self.number, line.label or "")
-        local color = line.isNext and "goldBright" or (line.status == "done" and "textMuted" or (PLAN_STATUS_COLOR[line.status] or "text"))
+        local color = line.note and "textMuted" or (line.isNext and "goldBright" or (line.status == "done" and "textMuted" or (PLAN_STATUS_COLOR[line.status] or "text")))
         UI.SetText(self.text, Theme.Colorize(line.text or "", color))
-        local status = line.isNext and Theme.Colorize("Next", "goldBright")
+        -- A published note (the website's Dungeon Content Studio) is guidance, not a step.
+        local status = line.note and Theme.Colorize(line.verified and "Note" or "Note (unverified)", "textFaint")
+            or (line.isNext and Theme.Colorize("Next", "goldBright"))
             or Theme.Colorize(line.optional and "If no one shares" or (Plan.STATUS_LABELS[line.status] or ""), PLAN_STATUS_COLOR[line.status] or "textMuted")
         UI.SetText(self.status, status)
         Theme.Fill(self.mark, "goldBright", line.isNext and 0.12 or 0)
@@ -1917,10 +1919,15 @@ GuideUI.QuestPlan = questPlan
 local PLAN_GROUPS = { "collect", "share", "enter", "turnIn", "unknown" }
 function GuideUI.PlanLines(plan)
     local groups, number = {}, 0
+    local notesOf = {}
+    for _, section in ipairs(plan.sections or {}) do notesOf[section.key] = section.notes end
     for _, key in ipairs(PLAN_GROUPS) do
         local steps = plan.bySection[key]
         if steps and #steps > 0 then
             local lines = {}
+            for index, note in ipairs(notesOf[key] or {}) do
+                table.insert(lines, { id = key .. ":instruction" .. index, label = "", text = note.text, depth = 0, note = true, verified = note.verified })
+            end
             for _, entry in ipairs(steps) do
                 local label
                 if key == "share" then label = "or" else
@@ -1933,6 +1940,7 @@ function GuideUI.PlanLines(plan)
                 for index, child in ipairs(entry.children) do
                     table.insert(lines, { id = child.id, label = (index <= 26 and string.char(96 + index) or tostring(index)) .. ".", text = child.text,
                         status = child.status, depth = 1, isNext = child.id == plan.next, optional = child.optional,
+                        note = child.kind == "note" or nil, verified = child.verified,
                         record = child.waypoint and plan.waypointById[child.waypoint] or nil })
                 end
             end

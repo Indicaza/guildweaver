@@ -11,8 +11,11 @@ local _, GW = ...
 -- quest state: the same sections, step ids, kinds, statuses, order and
 -- waypoints. test/dungeon_quest_plan_spec.lua runs this file against plans
 -- Holdfast computed (test/fixtures/quest-plan-parity.json, written by
--- scripts/questPlanParity.mjs). Editorial data (the website's CMS) is not
--- packaged, so turn-in locations are always "not in our data" here.
+-- scripts/questPlanParity.mjs). Published quest edits from the website's
+-- Dungeon Content Studio (R.Editorial, packaged at export time) are laid over
+-- the catalog first, as Holdfast does: shareability, prerequisite chains,
+-- giver and turn-in locations, the entrance, steps and instructions. Without
+-- them a turn-in location is "not in our data".
 --
 -- Costs: nothing per frame. A plan is built when the journal's quest tab
 -- asks (out of combat; it caches by page and character state), and the
@@ -66,17 +69,59 @@ local function step(fields)
     return fields
 end
 
+-- A catalog quest with its published edit laid over it (an absent field
+-- inherits the catalog), as Holdfast's mergeQuest.
+local function mergeQuest(quest, edit)
+    local merged = {}
+    for key, value in pairs(quest) do merged[key] = value end
+    merged.editorial = { verified = edit.verified == true, source = edit.source }
+    if edit.shareable then merged.shareable = edit.shareable end
+    if edit.prerequisites then
+        local list = {}
+        for _, id in ipairs(edit.prerequisites) do table.insert(list, { questId = math.abs(id), mustBeActive = id < 0 }) end
+        merged.prerequisites = list
+        merged.prerequisitesKnown = true
+    end
+    if edit.giver then
+        merged.giver = edit.giver.name or quest.giver
+        local location = edit.giver.location
+        if location then merged.mapId, merged.x, merged.y, merged.zone = location.mapId, location.x, location.y, location.zoneName end
+        merged.giverEditorial = true
+    end
+    merged.turnIn, merged.steps, merged.notes = edit.turnIn, edit.steps, edit.notes
+    return merged
+end
+
 --   input.entries:  the dungeon's catalog entries ({ quest, relevance, wing }, R.Catalog)
 --   input.state:    the character state (GW.CharacterQuests.State()), nil = nothing reported
 --   input.wingKey:  a wing's key, to leave out quests of sibling wings
 --   input.entrance: { mapId, x, y (per mille), zoneName } or nil
 --   input.name:     the dungeon's name (the entrance waypoint's target)
+--   input.editorial: the dungeon's published quest edits (R.Editorial) or nil
+--   input.catalogIds: every quest id the dungeon's catalog lists (all wings), for
+--                    edits of quests it does not list; defaults to the entries'
 function P.Build(input)
     local state = input.state or R.EmptyState()
     local wingKey = input.wingKey
     local problems = {}
-    local known, sortedIds = {}, {}
+    local editorial = input.editorial
+    local edits, editIds = {}, {}
+    for _, edit in ipairs(editorial and editorial.quests or {}) do
+        edits[edit.questId] = edit
+        table.insert(editIds, edit.questId)
+    end
+    table.sort(editIds)
+    local entries = {}
     for _, entry in ipairs(input.entries or {}) do
+        local edit = edits[entry.quest.questId]
+        if edit then
+            table.insert(entries, { quest = mergeQuest(entry.quest, edit), relevance = edit.relevance or entry.relevance, wing = entry.wing })
+        else
+            table.insert(entries, entry)
+        end
+    end
+    local known, sortedIds = {}, {}
+    for _, entry in ipairs(entries) do
         local quest = entry.quest
         if not wingKey or not entry.wing or entry.wing == wingKey then
             if known[quest.questId] then
@@ -88,6 +133,14 @@ function P.Build(input)
         end
     end
     table.sort(sortedIds)
+    local listed = input.catalogIds
+    if not listed then
+        listed = {}
+        for _, entry in ipairs(input.entries or {}) do listed[entry.quest.questId] = true end
+    end
+    for _, questId in ipairs(editIds) do
+        if not listed[questId] then table.insert(problems, { code = "editorial-quest-not-in-catalog", questId = questId }) end
+    end
 
     local states, reasonsOf = {}, {}
     for _, questId in ipairs(sortedIds) do
@@ -143,18 +196,20 @@ function P.Build(input)
 
     -- Waypoints.
     local waypoints, waypointList = {}, {}
-    local function waypoint(id, mapId, x, y, zoneName, target, targetType, source)
+    local function waypoint(id, mapId, x, y, zoneName, target, targetType, source, verified)
         if not located(mapId, x, y) then return nil end
         if not waypoints[id] then
             local record = { id = id, mapSystem = "uiMap", mapId = mapId, x = x, y = y, zoneName = zoneName, target = target,
-                targetType = targetType, source = source, verified = false }
+                targetType = targetType, source = source, verified = verified == true }
             waypoints[id] = record
             table.insert(waypointList, record)
         end
         return id
     end
+    local function giverSource(q) return q.giverEditorial and "editorial" or "catalog" end
+    local function giverVerified(q) return q.giverEditorial and q.editorial.verified or false end
     local function giverWaypoint(q, targetType)
-        return waypoint("wp:giver:" .. q.questId, q.mapId, q.x, q.y, q.zone, q.giver, targetType, "catalog")
+        return waypoint("wp:giver:" .. q.questId, q.mapId, q.x, q.y, q.zone, q.giver, targetType, giverSource(q), giverVerified(q))
     end
     local function travel(q, id, status, targetType, optional)
         local wp = giverWaypoint(q, targetType)
@@ -164,7 +219,7 @@ function P.Build(input)
         elseif q.startsFromItem then text = "Starts from an item (" .. q.startsFromItem .. "): location not in our data"
         else text = "Quest giver not in our data" end
         return step({ id = id, kind = "travel", questId = q.questId, status = status, text = text, waypoint = wp,
-            location = not wp and NOT_IN_DATA or nil, optional = optional or nil, source = "catalog" })
+            location = not wp and NOT_IN_DATA or nil, optional = optional or nil, source = giverSource(q), verified = giverVerified(q) })
     end
 
     -- collect ---------------------------------------------------------------------------
@@ -279,6 +334,10 @@ function P.Build(input)
                 end
                 lastGiver = key
             end
+            for index, line in ipairs(q.steps or {}) do
+                table.insert(children, step({ id = id .. ":note" .. index, kind = "note", questId = questId, status = status, text = line,
+                    source = "editorial", verified = q.editorial and q.editorial.verified or false }))
+            end
         end
         local text
         if isQuest then
@@ -317,13 +376,19 @@ function P.Build(input)
     end
     local verify = (total == 0 or doneCount == total) and "done" or (has.todo and "todo" or (has.blocked and "blocked" or "unknown"))
     local goStatus = verify == "done" and "todo" or (verify == "unknown" and "unknown" or "blocked")
-    local entrance = input.entrance
-    local entranceWp = entrance and waypoint("wp:entrance", entrance.mapId, entrance.x, entrance.y, entrance.zoneName, input.name, "entrance", "atlas") or nil
+    local entrance, entranceSource, entranceVerified = input.entrance, "atlas", false
+    if editorial and editorial.entrance then
+        local edited = editorial.entrance
+        entrance = { mapId = edited.mapId, x = edited.x, y = edited.y, zoneName = edited.zoneName or (input.entrance and input.entrance.zoneName) or input.zoneName }
+        entranceSource, entranceVerified = "editorial", edited.verified == true
+    end
+    local entranceWp = entrance and waypoint("wp:entrance", entrance.mapId, entrance.x, entrance.y, entrance.zoneName, input.name, "entrance",
+        entranceSource, entranceVerified) or nil
     local enter = {
         step({ id = "enter:verify", kind = "verify", status = verify,
             text = total > 0 and string.format("Have every dungeon quest (%d of %d)", doneCount, total) or "No dungeon quests to collect" }),
         step({ id = "enter:travel", kind = "travel", status = goStatus, waypoint = entranceWp, location = not entranceWp and NOT_IN_DATA or nil,
-            source = "atlas", text = entranceWp and ("Go to the entrance" .. (entrance.zoneName and (" in " .. entrance.zoneName) or "")
+            source = entranceSource, verified = entranceVerified, text = entranceWp and ("Go to the entrance" .. (entrance.zoneName and (" in " .. entrance.zoneName) or "")
                 .. " (" .. coordinates(entrance.x, entrance.y) .. ")") or "Entrance location not in our data" }),
         step({ id = "enter:enter", kind = "enter", status = goStatus,
             text = verify == "done" and "Enter the dungeon: you are ready" or "Enter when every quest is collected" }),
@@ -364,10 +429,20 @@ function P.Build(input)
         if states[questId] == "accepted" and relevance(questId) ~= "prerequisite" and not inCycle[questId] then
             local finished = objectivesComplete(questId)
             local q = quest(questId)
+            local ender = q.turnIn
+            local location = ender and ender.location
+            local verified = q.editorial and q.editorial.verified or false
+            local wp = location and waypoint("wp:turnin:" .. questId, location.mapId, location.x, location.y, location.zoneName, ender.name, "turn-in",
+                "editorial", verified) or nil
+            local to = ender and ender.name and (" to " .. ender.name) or ""
+            local text
+            if finished == false then text = "Finish " .. q.name .. "'s objectives"
+            elseif wp then text = "Turn in " .. q.name .. to .. (location.zoneName and (" in " .. location.zoneName) or "") .. " (" .. coordinates(location.x, location.y) .. ")"
+            else text = "Turn in " .. q.name .. to .. ": turn-in location not in our data" end
             table.insert(turnIn, step({ id = "turnin:q" .. questId, kind = finished == false and "finish-objectives" or "turn-in", questId = questId,
-                status = finished == nil and "unknown" or "todo", objectivesComplete = finished,
-                location = finished ~= false and NOT_IN_DATA or nil,
-                text = finished == false and ("Finish " .. q.name .. "'s objectives") or ("Turn in " .. q.name .. ": turn-in location not in our data") }))
+                status = finished == nil and "unknown" or "todo", objectivesComplete = finished, waypoint = wp,
+                location = (finished ~= false and not wp) and NOT_IN_DATA or nil, text = text,
+                source = ender and "editorial" or "catalog", verified = ender and verified or false }))
         end
     end
     for _, questId in ipairs(sortedIds) do
@@ -390,7 +465,11 @@ function P.Build(input)
     local bySection = { collect = collect, share = share, enter = enter, optional = optional, repeatable = repeatable, unknown = unknown, turnIn = turnIn }
     local sections, counts = {}, {}
     for _, key in ipairs(P.SECTIONS) do
-        table.insert(sections, { key = key, steps = bySection[key] })
+        local notes = {}
+        for _, entry in ipairs(editorial and editorial.instructions or {}) do
+            if entry.section == key then table.insert(notes, { text = entry.text, verified = entry.verified == true, source = entry.source }) end
+        end
+        table.insert(sections, { key = key, steps = bySection[key], notes = notes })
         local tally = { total = 0, done = 0, todo = 0, blocked = 0, unknown = 0, ineligible = 0 }
         for _, entry in ipairs(bySection[key]) do
             tally.total = tally.total + 1
@@ -415,9 +494,10 @@ function P.Build(input)
     table.sort(waypointList, function(a, b) return a.id < b.id end)
     local hidden = 0
     for _, questId in ipairs(sortedIds) do if states[questId] == "ineligible" and not nodes[questId] then hidden = hidden + 1 end end
-    local readiness = R.Evaluate(input.entries, input.state, wingKey)
+    local readiness = R.Evaluate(entries, input.state, wingKey)
     return {
         schemaVersion = P.SCHEMA, sections = sections, bySection = bySection, waypoints = waypointList, waypointById = waypoints,
+        editorial = { used = editorial ~= nil, revision = editorial and editorial.revision or nil },
         next = nextId, readiness = readiness.readiness, counts = counts, hidden = { ineligible = hidden }, problems = problems,
     }
 end
@@ -442,7 +522,15 @@ function P.ForGuide(guideId, state)
         local entry = guide.Entry and guide.Entry(guideId) or nil
         entrance = { mapId = dungeon.entrance.map, x = dungeon.entrance.x, y = dungeon.entrance.y, zoneName = (entry and entry.zone) or dungeon.zone }
     end
-    local plan = P.Build({ entries = catalog.entries, state = state, wingKey = catalog.wingKey, entrance = entrance, name = dungeon and dungeon.name })
+    local editorial = R.Editorial and R.Editorial(catalog.instanceId) or nil
+    local catalogIds
+    if editorial then
+        catalogIds = {}
+        local whole = catalog.wingKey and R.Catalog(catalog.instanceId) or catalog
+        for _, entry in ipairs(whole and whole.entries or {}) do catalogIds[entry.quest.questId] = true end
+    end
+    local plan = P.Build({ entries = catalog.entries, state = state, wingKey = catalog.wingKey, entrance = entrance, name = dungeon and dungeon.name,
+        editorial = editorial, catalogIds = catalogIds })
     plan.questList = catalog.curated and "curated" or "unknown"
     plan.state = state
     cache.key, cache.state, cache.capturedAt, cache.plan = key, state, state and state.capturedAt, plan

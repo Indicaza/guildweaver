@@ -7,8 +7,10 @@
 --   giver, zone (index into Z, its UiMap id in M), x, y (permille), startsFromItem, races, classes,
 --   prerequisites (ids; negative = must be in the quest log) }
 -- Dungeon: { curated, ids, relevance (one letter per id: d o p r u), wings (by position) }
+-- E: published quest edits from Holdfast's Dungeon Content Studio, by instance id
+--   (contract schema 1, coordinates in permille); empty without --editorial.
 local _, GW = ...
-GW.DungeonQuestData = { schema = 1, source = { commit = "6be2a893c6e6e2f791673414944959166c9a85e2", quests = 753, dungeons = 35, zoneQuestsLeftOut = 159 },
+GW.DungeonQuestData = { schema = 1, source = { commit = "6be2a893c6e6e2f791673414944959166c9a85e2", quests = 753, dungeons = 35, zoneQuestsLeftOut = 159, editorialDungeons = 0 },
 load = function()
 local Z = { "Loch Modan", "Westfall", "Redridge Mountains", "Stormwind City", "Stonetalon Mountains", "Wetlands", "Duskwood", "Hillsbrad Foothills", "Ironforge", "Badlands", "Durotar", "The Barrens", "Thunder Bluff", "Undercity", "Silverpine Forest", "Scarlet Monastery", "Thousand Needles", "Razorfen Kraul", "Dire Maul", "Darnassus", "Blackfathom Deeps", "Darkshore", "Swamp of Sorrows", "Arathi Highlands", "The Hinterlands", "Alterac Mountains", "Dustwallow Marsh", "Uldaman", "Searing Gorge", "Orgrimmar", "Stranglethorn Vale", "Tanaris", "Feralas", "Gnomeregan", "Dun Morogh", "Razorfen Downs", "Burning Steppes", "Blackrock Depths", "Un'Goro Crater", "Eastern Plaguelands", "Winterspring", "Blackrock Spire", "Stratholme", "Western Plaguelands", "Ragefire Chasm", "Moonglade", "Ashenvale", "Desolace", "Azshara", "Blasted Lands", "Zul'Gurub", "Silithus", "Felwood", "Ahn'Qiraj Temple", "Maraudon", "Zul'Farrak", "Sunken Temple", "Blackwing Lair" }
 local M = { 1432, 1436, 1433, 1453, 1442, 1437, 1431, 1424, 1455, 1418, 1411, 1413, 1456, 1458, 1421, false, 1441, false, false, 1457, false, 1439, 1435, 1417, 1425, 1416, 1445, false, 1427, 1454, 1434, 1446, 1444, false, 1426, false, 1428, false, 1449, 1423, 1452, false, false, 1422, false, 1450, 1440, 1443, 1447, 1419, false, 1451, 1448, false, false, false, false, false }
@@ -802,5 +804,6 @@ D[2999]={true,{92401,95189,95204,92415,92421,92422,97288,95195,95216,95250,97289
 D[3001]={false,{},""}
 D[3039]={true,{96771,94968,94972,94973,94975,94980,94983,94997,94984,94982},"dddddddddd"}
 D[3065]={true,{98423,96393,96394,96395,96403},"ddddd"}
-return { zones = Z, zoneMaps = M, quests = Q, dungeons = D }
+local E = {}
+return { zones = Z, zoneMaps = M, quests = Q, dungeons = D, editorial = E }
 end }
