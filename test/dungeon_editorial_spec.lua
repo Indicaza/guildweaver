@@ -5,7 +5,7 @@
 -- Fixtures: test/fixtures/atlas_studio.json holds two real atlas dungeons
 -- (Deadmines 36, The Hall of Thanes 3065), trimmed. editorial_bundle.json is
 -- SYNTHETIC editorial content built by Holdfast's rules, and
--- editorial_expected.lua the lines Holdfast expects for it (both written by
+-- editorial_expected.txt the lines Holdfast expects for it (both written by
 -- Holdfast's backend/scripts/addonEditorialParity.mjs). This proves the
 -- exporter and the data path, not what the game client draws.
 
@@ -33,7 +33,7 @@ end
 local COMMIT = "7e9ab4642e2096c4db7e99921c882ad4f1a5c93e"
 local atlasJson = read("test/fixtures/atlas_studio.json")
 local bundleJson = read("test/fixtures/editorial_bundle.json")
-local expected = read("test/fixtures/editorial_expected.lua")
+local expected = read("test/fixtures/editorial_expected.txt")
 local always = function() return true end
 
 -- 1. Parity: the exporter writes Holdfast's lines byte for byte ---------------------
