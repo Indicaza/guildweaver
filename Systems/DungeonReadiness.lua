@@ -85,6 +85,11 @@ function R.Quest(questId)
         prerequisitesKnown = string.find(flags, "p", 1, true) == nil,
         requiresReputation = string.find(flags, "u", 1, true) ~= nil,
         giver = row[7], zone = row[8] and tables.zones[row[8]] or nil,
+        -- The giver's UiMap id (projected from AzerothCore spawns: check it
+        -- with C_Map before a waypoint), or nil.
+        mapId = row[8] and tables.zoneMaps and tables.zoneMaps[row[8]] or nil,
+        -- "yes" | "no" | "unknown" (AzerothCore's SHARABLE flag).
+        shareable = string.find(flags, "s", 1, true) and "yes" or (string.find(flags, "n", 1, true) and "no" or "unknown"),
         -- Permille, as Guide.Coordinates takes them.
         x = row[9], y = row[10],
         startsFromItem = row[11], races = split(row[12]), classes = split(row[13]),

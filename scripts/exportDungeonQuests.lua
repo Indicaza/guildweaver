@@ -14,8 +14,12 @@
 -- What a rule needs is kept as the catalog says it, and nothing more:
 -- faction (unknown stays unknown), races, classes, levels, repeatable,
 -- reputation, prerequisite ids (and mustBeActive), whether the chain is
--- known, the wing, the giver's name and single spawn. No objectives or
--- rewards: the atlas file has those for the quests it lists.
+-- known, the wing, the giver's name and single spawn (zone, UiMap id and
+-- coordinates; the UiMap id is projected from AzerothCore spawns, so the
+-- add-on checks it against the client before setting a waypoint), and
+-- whether the quest can be shared (AzerothCore's SHARABLE flag; unknown
+-- stays unknown). No objectives or rewards: the atlas file has those for
+-- the quests it lists.
 --
 -- Memory: the file defines one function. The client builds the tables only
 -- when the guide or the quest capture first asks (GW.DungeonQuestData.load).
@@ -81,10 +85,12 @@ local function questOf(raw, problems)
     -- false: the catalog does not know who may take it (never "both").
     local faction = present(raw.faction)
     if faction == nil then faction = false else faction = FACTIONS[faction] end
+    local shareable = present(raw.shareable)
     return {
         id = id, name = name, level = int(raw.level), minLevel = int(raw.minLevel), maxLevel = int(raw.maxLevel),
         faction = faction,
         repeatable = present(raw.repeatable) == true,
+        share = shareable == "yes" and "s" or (shareable == "no" and "n" or nil),
         prek = present(raw.prerequisitesKnown) ~= false,
         rep = present(raw.requiresReputation) ~= nil,
         races = #races > 0 and table.concat(races, ",") or nil,
@@ -92,6 +98,7 @@ local function questOf(raw, problems)
         prereqs = prereqs,
         giver = type(giver) == "table" and str(giver.name, 60) or nil,
         zone = type(location) == "table" and str(location.zoneName, 40) or nil,
+        mapId = type(location) == "table" and int(location.mapId) or nil,
         x = type(location) == "table" and permille(location.x) or nil,
         y = type(location) == "table" and permille(location.y) or nil,
         item = int(raw.startsFromItem),
@@ -155,12 +162,16 @@ end
 
 -- Each quest is one positional row (see the field list in the file).
 function Quests.render(n, commit)
-    local zones, zoneIndex = {}, {}
+    -- A zone is its name and UiMap id (a name without a map is its own entry).
+    local zones, zoneMaps, zoneIndex = {}, {}, {}
+    local function zoneKey(q) return q.zone and (q.zone .. "|" .. tostring(q.mapId or "")) or nil end
     for _, id in ipairs(sortedKeys(n.quests)) do
-        local zone = n.quests[id].zone
-        if zone and not zoneIndex[zone] then
-            table.insert(zones, zone)
-            zoneIndex[zone] = #zones
+        local q = n.quests[id]
+        local key = zoneKey(q)
+        if key and not zoneIndex[key] then
+            table.insert(zones, q.zone)
+            table.insert(zoneMaps, q.mapId or false)
+            zoneIndex[key] = #zones
         end
     end
     local out = {}
@@ -170,8 +181,9 @@ function Quests.render(n, commit)
     add("-- (backend/src/Atlas/data/quest-catalog.json). Do not edit; regenerate.\n")
     add("-- Classic reference data (AzerothCore, DungeonPlanner), not confirmed on Forever.\n")
     add("-- Quest row: { name, level, minLevel, maxLevel, faction (A/H/B, false = unknown),\n")
-    add("--   flags (r repeatable, p prerequisites not known, u needs a reputation),\n")
-    add("--   giver, zone (index into Z), x, y (permille), startsFromItem, races, classes,\n")
+    add("--   flags (r repeatable, p prerequisites not known, u needs a reputation,\n")
+    add("--   s shareable, n not shareable; neither = not known),\n")
+    add("--   giver, zone (index into Z, its UiMap id in M), x, y (permille), startsFromItem, races, classes,\n")
     add("--   prerequisites (ids; negative = must be in the quest log) }\n")
     add("-- Dungeon: { curated, ids, relevance (one letter per id: d o p r u), wings (by position) }\n")
     add("local _, GW = ...\n")
@@ -181,14 +193,17 @@ function Quests.render(n, commit)
     local zoneParts = {}
     for _, zone in ipairs(zones) do table.insert(zoneParts, quote(zone)) end
     add("local Z = { " .. table.concat(zoneParts, ", ") .. " }\n")
+    local mapParts = {}
+    for _, mapId in ipairs(zoneMaps) do table.insert(mapParts, scalar(mapId)) end
+    add("local M = { " .. table.concat(mapParts, ", ") .. " }\n")
     add("local Q = {}\n")
     for _, id in ipairs(sortedKeys(n.quests)) do
         local q = n.quests[id]
-        local flags = (q.repeatable and "r" or "") .. (q.prek and "" or "p") .. (q.rep and "u" or "")
+        local flags = (q.repeatable and "r" or "") .. (q.prek and "" or "p") .. (q.rep and "u" or "") .. (q.share or "")
         local pre = {}
         for _, preId in ipairs(q.prereqs) do table.insert(pre, tostring(preId)) end
         local fields = { quote(q.name), scalar(q.level), scalar(q.minLevel), scalar(q.maxLevel), scalar(q.faction),
-            flags ~= "" and quote(flags) or "nil", scalar(q.giver), scalar(q.zone and zoneIndex[q.zone]), scalar(q.x), scalar(q.y),
+            flags ~= "" and quote(flags) or "nil", scalar(q.giver), scalar(zoneKey(q) and zoneIndex[zoneKey(q)]), scalar(q.x), scalar(q.y),
             scalar(q.item), scalar(q.races), scalar(q.classes), #pre > 0 and ("{" .. table.concat(pre, ",") .. "}") or "nil" }
         -- Trailing nils are left off.
         while fields[#fields] == "nil" do table.remove(fields) end
@@ -204,7 +219,7 @@ function Quests.render(n, commit)
         add(string.format("D[%d]={%s,{%s},%s%s}\n", d.id, scalar(d.curated), table.concat(ids, ","), quote(table.concat(d.rel)),
             #wings > 0 and (",{" .. table.concat(wings, ",") .. "}") or ""))
     end
-    add("return { zones = Z, quests = Q, dungeons = D }\n")
+    add("return { zones = Z, zoneMaps = M, quests = Q, dungeons = D }\n")
     add("end }\n")
     return table.concat(out)
 end
