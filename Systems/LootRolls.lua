@@ -53,6 +53,38 @@ local function serverTime()
     return type(Globals.GetServerTime) == "function" and tonumber(Globals.GetServerTime()) or 0
 end
 
+-- One drop may be seen in a corpse window and offered in a later roll.
+-- Keep its roll-frame glow without playing the same toast and chime twice.
+local ALERT_JOIN_SECONDS = 12
+local MAX_RECENT_ALERTS = 64
+Rolls.windowAlerts = {}
+Rolls.rollAlerts = {}
+
+local function recent(map, key)
+    local at = map[key]
+    local now = clock()
+    if at ~= nil and now >= at and now - at <= ALERT_JOIN_SECONDS then return true end
+    map[key] = nil
+    return false
+end
+
+local function markRecent(map, key)
+    local count = 0
+    for _ in pairs(map) do count = count + 1 end
+    if count >= MAX_RECENT_ALERTS then
+        local now = clock()
+        for saved, at in pairs(map) do
+            if now < at or now - at > ALERT_JOIN_SECONDS then map[saved] = nil end
+        end
+        count = 0
+        for _ in pairs(map) do count = count + 1 end
+        if count >= MAX_RECENT_ALERTS then
+            for saved in pairs(map) do map[saved] = nil end
+        end
+    end
+    map[key] = clock()
+end
+
 local function after(seconds, callback)
     local timer = Globals.C_Timer
     if type(timer) == "table" and type(timer.After) == "function" then
@@ -168,6 +200,39 @@ local function publish(roll)
     return GW.Store.SetTelemetryEvent("loot_roll:" .. tostring(snapshot.characterId) .. ":" .. roll.key, envelope)
 end
 
+-- A newly observed item in a corpse-loot window. The caller supplies only
+-- item IDs newly recorded for a corpse, so reopening a window is silent.
+-- A visible drop is not ownership and never marks a wishlist acquired.
+function Rolls.NotifyWishlistLootWindow(outputs, fresh)
+    if type(outputs) ~= "table" or type(fresh) ~= "table" then return 0 end
+    local notified = 0
+    for _, output in ipairs(outputs) do
+        local itemId = type(output) == "table" and tonumber(output.itemId) or nil
+        if itemId and fresh[itemId] and not output.isCoin and not (output.currencyId and output.currencyId ~= 0) then
+            local linkedId, suffixId = Rolls.ParseLink(output.itemLink)
+            if not linkedId or linkedId == itemId then
+                local key = GW.LootSync.ItemKey(itemId, suffixId)
+                if key and not recent(Rolls.windowAlerts, key) and not recent(Rolls.rollAlerts, key) then
+                    local item = { itemId = itemId, itemKey = key, name = output.name,
+                        texture = output.iconFileDataId, quality = output.qualityId, quantity = output.quantity }
+                    -- Binding isn't known from a loot slot. Only the wishlist
+                    -- reason can fire here, never a speculative BoE valuation.
+                    local alert = GW.LootAlerts and GW.LootAlerts.Evaluate(item)
+                    if alert and alert.category == "wishlist" then
+                        markRecent(Rolls.windowAlerts, key)
+                        local ui = GW.LootAlertUI
+                        if ui and ui.Present then pcall(ui.Present, { item = item, alert = alert, lootWindow = true }) end
+                        if alert.sound then GW.LootAlerts.PlayChime() end
+                        Rolls.stats.alerts = Rolls.stats.alerts + 1
+                        notified = notified + 1
+                    end
+                end
+            end
+        end
+    end
+    return notified
+end
+
 -- Rolls ----------------------------------------------------------------------------------
 
 local function remember(roll)
@@ -214,10 +279,12 @@ local function resolve(roll)
     if alert and not roll.notified then
         roll.alert = alert
         roll.notified = true
+        roll.silentAlert = alert.category == "wishlist" and recent(Rolls.windowAlerts, item.itemKey)
+        if alert.category == "wishlist" then markRecent(Rolls.rollAlerts, item.itemKey) end
         Rolls.stats.alerts = Rolls.stats.alerts + 1
         local ui = GW.LootAlertUI
         if ui and ui.Present then pcall(ui.Present, roll) end
-        if alert.sound then GW.LootAlerts.PlayChime() end
+        if alert.sound and not roll.silentAlert then GW.LootAlerts.PlayChime() end
     end
 end
 
