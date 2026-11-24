@@ -210,6 +210,7 @@ function Notice:Layout()
             row.name:SetText(entry.item.name or ("Item " .. tostring(entry.item.itemId)))
             Theme.Tint(row.name, qualityColor(entry.item.quality))
             local title, detail = GW.LootAlerts.Describe(entry.alert)
+            if entry.lootWindow and entry.alert.category == "wishlist" then title = "Wishlist drop" end
             row.reason:SetText(Theme.Colorize(title or "", color) .. (detail and detail ~= "" and ("  " .. detail) or ""))
             row.text = (title or "") .. (detail and detail ~= "" and (" | " .. detail) or "")
             row:Show()
@@ -273,8 +274,8 @@ end
 function Notice.Present(roll)
     if type(roll) ~= "table" or not roll.alert or roll.presented then return false end
     roll.presented = true
-    pcall(glow, roll, 1)
-    pcall(notice, roll)
+    if not roll.lootWindow then pcall(glow, roll, 1) end
+    if not roll.silentAlert then pcall(notice, roll) end
     return true
 end
 
