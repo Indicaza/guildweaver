@@ -34,6 +34,12 @@ GW.Store.Initialize()
 assert(loadfile("Data/TelemetryEnvelope.lua"))("Guildweaver", GW)
 GW.Character = { GetCurrentSnapshot = function() return { characterId = "character-1", realm = "Realm", region = "US", gameBuild = { build = "70338" } } end }
 assert(loadfile("Data/GatheringTelemetry.lua"))("Guildweaver", GW)
+GW.LootRolls = {
+    notifications = {},
+    NotifyWishlistLootWindow = function(outputs, fresh)
+        table.insert(GW.LootRolls.notifications, { outputs = outputs, fresh = fresh })
+    end,
+}
 assert(loadfile("Systems/MobLootCapture.lua"))("Guildweaver", GW)
 frame.onEvent(frame, "PLAYER_TARGET_CHANGED")
 -- In the client every change to the window comes with a loot event, which
@@ -46,6 +52,8 @@ local loot = GW.GatheringTelemetry.ReadLoot()
 equal(#loot.outputs[1].sources, 2, "per-slot sources")
 equal(loot.outputs[1].sourceMappingComplete, true, "exact quantity assignment")
 equal(capture(), 2, "two corpse reports")
+equal(#GW.LootRolls.notifications, 1, "newly recorded drops trigger one notification batch")
+equal(GW.LootRolls.notifications[1].fresh[2589], true, "the new item is passed to the alert engine")
 local function report(guid)
     return GuildweaverDB.sync.outbound.telemetry["mob_loot:character-1:" .. guid]
 end
@@ -58,6 +66,7 @@ equal(report(creatureA).envelope.payload.context.location.x, 0, "coordinate edge
 equal(report(creatureA).envelope.payload.context.instance.instanceId, 36, "dungeon context")
 equal(report(creatureA).envelope.locale, "enUS", "locale")
 equal(capture(), 0, "ready/opened duplicate")
+equal(#GW.LootRolls.notifications, 1, "reopened windows do not re-notify")
 now = 1001
 assert(loadfile("Systems/MobLootCapture.lua"))("Guildweaver", GW)
 equal(capture(), 0, "relogin duplicate")
@@ -65,18 +74,22 @@ sourcePairs = { creatureA, 1 }; quantity = 1
 equal(capture(), 0, "partial reopen never reduces or adds quantity")
 sourcePairs = { creatureA, 4 }; quantity = 4
 equal(capture(), 1, "updated stack")
+equal(#GW.LootRolls.notifications, 1, "quantity increases are not fresh wishlist drops")
 equal(report(creatureA).revision, 2, "new revision")
 equal(report(creatureA).envelope.capturedAt, 1000, "original corpse capture time")
 sourcePairs = { creatureB, 1 }; quantity = 2; itemId = 2835
 equal(capture(), 0, "ambiguous source quantity skipped")
 sourcePairs = {}; quantity = 1
 equal(capture(), 0, "missing mapping skipped")
+equal(#GW.LootRolls.notifications, 1, "unattributed windows do not invent a drop")
 sourcePairs = { "Player-1-11111", 1 }
 equal(capture(), 0, "player source excluded")
 sourcePairs = { object, 1 }
 equal(capture(), 0, "container/object excluded")
 sourcePairs = { object, 1, creatureB, 1 }; quantity = 2
 equal(capture(), 1, "mixed sources preserve only assigned corpse item")
+equal(#GW.LootRolls.notifications, 2, "new attributed corpse item triggers the next batch")
+equal(GW.LootRolls.notifications[2].fresh[2835], true, "only genuinely new observed items alert")
 equal(report(creatureB).envelope.payload.outputs[2].quantity, 1, "mixed source allocation")
 sourcePairs = { creatureB, 1 }; quantity = 1; itemId = 2318
 GW.SkinningCapture = { pending = { armedAt = now } }
