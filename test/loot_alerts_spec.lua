@@ -361,6 +361,43 @@ do
     equal(alerts.FormatAge(259200), "3d old")
 end
 
+-- A wished-for item in a corpse's loot window alerts before any roll. ------------------------
+
+do
+    local env, addon = boot()
+    local rolls, ui, sync = addon.LootRolls, addon.LootAlertUI, addon.LootSync
+    world.instance = SM
+    env:dispatch("PLAYER_ENTERING_WORLD", false, false)
+    env:advance(2)
+
+    local loot = { { itemId = 5191, itemLink = ROLLS.barb[1], name = "Cruel Barb",
+        qualityId = 3, iconFileDataId = 135321, quantity = 1 } }
+    equal(rolls.NotifyWishlistLootWindow(loot, { [5191] = true }), 1, "new wishlist item in a corpse window")
+    equal(#world.sounds, 1, "one chime on the drop")
+    equal(#ui.entries, 1, "one Guildweaver toast")
+    truthy(ui.entries[1].lootWindow, "the toast knows this was a loot window")
+    truthy(ui.rows[1].text:find("Wishlist drop", 1, true), "the toast announces a drop, not ownership")
+    falsy(sync.IsAcquired("i:5191"), "a visible drop does not mean acquired")
+    equal(rolls.NotifyWishlistLootWindow(loot, { [5191] = true }), 0, "duplicate event does not repeat the toast")
+
+    local frame = rollFrame(1, 81)
+    startRoll(env, 81, ROLLS.barb)
+    truthy(rolls.active[81].halo, "the game roll still glows")
+    equal(rolls.active[81].halo.target, frame)
+    equal(rolls.active[81].silentAlert, true, "the same item is not announced twice")
+    equal(#world.sounds, 1, "a following roll does not chime twice")
+    equal(#ui.entries, 1, "a following roll does not toast twice")
+    equal(world.decisions, 0, "the addon never needs, greeds, passes or loots for the player")
+
+    env:advance(13)
+    local owl = { { itemId = 6468, itemLink = ROLLS.owlBelt[1], name = "Deviate Scale Belt of the Owl" } }
+    equal(rolls.NotifyWishlistLootWindow(owl, { [6468] = true }), 0, "an unwanted random suffix does not alert")
+    local bear = { { itemId = 6468, itemLink = ROLLS.bearBelt[1], name = "Deviate Scale Belt of the Bear" } }
+    equal(rolls.NotifyWishlistLootWindow(bear, { [6468] = true }), 1, "the exact wanted variant alerts")
+    equal(#world.sounds, 2, "a different wanted drop chimes")
+    equal(rolls.NotifyWishlistLootWindow(bear, {}), 0, "no newly recorded item means no alert")
+end
+
 -- Rolls: detection, glow, notice, chime, cleanup -------------------------------------------
 
 do
