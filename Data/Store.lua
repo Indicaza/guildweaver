@@ -521,34 +521,112 @@ local function captureMeta()
     return GuildweaverDB.meta.capture
 end
 
-function GW.Store.ConfirmLiveClient()
+local function testRealmName(realm)
+    return type(realm) == "string" and (
+        string.lower(realm):match("%f[%a]beta%f[%A]") or string.lower(realm):match("%f[%a]ptr%f[%A]")
+    ) ~= nil
+end
+
+local function namedForeverRealm(realm)
+    return type(realm) == "string" and not testRealmName(realm)
+        and string.lower(realm):match("^camwow%s+%a+%d*%s+realm%s+%d+%f[%W]") ~= nil
+end
+
+local function inspectClient()
     local realm = type(GetRealmName) == "function" and GetRealmName() or nil
     local interface = nil
     if type(GetBuildInfo) == "function" then
         local _, _, _, value = GetBuildInfo()
         interface = tonumber(value)
     end
-    local testClient = type(IsTestBuild) == "function" and IsTestBuild()
-    local testRealm = type(realm) == "string" and (
-        string.lower(realm):match("%f[%a]beta%f[%A]") or string.lower(realm):match("%f[%a]ptr%f[%A]")
-    )
-    if type(realm) ~= "string" or realm == "" or testClient or testRealm
-        or not interface or interface < 16000 or interface >= 17000 then
+    local testFlag = type(IsTestBuild) == "function" and IsTestBuild()
+    local testClient = testFlag == true or testFlag == 1
+    local reason = "live"
+    if testRealmName(realm) then
+        reason = "test_realm"
+    elseif type(realm) ~= "string" or realm == "" then
+        reason = "realm_unavailable"
+    elseif not interface then
+        reason = "interface_unavailable"
+    elseif interface < 16000 or interface >= 17000 then
+        reason = "unsupported_interface"
+    elseif testClient and not namedForeverRealm(realm) then
+        reason = "test_build"
+    end
+    return {
+        reason = reason,
+        realm = realm,
+        interface = interface,
+        testBuild = testClient,
+    }
+end
+
+-- Recover an unmarked save only when its own realm evidence identifies
+-- Forever's numbered live realm family. Never promote an explicit test
+-- realm or a mixed/unknown-realm legacy save just because the client is live.
+local function hasLiveRealmEvidence(database)
+    local seen = false
+    local function observe(realm)
+        if realm == nil or realm == "" then
+            return true
+        end
+        if not namedForeverRealm(realm) then
+            return false
+        end
+        seen = true
+        return true
+    end
+    for _, snapshot in pairs(type(database.characters) == "table" and database.characters or {}) do
+        if type(snapshot) == "table" and not observe(snapshot.realm) then
+            return false
+        end
+    end
+    local sync = type(database.sync) == "table" and database.sync or {}
+    local outbound = type(sync.outbound) == "table" and sync.outbound or {}
+    for _, record in pairs(type(outbound.telemetry) == "table" and outbound.telemetry or {}) do
+        local envelope = type(record) == "table" and record.envelope
+        if type(envelope) == "table" then
+            if not observe(envelope.realm) then
+                return false
+            end
+            if type(envelope.payload) == "table" and not observe(envelope.payload.realm) then
+                return false
+            end
+        end
+    end
+    return seen
+end
+
+function GW.Store.ConfirmLiveClient()
+    local validation = inspectClient()
+    GuildweaverDB.meta = GuildweaverDB.meta or {}
+    GuildweaverDB.meta.releaseValidation = validation
+    if validation.reason ~= "live" then
         GuildweaverDB.gameRelease = nil
         return false
     end
     GuildweaverDB.gameRelease = "forever-live"
+    GuildweaverDB.meta.liveReleaseConfirmed = true
     return true
 end
 
 function GW.Store.Initialize()
     streamCount = nil
-    if type(GuildweaverDB) ~= "table" or GuildweaverDB.gameRelease ~= "forever-live" then
+    if type(GuildweaverDB) ~= "table" then
         GuildweaverDB = {}
+    elseif GuildweaverDB.gameRelease ~= "forever-live" then
+        local meta = type(GuildweaverDB.meta) == "table" and GuildweaverDB.meta or {}
+        if not meta.liveReleaseConfirmed and not meta.releaseValidationVersion
+            and not hasLiveRealmEvidence(GuildweaverDB) then
+            -- The old beta cutover reset every unmarked save. Retain its
+            -- contents offline instead; the bridge only reads the active outbox.
+            GuildweaverDB = { releaseQuarantine = GuildweaverDB }
+        end
     end
 
-    GW.Store.ConfirmLiveClient()
     applyDefaults(defaults, GuildweaverDB)
+    GuildweaverDB.meta.releaseValidationVersion = 1
+    GW.Store.ConfirmLiveClient()
     GuildweaverDB.schemaVersion = defaults.schemaVersion
     GuildweaverDB.meta = GuildweaverDB.meta or {}
     GuildweaverDB.meta.characterIds = GuildweaverDB.meta.characterIds or {}
