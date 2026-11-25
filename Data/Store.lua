@@ -534,29 +534,34 @@ end
 
 local function inspectClient()
     local realm = type(GetRealmName) == "function" and GetRealmName() or nil
-    local interface = nil
+    local interface, build = nil, nil
     if type(GetBuildInfo) == "function" then
-        local _, _, _, value = GetBuildInfo()
+        local _, buildNumber, _, value = GetBuildInfo()
         interface = tonumber(value)
+        build = tonumber(buildNumber)
     end
     local testFlag = type(IsTestBuild) == "function" and IsTestBuild()
     local testClient = testFlag == true or testFlag == 1
     local reason = "live"
     if testRealmName(realm) then
         reason = "test_realm"
-    elseif type(realm) ~= "string" or realm == "" then
-        reason = "realm_unavailable"
     elseif not interface then
         reason = "interface_unavailable"
     elseif interface < 16000 or interface >= 17000 then
         reason = "unsupported_interface"
     elseif testClient and not namedForeverRealm(realm) then
         reason = "test_build"
+    elseif type(realm) ~= "string" or realm == "" then
+        -- Forever build 71037 removed realm names from addon APIs. A
+        -- supported, non-test client can still capture personal telemetry.
+        -- The bridge additionally verifies the _forever_ installation.
+        reason = build and build >= 71037 and "live_realm_unavailable" or "realm_unavailable"
     end
     return {
         reason = reason,
         realm = realm,
         interface = interface,
+        build = build,
         testBuild = testClient,
     }
 end
@@ -597,17 +602,24 @@ local function hasLiveRealmEvidence(database)
     return seen
 end
 
-function GW.Store.ConfirmLiveClient()
-    local validation = inspectClient()
+local function isForeignRelease(reason)
+    return reason == "test_realm" or reason == "test_build" or reason == "unsupported_interface"
+end
+
+local function applyClientValidation(validation)
     GuildweaverDB.meta = GuildweaverDB.meta or {}
     GuildweaverDB.meta.releaseValidation = validation
-    if validation.reason ~= "live" then
+    if validation.reason ~= "live" and validation.reason ~= "live_realm_unavailable" then
         GuildweaverDB.gameRelease = nil
         return false
     end
     GuildweaverDB.gameRelease = "forever-live"
     GuildweaverDB.meta.liveReleaseConfirmed = true
     return true
+end
+
+function GW.Store.ConfirmLiveClient()
+    return applyClientValidation(inspectClient())
 end
 
 function GW.Store.RetryLiveClient()
@@ -621,21 +633,50 @@ function GW.Store.RetryLiveClient()
     return GW.Store.ConfirmLiveClient()
 end
 
+local function hasActiveCaptureData(database)
+    local function nonempty(value)
+        return type(value) == "table" and next(value) ~= nil
+    end
+    local meta = type(database.meta) == "table" and database.meta or {}
+    local sync = type(database.sync) == "table" and database.sync or {}
+    local outbound = type(sync.outbound) == "table" and sync.outbound or {}
+    if meta.installationId or nonempty(meta.characterIds)
+        or nonempty(meta.characterFingerprints) or nonempty(database.characters)
+        or nonempty(outbound.telemetry) or nonempty(outbound.questActions)
+        or nonempty(outbound.characters) then
+        return true
+    end
+    -- Other capture subsystems can have their own saved tables.
+    for key, value in pairs(database) do
+        if key ~= "meta" and key ~= "sync" and key ~= "ui" and key ~= "characters"
+            and key ~= "releaseQuarantine" and nonempty(value) then
+            return true
+        end
+    end
+    return false
+end
+
 function GW.Store.Initialize()
     streamCount = nil
+    local validation = inspectClient()
     if type(GuildweaverDB) ~= "table" then
         GuildweaverDB = {}
     elseif GuildweaverDB.gameRelease ~= "forever-live" then
         local meta = type(GuildweaverDB.meta) == "table" and GuildweaverDB.meta or {}
         local previous = type(meta.releaseValidation) == "table" and meta.releaseValidation or {}
-        local foreign = previous.reason == "test_realm" or previous.reason == "test_build"
-            or previous.reason == "unsupported_interface"
+        local foreign = isForeignRelease(previous.reason)
         -- A validation schema version means only that the store was initialized,
         -- not that it was ever live. Explicitly foreign saves must not become
         -- live just because a later client passes validation. Positive realm
         -- evidence still recovers the original false-negative live saves.
         local recoverable = hasLiveRealmEvidence(GuildweaverDB)
-        if (foreign and not recoverable)
+        -- An already quarantined, empty active store has nothing else to
+        -- isolate. Do not wrap the previous quarantine again on a reload.
+        -- Actual foreign capture data must still be isolated, including
+        -- when the realm API is unavailable until later in login.
+        local emptyQuarantined = type(GuildweaverDB.releaseQuarantine) == "table"
+            and not hasActiveCaptureData(GuildweaverDB)
+        if (foreign and not recoverable and not emptyQuarantined)
             or (not meta.liveReleaseConfirmed and not meta.releaseValidationVersion and not recoverable) then
             -- The old beta cutover reset every unmarked save. Retain its
             -- contents offline instead; the bridge only reads the active outbox.
@@ -645,7 +686,7 @@ function GW.Store.Initialize()
 
     applyDefaults(defaults, GuildweaverDB)
     GuildweaverDB.meta.releaseValidationVersion = 1
-    GW.Store.ConfirmLiveClient()
+    applyClientValidation(validation)
     GuildweaverDB.schemaVersion = defaults.schemaVersion
     GuildweaverDB.meta = GuildweaverDB.meta or {}
     GuildweaverDB.meta.characterIds = GuildweaverDB.meta.characterIds or {}

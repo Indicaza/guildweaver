@@ -76,3 +76,24 @@ assertEqual(standardSnapshot.fullName, "Rook", "standard client keeps first name
 assertEqual(standardSnapshot.name, "Rook", "standard client display name remains unchanged")
 
 print("realm identity spec passed")
+
+-- Since 71037 the server name is unavailable. Keep the full name and
+-- region, never use the surname as a realm, and migrate only unique matches.
+GetRealmName = function() return "" end
+GetCurrentRegion = function() return 1 end
+surname = "Smith"
+GuildweaverDB.characters["camwow us2 realm 4 pvp:rook smith"] = {
+    name = "Rook Smith", fullName = "Rook Smith", region = "US", realm = "CAMWOW US2 Realm 4 PvP",
+}
+GuildweaverDB.meta.characterIds["camwow us2 realm 4 pvp:rook smith"] = "character-live-smith"
+assertEqual(addon.Store.GetCharacterId("smith:rook"), "character-live-smith", "known identity survives hidden realm")
+local hidden = { name = "Rook", realm = "Smith", region = "US" }
+addon.Store.SetCharacterSnapshot("smith:rook", hidden)
+assertEqual(hidden.characterKey, "region-us:rook smith", "region and full name key")
+assertEqual(hidden.realm, nil, "surname is not a realm")
+assertEqual(hidden.realmUnavailable, true, "missing realm recorded explicitly")
+assertEqual(hidden.name, "Rook Smith", "surname preserved")
+surname = "Other"
+local other = addon.Store.GetCharacterId("other:rook")
+if other == "character-live-smith" then error("different names share an id") end
+print("realm-free identity spec passed")

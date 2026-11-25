@@ -118,6 +118,9 @@ do
     equal(Store.ConfirmLiveClient(), true, "numbered live realm with test flag")
     equal(GuildweaverDB.gameRelease, "forever-live", "live marker set")
     GetRealmName = function() return nil end
+    equal(Store.ConfirmLiveClient(), false, "missing realm cannot override an explicit test build")
+    equal(GuildweaverDB.meta.releaseValidation.reason, "test_build", "test-build rejection takes precedence")
+    IsTestBuild = function() return false end
     equal(Store.ConfirmLiveClient(), false, "temporarily unavailable realm rejected")
     equal(GuildweaverDB.meta.releaseValidation.reason, "realm_unavailable", "specific rejection")
     Store.Initialize()
@@ -172,6 +175,16 @@ do
     Store.Initialize()
     Store.Initialize()
     equal(GuildweaverDB.releaseQuarantine, quarantine, "no repeated quarantine nesting")
+    equal(GuildweaverDB.gameRelease, nil, "empty quarantine wrapper remains blocked")
+    GuildweaverDB.characters.foreign = { realm = "Classic Beta PvE 2" }
+    GuildweaverDB.meta.characterIds.foreign = "character-foreign"
+    local foreignSave = GuildweaverDB
+    Store.Initialize()
+    equal(GuildweaverDB.characters.foreign, nil, "new foreign data still isolated")
+    equal(GuildweaverDB.releaseQuarantine, foreignSave, "foreign capture retained offline")
+    local retained = GuildweaverDB.releaseQuarantine
+    Store.Initialize()
+    equal(GuildweaverDB.releaseQuarantine, retained, "empty wrapper remains stable after new foreign capture")
     IsTestBuild = nil
 end
 
@@ -190,4 +203,20 @@ do
     Store.Initialize()
     equal(GuildweaverDB.characters.beta, nil, "initialized beta store excluded")
     equal(GuildweaverDB.releaseQuarantine, beta, "initialized beta store retained offline")
+end
+
+-- The November 20 hotfix intentionally blanks realm APIs on Forever.
+do
+    GuildweaverDB = nil
+    GetRealmName = function() return "" end
+    GetBuildInfo = function() return "1.60.1", "71037", "Nov 2026", 16001 end
+    IsTestBuild = function() return false end
+    Store.Initialize()
+    equal(GuildweaverDB.gameRelease, "forever-live", "hotfixed live client accepted")
+    equal(GuildweaverDB.meta.releaseValidation.reason, "live_realm_unavailable", "realm is intentionally unavailable")
+    IsTestBuild = function() return true end
+    equal(Store.ConfirmLiveClient(), false, "explicit test client still blocked")
+    IsTestBuild = nil
+    GetRealmName = function() return "Classic Beta PvE 2" end
+    equal(Store.ConfirmLiveClient(), false, "beta realm remains blocked on newer build")
 end
