@@ -602,8 +602,11 @@ local function hasLiveRealmEvidence(database)
     return seen
 end
 
-function GW.Store.ConfirmLiveClient()
-    local validation = inspectClient()
+local function isForeignRelease(reason)
+    return reason == "test_realm" or reason == "test_build" or reason == "unsupported_interface"
+end
+
+local function applyClientValidation(validation)
     GuildweaverDB.meta = GuildweaverDB.meta or {}
     GuildweaverDB.meta.releaseValidation = validation
     if validation.reason ~= "live" and validation.reason ~= "live_realm_unavailable" then
@@ -613,6 +616,10 @@ function GW.Store.ConfirmLiveClient()
     GuildweaverDB.gameRelease = "forever-live"
     GuildweaverDB.meta.liveReleaseConfirmed = true
     return true
+end
+
+function GW.Store.ConfirmLiveClient()
+    return applyClientValidation(inspectClient())
 end
 
 function GW.Store.RetryLiveClient()
@@ -628,19 +635,22 @@ end
 
 function GW.Store.Initialize()
     streamCount = nil
+    local validation = inspectClient()
     if type(GuildweaverDB) ~= "table" then
         GuildweaverDB = {}
     elseif GuildweaverDB.gameRelease ~= "forever-live" then
         local meta = type(GuildweaverDB.meta) == "table" and GuildweaverDB.meta or {}
         local previous = type(meta.releaseValidation) == "table" and meta.releaseValidation or {}
-        local foreign = previous.reason == "test_realm" or previous.reason == "test_build"
-            or previous.reason == "unsupported_interface"
+        local foreign = isForeignRelease(previous.reason)
         -- A validation schema version means only that the store was initialized,
         -- not that it was ever live. Explicitly foreign saves must not become
         -- live just because a later client passes validation. Positive realm
         -- evidence still recovers the original false-negative live saves.
         local recoverable = hasLiveRealmEvidence(GuildweaverDB)
-        if (foreign and not recoverable)
+        -- While the client is still explicitly foreign, its outbox cannot
+        -- be uploaded. Keep it intact until the client leaves that state;
+        -- wrapping it on every reload nests the quarantine indefinitely.
+        if (foreign and not recoverable and not isForeignRelease(validation.reason))
             or (not meta.liveReleaseConfirmed and not meta.releaseValidationVersion and not recoverable) then
             -- The old beta cutover reset every unmarked save. Retain its
             -- contents offline instead; the bridge only reads the active outbox.
@@ -650,7 +660,7 @@ function GW.Store.Initialize()
 
     applyDefaults(defaults, GuildweaverDB)
     GuildweaverDB.meta.releaseValidationVersion = 1
-    GW.Store.ConfirmLiveClient()
+    applyClientValidation(validation)
     GuildweaverDB.schemaVersion = defaults.schemaVersion
     GuildweaverDB.meta = GuildweaverDB.meta or {}
     GuildweaverDB.meta.characterIds = GuildweaverDB.meta.characterIds or {}
