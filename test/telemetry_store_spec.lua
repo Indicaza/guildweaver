@@ -21,7 +21,8 @@ local chunk = assert(loadfile("Data/Store.lua"))
 chunk("Guildweaver", addon)
 addon.Store.Initialize()
 
-equal(GuildweaverDB.characters.BetaRook, nil, "beta character cleared")
+equal(GuildweaverDB.characters.BetaRook, nil, "beta character excluded from active save")
+truthy(GuildweaverDB.releaseQuarantine.characters.BetaRook, "legacy beta data retained offline")
 GuildweaverDB.characters.LiveRook = {}
 addon.Store.Initialize()
 truthy(GuildweaverDB.characters.LiveRook, "live character survives reload")
@@ -107,3 +108,68 @@ do
     addon.BridgeAcks = nil
     print("telemetry acknowledgement spec passed")
 end
+
+-- Live Forever realms can use test-flagged builds. Explicit Beta/PTR realm
+-- names and unrelated clients must still fail closed.
+do
+    local existing = GuildweaverDB
+    GetRealmName = function() return "CAMWOW US2 Realm 9 RP PvP" end
+    IsTestBuild = function() return true end
+    equal(Store.ConfirmLiveClient(), true, "numbered live realm with test flag")
+    equal(GuildweaverDB.gameRelease, "forever-live", "live marker set")
+    GetRealmName = function() return "CAMWOW US2 Realm 9 RP PvP Beta" end
+    equal(Store.ConfirmLiveClient(), false, "explicit beta realm never promoted")
+    equal(GuildweaverDB.meta.releaseValidation.reason, "test_realm", "specific rejection")
+    GetRealmName = function() return nil end
+    Store.Initialize()
+    equal(GuildweaverDB, existing, "temporarily unavailable realm preserves the save")
+    equal(GuildweaverDB.gameRelease, nil, "unconfirmed save not uploadable")
+    GetRealmName = function() return "CAMWOW US2 Realm 9 RP PvP" end
+    Store.Initialize()
+    equal(GuildweaverDB, existing, "reloading does not erase previously confirmed data")
+    equal(GuildweaverDB.gameRelease, "forever-live", "confirmation recovers")
+    GetBuildInfo = function() return "12.1.5", "1", "Nov 2026", 120105 end
+    equal(Store.ConfirmLiveClient(), false, "unrelated interface rejected even with numbered realm")
+    GetBuildInfo = function() return "1.60.1", "70338", "Nov 2026", 16001 end
+    GetRealmName = function() return "Live Realm" end
+    IsTestBuild = function() return 0 end
+    equal(Store.ConfirmLiveClient(), true, "numeric false flag not truthy")
+    IsTestBuild = nil
+end
+
+-- An affected live save has no release marker but still contains realm
+-- evidence. Keep the original IDs, queued telemetry and user settings.
+do
+    GetRealmName = function() return "CAMWOW US2 Realm 9 RP PvP" end
+    IsTestBuild = function() return true end
+    local oldSave = {
+        schemaVersion = 4,
+        meta = { installationId = "existing-install", characterIds = { rook = "existing-rook" } },
+        characters = { rook = { realm = GetRealmName(), level = 18 } },
+        sync = { outbound = { telemetry = {
+            ["character:existing-rook"] = { revision = 8, envelope = { realm = GetRealmName() } },
+        } } },
+    }
+    GuildweaverDB = oldSave
+    Store.Initialize()
+    equal(GuildweaverDB, oldSave, "unmarked proven live save recovered in place")
+    equal(GuildweaverDB.meta.installationId, "existing-install", "installation identity preserved")
+    equal(GuildweaverDB.meta.characterIds.rook, "existing-rook", "character identity preserved")
+    equal(GuildweaverDB.sync.outbound.telemetry["character:existing-rook"].revision, 8, "outbox preserved")
+    equal(GuildweaverDB.gameRelease, "forever-live", "recovered save eligible")
+    GuildweaverDB = {
+        schemaVersion = 4,
+        characters = { rook = { realm = GetRealmName() }, beta = { realm = "Classic Beta PvE 2" } },
+    }
+    Store.Initialize()
+    equal(GuildweaverDB.characters.beta, nil, "mixed legacy save not promoted")
+    truthy(GuildweaverDB.releaseQuarantine.characters.beta, "mixed legacy save retained")
+    local quarantine = GuildweaverDB.releaseQuarantine
+    GetRealmName = function() return nil end
+    Store.Initialize()
+    Store.Initialize()
+    equal(GuildweaverDB.releaseQuarantine, quarantine, "no repeated quarantine nesting")
+    IsTestBuild = nil
+end
+
+print("live release validation specs passed")
