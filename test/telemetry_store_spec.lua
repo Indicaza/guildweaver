@@ -175,6 +175,16 @@ do
     Store.Initialize()
     Store.Initialize()
     equal(GuildweaverDB.releaseQuarantine, quarantine, "no repeated quarantine nesting")
+    equal(GuildweaverDB.gameRelease, nil, "empty quarantine wrapper remains blocked")
+    GuildweaverDB.characters.foreign = { realm = "Classic Beta PvE 2" }
+    GuildweaverDB.meta.characterIds.foreign = "character-foreign"
+    local foreignSave = GuildweaverDB
+    Store.Initialize()
+    equal(GuildweaverDB.characters.foreign, nil, "new foreign data still isolated")
+    equal(GuildweaverDB.releaseQuarantine, foreignSave, "foreign capture retained offline")
+    local retained = GuildweaverDB.releaseQuarantine
+    Store.Initialize()
+    equal(GuildweaverDB.releaseQuarantine, retained, "empty wrapper remains stable after new foreign capture")
     IsTestBuild = nil
 end
 
