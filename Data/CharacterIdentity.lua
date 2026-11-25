@@ -72,16 +72,21 @@ local function nameFromKey(characterKey)
     return characterKey:match("^[^:]*:(.+)$")
 end
 
+local function currentRegion()
+    if type(GetCurrentRegion) ~= "function" then return nil end
+    local ok, value = pcall(GetCurrentRegion)
+    local regions = { [1] = "US", [2] = "KR", [3] = "EU", [4] = "TW", [5] = "CN" }
+    return ok and regions[tonumber(value)] or nil
+end
+
 local function canonicalCharacterKey(characterKey, characterName)
     local realm = currentRealm()
     local _, _, fullName = currentCharacterNames()
     local name = fullName or characterName or nameFromKey(characterKey)
 
-    if not realm or not name or name == "" then
-        return characterKey
-    end
-
-    return string.lower(realm .. ":" .. name)
+    if not name or name == "" then return characterKey end
+    if realm then return string.lower(realm .. ":" .. name) end
+    return "region-" .. normalized(currentRegion() or "unknown") .. ":" .. normalized(name)
 end
 
 local function migrateCharacterKey(oldKey, newKey)
@@ -118,11 +123,28 @@ local function migrateCharacterKey(oldKey, newKey)
 end
 
 local function migrateKnownAliases(characterKey, canonicalKey)
-    migrateCharacterKey(characterKey, canonicalKey)
-
     local realm = currentRealm()
-    local firstName = currentCharacterNames()
-    if realm and firstName then
+    local firstName, _, fullName = currentCharacterNames()
+    if not realm then
+        local database = GW.Store.GetDatabase()
+        local region = normalized(currentRegion())
+        if type(database) ~= "table" or region == "" or not fullName then return end
+        local ids = database.meta and database.meta.characterIds or {}
+        if ids[canonicalKey] then return end
+        local candidate = nil
+        for key, snapshot in pairs(database.characters or {}) do
+            if key ~= canonicalKey and ids[key] and type(snapshot) == "table"
+                and normalized(snapshot.fullName or snapshot.name) == normalized(fullName)
+                and normalized(snapshot.region) == region then
+                if candidate then return end
+                candidate = key
+            end
+        end
+        if candidate then migrateCharacterKey(candidate, canonicalKey) end
+        return
+    end
+    migrateCharacterKey(characterKey, canonicalKey)
+    if firstName then
         -- The previous compatibility layer already repaired the realm but keyed
         -- every Forever character by first name only. The first surnamed
         -- character seen after this upgrade inherits that stable ID; another
@@ -157,7 +179,9 @@ function GW.Store.SetCharacterSnapshot(characterKey, snapshot)
         local reportedFirstName = firstName or snapshot.firstName or snapshot.name
         local reportedFullName = fullName or snapshot.fullName or snapshot.name
         snapshot.characterKey = canonicalKey
-        snapshot.realm = realm or snapshot.realm
+        snapshot.realm = realm
+        snapshot.realmUnavailable = not realm
+        snapshot.region = snapshot.region or currentRegion()
         snapshot.firstName = reportedFirstName
         snapshot.lastName = lastName or snapshot.lastName
         snapshot.fullName = reportedFullName
