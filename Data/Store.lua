@@ -633,6 +633,29 @@ function GW.Store.RetryLiveClient()
     return GW.Store.ConfirmLiveClient()
 end
 
+local function hasActiveCaptureData(database)
+    local function nonempty(value)
+        return type(value) == "table" and next(value) ~= nil
+    end
+    local meta = type(database.meta) == "table" and database.meta or {}
+    local sync = type(database.sync) == "table" and database.sync or {}
+    local outbound = type(sync.outbound) == "table" and sync.outbound or {}
+    if meta.installationId or nonempty(meta.characterIds)
+        or nonempty(meta.characterFingerprints) or nonempty(database.characters)
+        or nonempty(outbound.telemetry) or nonempty(outbound.questActions)
+        or nonempty(outbound.characters) then
+        return true
+    end
+    -- Other capture subsystems can have their own saved tables.
+    for key, value in pairs(database) do
+        if key ~= "meta" and key ~= "sync" and key ~= "ui" and key ~= "characters"
+            and key ~= "releaseQuarantine" and nonempty(value) then
+            return true
+        end
+    end
+    return false
+end
+
 function GW.Store.Initialize()
     streamCount = nil
     local validation = inspectClient()
@@ -647,10 +670,13 @@ function GW.Store.Initialize()
         -- live just because a later client passes validation. Positive realm
         -- evidence still recovers the original false-negative live saves.
         local recoverable = hasLiveRealmEvidence(GuildweaverDB)
-        -- While the client is still explicitly foreign, its outbox cannot
-        -- be uploaded. Keep it intact until the client leaves that state;
-        -- wrapping it on every reload nests the quarantine indefinitely.
-        if (foreign and not recoverable and not isForeignRelease(validation.reason))
+        -- An already quarantined, empty active store has nothing else to
+        -- isolate. Do not wrap the previous quarantine again on a reload.
+        -- Actual foreign capture data must still be isolated, including
+        -- when the realm API is unavailable until later in login.
+        local emptyQuarantined = type(GuildweaverDB.releaseQuarantine) == "table"
+            and not hasActiveCaptureData(GuildweaverDB)
+        if (foreign and not recoverable and not emptyQuarantined)
             or (not meta.liveReleaseConfirmed and not meta.releaseValidationVersion and not recoverable) then
             -- The old beta cutover reset every unmarked save. Retain its
             -- contents offline instead; the bridge only reads the active outbox.
