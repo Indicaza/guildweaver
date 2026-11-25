@@ -202,6 +202,30 @@ do
     equal(env.world.decisions, 0)
 end
 
+-- A hidden realm still permits exact regional wishlist identity, but not
+-- BoE pricing from a historical or unconfirmed market.
+do
+    local _, addon = boot()
+    local snapshot = addon.Character.GetCurrentSnapshot()
+    snapshot.realm = nil
+    snapshot.realmUnavailable = true
+    snapshot.region = "US"
+    local inbox = fixtureInbox()
+    inbox.digest, inbox.generatedAt = "hiddenrealm", inbox.generatedAt + 10
+    inbox.characters[1].region = "US"
+    addon.BridgeLoot = inbox
+    equal(addon.LootSync.Initialize(), "applied")
+    equal(addon.LootSync.Status().how, "regional_name")
+    truthy(addon.LootSync.WishlistEntry(5191, "i:5191"))
+    equal(addon.LootSync.Status().market, nil, "hidden realm cannot identify a market")
+    inbox = fixtureInbox()
+    inbox.digest, inbox.generatedAt = "hiddenrealm2", inbox.generatedAt + 20
+    inbox.characters[1].name = "Rook"
+    addon.BridgeLoot = inbox
+    equal(addon.LootSync.Initialize(), "applied")
+    equal(addon.LootSync.Status().matched, false, "no first-name-only match")
+end
+
 -- A bad, missing or older file never replaces the last good one ---------------------------
 
 do
