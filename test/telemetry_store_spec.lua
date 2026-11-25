@@ -117,10 +117,9 @@ do
     IsTestBuild = function() return true end
     equal(Store.ConfirmLiveClient(), true, "numbered live realm with test flag")
     equal(GuildweaverDB.gameRelease, "forever-live", "live marker set")
-    GetRealmName = function() return "CAMWOW US2 Realm 9 RP PvP Beta" end
-    equal(Store.ConfirmLiveClient(), false, "explicit beta realm never promoted")
-    equal(GuildweaverDB.meta.releaseValidation.reason, "test_realm", "specific rejection")
     GetRealmName = function() return nil end
+    equal(Store.ConfirmLiveClient(), false, "temporarily unavailable realm rejected")
+    equal(GuildweaverDB.meta.releaseValidation.reason, "realm_unavailable", "specific rejection")
     Store.Initialize()
     equal(GuildweaverDB, existing, "temporarily unavailable realm preserves the save")
     equal(GuildweaverDB.gameRelease, nil, "unconfirmed save not uploadable")
@@ -128,6 +127,10 @@ do
     Store.Initialize()
     equal(GuildweaverDB, existing, "reloading does not erase previously confirmed data")
     equal(GuildweaverDB.gameRelease, "forever-live", "confirmation recovers")
+    GetRealmName = function() return "CAMWOW US2 Realm 9 RP PvP Beta" end
+    equal(Store.ConfirmLiveClient(), false, "explicit beta realm never promoted")
+    equal(GuildweaverDB.meta.releaseValidation.reason, "test_realm", "specific rejection")
+    GetRealmName = function() return "CAMWOW US2 Realm 9 RP PvP" end
     GetBuildInfo = function() return "12.1.5", "1", "Nov 2026", 120105 end
     equal(Store.ConfirmLiveClient(), false, "unrelated interface rejected even with numbered realm")
     GetBuildInfo = function() return "1.60.1", "70338", "Nov 2026", 16001 end
@@ -173,3 +176,18 @@ do
 end
 
 print("live release validation specs passed")
+
+-- Initialized does not mean live. A beta store must remain offline when
+-- loaded by the live client, including after it received the new metadata.
+do
+    GuildweaverDB = nil
+    GetRealmName = function() return "Classic Beta PvE 2" end
+    Store.Initialize()
+    local beta = GuildweaverDB
+    beta.characters.beta = { realm = GetRealmName() }
+    equal(beta.meta.releaseValidationVersion, 1, "beta store initialized")
+    GetRealmName = function() return "Live Realm" end
+    Store.Initialize()
+    equal(GuildweaverDB.characters.beta, nil, "initialized beta store excluded")
+    equal(GuildweaverDB.releaseQuarantine, beta, "initialized beta store retained offline")
+end
