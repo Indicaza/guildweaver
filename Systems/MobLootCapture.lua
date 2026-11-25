@@ -3,8 +3,21 @@ local Globals = _G or {}
 GW.MobLootCapture = GW.MobLootCapture or {}
 local MAX_SEEN = 1000
 local SEEN_SECONDS = 7200
-local names = {}
-local namesCount = 0
+
+-- Creatures seen this session, by GUID: their name and what the client says
+-- about them, kept long enough to name a corpse looted after its unit is
+-- gone (target changed, nameplate hidden, creature dead). Only a unit whose
+-- GUID was read together with its name is ever named; a name for one GUID is
+-- never given to another. By NPC ID only the name is kept, and it is reported
+-- as such ("npc"), never as a sighting of that corpse. No display IDs: the
+-- client has no unit API for them (docs/dungeon-guide.md).
+local MAX_CREATURES = 400
+local CREATURE_SECONDS = 1800
+local MAX_NPC_NAMES = 400
+local creatures = {}
+local creatureCount = 0
+local npcNames = {}
+local npcNameCount = 0
 
 local function safe(fn, ...)
     if type(fn) ~= "function" then return nil end
@@ -18,15 +31,85 @@ local function elapsed()
     return tonumber(safe(Globals.GetTime)) or 0
 end
 
+-- Drops expired entries, then the oldest, down to three quarters of the cap.
+-- Runs only when an insert finds the cache full.
+local function pruneCreatures(now)
+    local ages = {}
+    for guid, entry in pairs(creatures) do
+        if now - entry.seenAt > CREATURE_SECONDS or now < entry.seenAt then
+            creatures[guid] = nil
+            creatureCount = creatureCount - 1
+        else
+            ages[#ages + 1] = entry.seenAt
+        end
+    end
+    local target = math.floor(MAX_CREATURES * 3 / 4)
+    if creatureCount <= target then return end
+    table.sort(ages)
+    local cutoff = ages[creatureCount - target]
+    for guid, entry in pairs(creatures) do
+        if creatureCount <= target then break end
+        if entry.seenAt <= cutoff then
+            creatures[guid] = nil
+            creatureCount = creatureCount - 1
+        end
+    end
+end
+
+local function rememberNpcName(npcId, name)
+    if npcNames[npcId] == nil then
+        if npcNameCount >= MAX_NPC_NAMES then npcNames = {}; npcNameCount = 0 end
+        npcNameCount = npcNameCount + 1
+    end
+    npcNames[npcId] = name
+end
+
 local function rememberUnit(unit)
+    if type(unit) ~= "string" then return end
     local guid = safe(Globals.UnitGUID, unit)
     local _, _, npcId = GW.GatheringTelemetry.SourceIdentity(guid)
     if not npcId then return end
+    local now = elapsed()
+    local known = creatures[guid]
+    if known and known.name then
+        known.seenAt = now
+        return
+    end
+    -- The client's own creature ID, where it has one, must agree with the
+    -- GUID's; a unit that changed under us is not named.
+    local creatureId = tonumber(safe(Globals.UnitCreatureID, unit))
+    if creatureId and creatureId ~= npcId then return end
     local name = safe(Globals.UnitName, unit)
     if type(name) ~= "string" or name == "" then return end
-    if namesCount >= MAX_SEEN then names = {}; namesCount = 0 end
-    if not names[guid] then namesCount = namesCount + 1 end
-    names[guid] = name
+    local classification = safe(Globals.UnitClassification, unit)
+    if not known then
+        if creatureCount >= MAX_CREATURES then pruneCreatures(now) end
+        creatureCount = creatureCount + 1
+    end
+    creatures[guid] = { name = name, npcId = npcId, seenAt = now,
+        classification = type(classification) == "string" and classification ~= "" and classification or nil }
+    rememberNpcName(npcId, name)
+end
+
+-- What is known about a corpse's creature: { name, nameSource, classification }.
+-- nameSource "unit" is this very creature; "npc" another of the same NPC ID.
+local function identityOf(guid, npcId)
+    local entry = creatures[guid]
+    if entry and entry.name then
+        return { name = entry.name, nameSource = "unit", classification = entry.classification }
+    end
+    local name = npcId and npcNames[npcId]
+    if name then return { name = name, nameSource = "npc" } end
+    return {}
+end
+
+function GW.MobLootCapture.CreatureIdentity(guid, npcId)
+    return identityOf(guid, npcId)
+end
+
+-- Tests start the session caches over.
+function GW.MobLootCapture.ResetCreatureCache()
+    creatures, creatureCount, npcNames, npcNameCount = {}, 0, {}, 0
 end
 
 local function instanceContext()
@@ -208,7 +291,7 @@ function GW.MobLootCapture.CaptureNow()
     -- A Need/Greed roll that follows can name its creature from this
     -- window, when the item was on exactly one corpse (LootRolls).
     if GW.LootRolls and GW.LootRolls.NoteLootWindow then
-        for guid, source in pairs(sources) do source.name = names[guid] end
+        for guid, source in pairs(sources) do source.name = identityOf(guid, source.npcId).name end
         pcall(GW.LootRolls.NoteLootWindow, sources)
     end
     local count = 0
@@ -235,7 +318,11 @@ function GW.MobLootCapture.CaptureNow()
             location.positionKind = "player_at_loot"
             local envelope = GW.TelemetryEnvelope.Build("mob_loot", {
                 schemaVersion = 1, observationId = guid, activity = "corpse_loot",
-                source = { guid = guid, npcId = source.npcId, name = names[guid], kind = "creature" },
+                source = (function()
+                    local identity = identityOf(guid, source.npcId)
+                    return { guid = guid, npcId = source.npcId, name = identity.name, nameSource = identity.nameSource,
+                        classification = identity.classification, kind = "creature" }
+                end)(),
                 outputs = outputs,
                 context = { location = location, instance = instanceContext(), lootMethod = safe(Globals.GetLootMethod),
                     dungeonRun = dungeonRun },
@@ -256,12 +343,19 @@ end
 function GW.MobLootCapture:Initialize()
     if self.eventFrame or type(Globals.CreateFrame) ~= "function" then return end
     local frame = Globals.CreateFrame("Frame")
-    for _, event in ipairs({ "PLAYER_TARGET_CHANGED", "UPDATE_MOUSEOVER_UNIT", "LOOT_READY", "LOOT_OPENED" }) do
+    -- Nameplates, focus and boss frames name creatures the player never
+    -- targets or mouses over. Events the client lacks are skipped.
+    for _, event in ipairs({ "PLAYER_TARGET_CHANGED", "UPDATE_MOUSEOVER_UNIT", "PLAYER_FOCUS_CHANGED", "NAME_PLATE_UNIT_ADDED",
+        "INSTANCE_ENCOUNTER_ENGAGE_UNIT", "LOOT_READY", "LOOT_OPENED" }) do
         pcall(frame.RegisterEvent, frame, event)
     end
-    frame:SetScript("OnEvent", function(_, event)
+    frame:SetScript("OnEvent", function(_, event, unit)
         if event == "PLAYER_TARGET_CHANGED" then rememberUnit("target")
         elseif event == "UPDATE_MOUSEOVER_UNIT" then rememberUnit("mouseover")
+        elseif event == "PLAYER_FOCUS_CHANGED" then rememberUnit("focus")
+        elseif event == "NAME_PLATE_UNIT_ADDED" then rememberUnit(unit)
+        elseif event == "INSTANCE_ENCOUNTER_ENGAGE_UNIT" then
+            for index = 1, 5 do rememberUnit("boss" .. index) end
         else rememberUnit("target"); rememberUnit("mouseover"); pcall(GW.MobLootCapture.Capture) end
     end)
     self.eventFrame = frame
