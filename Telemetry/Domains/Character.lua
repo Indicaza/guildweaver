@@ -17,6 +17,7 @@ GW.TelemetryDomains.Character = GW.TelemetryDomain.Define({
             gameBuild = snapshot.gameBuild,
             addonVersion = snapshot.addonVersion,
             realm = snapshot.realm,
+            realmUnavailable = snapshot.realmUnavailable,
             region = snapshot.region,
             level = snapshot.level,
             sex = snapshot.sex,
