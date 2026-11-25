@@ -534,29 +534,34 @@ end
 
 local function inspectClient()
     local realm = type(GetRealmName) == "function" and GetRealmName() or nil
-    local interface = nil
+    local interface, build = nil, nil
     if type(GetBuildInfo) == "function" then
-        local _, _, _, value = GetBuildInfo()
+        local _, buildNumber, _, value = GetBuildInfo()
         interface = tonumber(value)
+        build = tonumber(buildNumber)
     end
     local testFlag = type(IsTestBuild) == "function" and IsTestBuild()
     local testClient = testFlag == true or testFlag == 1
     local reason = "live"
     if testRealmName(realm) then
         reason = "test_realm"
-    elseif type(realm) ~= "string" or realm == "" then
-        reason = "realm_unavailable"
     elseif not interface then
         reason = "interface_unavailable"
     elseif interface < 16000 or interface >= 17000 then
         reason = "unsupported_interface"
     elseif testClient and not namedForeverRealm(realm) then
         reason = "test_build"
+    elseif type(realm) ~= "string" or realm == "" then
+        -- Forever build 71037 removed realm names from addon APIs. A
+        -- supported, non-test client can still capture personal telemetry.
+        -- The bridge additionally verifies the _forever_ installation.
+        reason = build and build >= 71037 and "live_realm_unavailable" or "realm_unavailable"
     end
     return {
         reason = reason,
         realm = realm,
         interface = interface,
+        build = build,
         testBuild = testClient,
     }
 end
@@ -601,7 +606,7 @@ function GW.Store.ConfirmLiveClient()
     local validation = inspectClient()
     GuildweaverDB.meta = GuildweaverDB.meta or {}
     GuildweaverDB.meta.releaseValidation = validation
-    if validation.reason ~= "live" then
+    if validation.reason ~= "live" and validation.reason ~= "live_realm_unavailable" then
         GuildweaverDB.gameRelease = nil
         return false
     end
