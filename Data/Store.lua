@@ -610,6 +610,17 @@ function GW.Store.ConfirmLiveClient()
     return true
 end
 
+function GW.Store.RetryLiveClient()
+    if GuildweaverDB.gameRelease == "forever-live" then
+        return true
+    end
+    local previous = GuildweaverDB.meta and GuildweaverDB.meta.releaseValidation
+    if previous and (previous.reason == "test_realm" or previous.reason == "unsupported_interface") then
+        return false
+    end
+    return GW.Store.ConfirmLiveClient()
+end
+
 function GW.Store.Initialize()
     streamCount = nil
     if type(GuildweaverDB) ~= "table" then
