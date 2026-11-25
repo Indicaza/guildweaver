@@ -176,6 +176,13 @@ SlashCmdList.GUILDWEAVER = function(message)
 
     if command == "version" then
         GW.Print("Version " .. GW.version)
+        local database = GW.Store.GetDatabase()
+        local validation = database.meta and database.meta.releaseValidation or {}
+        GW.Print("Release: " .. tostring(database.gameRelease or "unconfirmed")
+            .. " | " .. tostring(validation.reason or "unknown")
+            .. " | realm: " .. tostring(validation.realm)
+            .. " | interface: " .. tostring(validation.interface)
+            .. " | test build: " .. tostring(validation.testBuild))
         return
     end
 
