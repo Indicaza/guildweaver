@@ -199,7 +199,21 @@ local function matchCharacter(loot, identity)
     end
     local found, count = nil, 0
     local name, realm = lower(identity.name), lower(identity.realm)
+    local region = lower(identity.region)
     if name == "" then return nil end
+    if realm == "" then
+        -- With no observed realm, a first-name-only match is unsafe.
+        -- Regional two-part names can match a single entry, but never
+        -- establish a current market scope.
+        if region == "" or not string.find(name, " ", 1, true) then return nil end
+        for _, entry in ipairs(loot.characters) do
+            if lower(entry.name) == name and lower(entry.region) == region then
+                found, count = entry, count + 1
+            end
+        end
+        if count == 1 then return found, "regional_name" end
+        return nil
+    end
     local function firstWord(value) return string.match(value, "^(%S+)") or value end
     local single = not string.find(name, " ", 1, true)
     for _, entry in ipairs(loot.characters) do
@@ -220,7 +234,7 @@ end
 local function identity()
     local snapshot = GW.Character and GW.Character.GetCurrentSnapshot and GW.Character.GetCurrentSnapshot()
     if isTable(snapshot) and snapshot.characterId then
-        return { characterId = snapshot.characterId, name = snapshot.name, realm = snapshot.realm }
+        return { characterId = snapshot.characterId, name = snapshot.name, realm = snapshot.realm, region = snapshot.region }
     end
     local name = type(UnitName) == "function" and UnitName("player") or nil
     local realm = type(GetRealmName) == "function" and GetRealmName() or nil
@@ -247,7 +261,9 @@ function Sync.Active()
             active.count = active.count + 1
             if item.itemKey == "i:" .. item.itemId then active.baseById[item.itemId] = item end
         end
-        active.market = entry.marketKey and loot.boe and loot.boe.markets[entry.marketKey] or nil
+        if lower(who.realm) ~= "" then
+            active.market = entry.marketKey and loot.boe and loot.boe.markets[entry.marketKey] or nil
+        end
     end
     -- Only a matched character is cached: until the character snapshot
     -- exists, the next call tries again.
