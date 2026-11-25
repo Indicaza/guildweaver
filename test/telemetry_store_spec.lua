@@ -118,6 +118,9 @@ do
     equal(Store.ConfirmLiveClient(), true, "numbered live realm with test flag")
     equal(GuildweaverDB.gameRelease, "forever-live", "live marker set")
     GetRealmName = function() return nil end
+    equal(Store.ConfirmLiveClient(), false, "missing realm cannot override an explicit test build")
+    equal(GuildweaverDB.meta.releaseValidation.reason, "test_build", "test-build rejection takes precedence")
+    IsTestBuild = function() return false end
     equal(Store.ConfirmLiveClient(), false, "temporarily unavailable realm rejected")
     equal(GuildweaverDB.meta.releaseValidation.reason, "realm_unavailable", "specific rejection")
     Store.Initialize()
