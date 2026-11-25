@@ -616,8 +616,16 @@ function GW.Store.Initialize()
         GuildweaverDB = {}
     elseif GuildweaverDB.gameRelease ~= "forever-live" then
         local meta = type(GuildweaverDB.meta) == "table" and GuildweaverDB.meta or {}
-        if not meta.liveReleaseConfirmed and not meta.releaseValidationVersion
-            and not hasLiveRealmEvidence(GuildweaverDB) then
+        local previous = type(meta.releaseValidation) == "table" and meta.releaseValidation or {}
+        local foreign = previous.reason == "test_realm" or previous.reason == "test_build"
+            or previous.reason == "unsupported_interface"
+        -- A validation schema version means only that the store was initialized,
+        -- not that it was ever live. Explicitly foreign saves must not become
+        -- live just because a later client passes validation. Positive realm
+        -- evidence still recovers the original false-negative live saves.
+        local recoverable = hasLiveRealmEvidence(GuildweaverDB)
+        if (foreign and not recoverable)
+            or (not meta.liveReleaseConfirmed and not meta.releaseValidationVersion and not recoverable) then
             -- The old beta cutover reset every unmarked save. Retain its
             -- contents offline instead; the bridge only reads the active outbox.
             GuildweaverDB = { releaseQuarantine = GuildweaverDB }
