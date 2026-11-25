@@ -295,6 +295,7 @@ function GW.MobLootCapture.CaptureNow()
         pcall(GW.LootRolls.NoteLootWindow, sources)
     end
     local count = 0
+    local fresh = {}
     local dungeon = GW.DungeonSessions
     local dungeonRun = dungeon and dungeon.Context and dungeon.Context() or nil
     for guid, source in pairs(sources) do
@@ -304,7 +305,9 @@ function GW.MobLootCapture.CaptureNow()
         -- A first look at a corpse is always reported (even with no items);
         -- a look again only when it shows more.
         local changed = first
+        local newItems = {}
         for id, output in pairs(source.outputs) do
+            if not previous.outputs[id] then newItems[id] = true end
             if not previous.outputs[id] or output.quantity > previous.outputs[id].quantity then
                 previous.outputs[id] = output
                 changed = true
@@ -333,9 +336,13 @@ function GW.MobLootCapture.CaptureNow()
             if envelope and GW.Store.SetTelemetryEvent("mob_loot:" .. tostring(snapshot.characterId) .. ":" .. guid, envelope) then
                 remember(seen, scope, previous)
                 count = count + 1
+                for id in pairs(newItems) do fresh[id] = true end
                 if dungeonRun and dungeon.NoteLoot then dungeon.NoteLoot() end
             end
         end
+    end
+    if next(fresh) and GW.LootRolls and type(GW.LootRolls.NotifyWishlistLootWindow) == "function" then
+        pcall(GW.LootRolls.NotifyWishlistLootWindow, loot.outputs, fresh)
     end
     return count
 end
