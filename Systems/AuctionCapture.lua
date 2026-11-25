@@ -282,7 +282,7 @@ end
 local function snapshotIdentity()
     local character = GW.Character
     local ok, snapshot = pcall(character and character.GetCurrentSnapshot)
-    if ok and type(snapshot) == "table" and snapshot.characterId and snapshot.region and snapshot.realm then
+    if ok and type(snapshot) == "table" and snapshot.characterId and snapshot.region and type(snapshot.realm) == "string" and snapshot.realm ~= "" and not snapshot.realmUnavailable then
         return snapshot
     end
     return nil
