@@ -191,3 +191,19 @@ do
     equal(GuildweaverDB.characters.beta, nil, "initialized beta store excluded")
     equal(GuildweaverDB.releaseQuarantine, beta, "initialized beta store retained offline")
 end
+
+-- The November 20 hotfix intentionally blanks realm APIs on Forever.
+do
+    GuildweaverDB = nil
+    GetRealmName = function() return "" end
+    GetBuildInfo = function() return "1.60.1", "71037", "Nov 2026", 16001 end
+    IsTestBuild = function() return false end
+    Store.Initialize()
+    equal(GuildweaverDB.gameRelease, "forever-live", "hotfixed live client accepted")
+    equal(GuildweaverDB.meta.releaseValidation.reason, "live_realm_unavailable", "realm is intentionally unavailable")
+    IsTestBuild = function() return true end
+    equal(Store.ConfirmLiveClient(), false, "explicit test client still blocked")
+    IsTestBuild = nil
+    GetRealmName = function() return "Classic Beta PvE 2" end
+    equal(Store.ConfirmLiveClient(), false, "beta realm remains blocked on newer build")
+end
