@@ -621,6 +621,46 @@ do
     equal(next(GuildweaverDB.characters), nil, "beta data is not ingested by the live client")
 end
 
+-- Realm APIs may not be ready at ADDON_LOADED or PLAYER_LOGIN. Confirm
+-- again after the world loads or when a later capture sees the real realm.
+do
+    local env = Env.new()
+    env.player.realm = ""
+    local addon = env:load()
+    env:dispatch("ADDON_LOADED", "Guildweaver")
+    env:dispatch("PLAYER_LOGIN")
+    equal(GuildweaverDB.meta.releaseValidation.reason, "realm_unavailable", "early realm missing")
+    env.player.realm = "CAMWOW US2 Realm 4 PvP"
+    env:dispatch("PLAYER_ENTERING_WORLD", true, false)
+    equal(GuildweaverDB.gameRelease, "forever-live", "world entry confirms live realm")
+    env:advance(5)
+    truthy(env:stream("character:"), "character stream captured after world entry")
+    env.player.realm = ""
+    equal(addon.Store.RetryLiveClient(), true, "transient missing realm does not revoke confirmed session")
+end
+
+do
+    local env = Env.new()
+    env.player.realm = ""
+    local addon = env:load()
+    env:dispatch("ADDON_LOADED", "Guildweaver")
+    env:dispatch("PLAYER_LOGIN")
+    env:dispatch("PLAYER_ENTERING_WORLD", true, false)
+    equal(GuildweaverDB.gameRelease, nil, "missing realm still blocked")
+    env.player.realm = "CAMWOW US2 Realm 4 PvP"
+    addon.Character.Capture("MANUAL_CHECKPOINT")
+    equal(GuildweaverDB.gameRelease, "forever-live", "manual capture retries confirmation")
+end
+
+do
+    local env = Env.new()
+    env.player.realm = "Classic Beta PvE 2"
+    local addon = env:load()
+    env:login()
+    equal(addon.Store.RetryLiveClient(), false, "retry does not promote explicit beta realm")
+    equal(GuildweaverDB.gameRelease, nil, "beta still blocked")
+end
+
 -- Work queue bounds ------------------------------------------------------------------------
 
 do

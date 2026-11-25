@@ -7,6 +7,11 @@ end
 local originalCapture = GW.Character.Capture
 
 GW.Character.Capture = function(...)
+    local reason = ...
+    if reason ~= "PLAYER_LOGOUT" and reason ~= "RELOAD_FLUSH"
+        and GW.Store and type(GW.Store.RetryLiveClient) == "function" then
+        GW.Store.RetryLiveClient()
+    end
     local perf = GW.Perf
     local started = perf and perf.Begin and perf.Begin() or nil
     local snapshot = originalCapture(...)
