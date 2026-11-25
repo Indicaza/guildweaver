@@ -362,6 +362,19 @@ cards' readiness (about 470 KB, once a session; already built at login
 where the client only offers per-quest completion checks). Navigation,
 resizing and boss pages make no new frames and cost the same as before.
 
+### Creature identity
+
+A corpse's `mob_loot` report names its creature when the add-on saw that
+very creature (`source.nameSource = "unit"`): on the target, mouseover,
+focus, a nameplate or a boss frame, with its GUID and name read together and
+`UnitCreatureID` agreeing with the GUID's NPC ID. The sighting is kept for 30
+minutes (at most 400 creatures), so a corpse looted after its unit is gone
+is still named. Otherwise the name of another creature with the same NPC ID
+may be given (`nameSource = "npc"`), and nothing else is borrowed. The
+creature's classification (`elite`, `rare`, ...) comes only from its own
+sighting. The client has no unit API for creature display IDs, so none is
+reported: portraits keep using the art table's display IDs by NPC ID.
+
 ## Loot observations (drop rates)
 
 `Systems/MobLootCapture.lua` already reports each corpse's loot window
