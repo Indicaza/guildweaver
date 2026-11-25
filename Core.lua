@@ -85,6 +85,7 @@ end
 local eventFrame = CreateFrame("Frame")
 eventFrame:RegisterEvent("ADDON_LOADED")
 eventFrame:RegisterEvent("PLAYER_LOGIN")
+eventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 eventFrame:SetScript("OnEvent", function(_, event, ...)
     if event == "ADDON_LOADED" then
         local loadedAddon = ...
@@ -106,6 +107,18 @@ eventFrame:SetScript("OnEvent", function(_, event, ...)
     if event == "PLAYER_LOGIN" then
         GW.Store.ConfirmLiveClient()
         GW.Print("v" .. GW.version .. " loaded. Click the minimap button or type /gw to open Guildweaver.")
+    elseif event == "PLAYER_ENTERING_WORLD" then
+        if not GW.Store.RetryLiveClient() then
+            local _, reloading = ...
+            local initialLogin = ...
+            if initialLogin or reloading then
+                for _, delay in ipairs({ 1, 3, 10 }) do
+                    C_Timer.After(delay, function()
+                        GW.Store.RetryLiveClient()
+                    end)
+                end
+            end
+        end
     end
 end)
 
@@ -175,6 +188,7 @@ SlashCmdList.GUILDWEAVER = function(message)
     end
 
     if command == "version" then
+        GW.Store.RetryLiveClient()
         GW.Print("Version " .. GW.version)
         local database = GW.Store.GetDatabase()
         local validation = database.meta and database.meta.releaseValidation or {}
@@ -421,6 +435,10 @@ SlashCmdList.GUILDWEAVER = function(message)
     end
 
     if command == "capture" or command == "sync" then
+        if not GW.Store.RetryLiveClient() then
+            local validation = GW.Store.GetDatabase().meta.releaseValidation or {}
+            GW.Print("Live release not confirmed (" .. tostring(validation.reason or "unknown") .. "); telemetry stays local. /gw version for details.")
+        end
         if GW.SessionCapture.CaptureAndReload("MANUAL_CHECKPOINT") then
             GW.Print("Telemetry checkpoint captured. Reloading so WoW writes it to disk for the bridge now.")
         else
